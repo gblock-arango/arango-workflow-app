@@ -1,0 +1,6 @@
+resources:
+  apps:
+    arango_workflow:
+      name: arango-workflow-${bundle.target}
+      description: "Arango workflow — OntoExtract UI + platform shell (Genie/MCP via BFF)"
+      source_code_path: ..

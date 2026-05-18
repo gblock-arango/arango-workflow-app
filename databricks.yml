@@ -1,0 +1,15 @@
+bundle:
+  name: arango-workflow-app
+
+include:
+  - resources/*.yml
+
+variables:
+  sql_warehouse_id:
+    description: Databricks SQL warehouse id (hex)
+    default: "473d40703241ee4c"
+
+targets:
+  dev:
+    default: true
+    mode: development

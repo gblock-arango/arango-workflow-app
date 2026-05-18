@@ -1,0 +1,113 @@
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix ent:  <http://example.org/enterprise#> .
+
+<http://example.org/enterprise>
+    rdf:type owl:Ontology ;
+    rdfs:label "Enterprise Ontology" ;
+    rdfs:comment "A minimal enterprise ontology for testing AOE extraction and curation." .
+
+# === Classes ===
+
+ent:Organization
+    rdf:type owl:Class ;
+    rdfs:label "Organization" ;
+    rdfs:comment "A top-level legal business entity." .
+
+ent:Department
+    rdf:type owl:Class ;
+    rdfs:subClassOf ent:Organization ;
+    rdfs:label "Department" ;
+    rdfs:comment "A functional subdivision within an organization." .
+
+ent:Person
+    rdf:type owl:Class ;
+    rdfs:label "Person" ;
+    rdfs:comment "An individual associated with an organization." .
+
+ent:Employee
+    rdf:type owl:Class ;
+    rdfs:subClassOf ent:Person ;
+    rdfs:label "Employee" ;
+    rdfs:comment "A person employed by an organization." .
+
+ent:Manager
+    rdf:type owl:Class ;
+    rdfs:subClassOf ent:Employee ;
+    rdfs:label "Manager" ;
+    rdfs:comment "An employee who leads a department or team." .
+
+ent:Project
+    rdf:type owl:Class ;
+    rdfs:label "Project" ;
+    rdfs:comment "A time-bound initiative with defined objectives and deliverables." .
+
+ent:Role
+    rdf:type owl:Class ;
+    rdfs:label "Role" ;
+    rdfs:comment "A named set of responsibilities that can be assigned to employees." .
+
+ent:DataAsset
+    rdf:type owl:Class ;
+    rdfs:label "Data Asset" ;
+    rdfs:comment "A managed data resource subject to governance policies." .
+
+# === Object Properties ===
+
+ent:hasDepartment
+    rdf:type owl:ObjectProperty ;
+    rdfs:label "has department" ;
+    rdfs:domain ent:Organization ;
+    rdfs:range ent:Department .
+
+ent:employedBy
+    rdf:type owl:ObjectProperty ;
+    rdfs:label "employed by" ;
+    rdfs:domain ent:Employee ;
+    rdfs:range ent:Organization .
+
+ent:manages
+    rdf:type owl:ObjectProperty ;
+    rdfs:label "manages" ;
+    rdfs:domain ent:Manager ;
+    rdfs:range ent:Department .
+
+ent:hasRole
+    rdf:type owl:ObjectProperty ;
+    rdfs:label "has role" ;
+    rdfs:domain ent:Employee ;
+    rdfs:range ent:Role .
+
+ent:contributesTo
+    rdf:type owl:ObjectProperty ;
+    rdfs:label "contributes to" ;
+    rdfs:domain ent:Employee ;
+    rdfs:range ent:Project .
+
+ent:owns
+    rdf:type owl:ObjectProperty ;
+    rdfs:label "owns" ;
+    rdfs:domain ent:Department ;
+    rdfs:range ent:DataAsset .
+
+# === Datatype Properties ===
+
+ent:name
+    rdf:type owl:DatatypeProperty ;
+    rdfs:label "name" ;
+    rdfs:domain ent:Person ;
+    rdfs:range xsd:string .
+
+ent:startDate
+    rdf:type owl:DatatypeProperty ;
+    rdfs:label "start date" ;
+    rdfs:domain ent:Project ;
+    rdfs:range xsd:date .
+
+ent:status
+    rdf:type owl:DatatypeProperty ;
+    rdfs:label "status" ;
+    rdfs:domain ent:Project ;
+    rdfs:range xsd:string .

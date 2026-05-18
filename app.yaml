@@ -1,0 +1,64 @@
+command:
+  - "bash"
+  - "-lc"
+  - "export PYTHONPATH=src && bash scripts/start-databricks-app.sh"
+
+# Unified workflow dashboard: OntoExtract (FastAPI + Next) + platform shell BFF.
+# Peer apps: arango-gateway-app (iframe + databricks-graph), arango-mcp-app (Genie/MCP chat).
+# See README.md and arango-agent-autograph-job/README.md.
+
+env:
+  - name: DATABRICKS_SQL_WAREHOUSE_ID
+    description: SQL warehouse for UC registry reads (gateway/agent URLs).
+    value: "473d40703241ee4c"
+
+  - name: ARANGO_GATEWAY_BASE_URL
+    description: Optional gateway URL override; empty → UC ARANGO_GATEWAY_REGISTRY_TABLE
+    value: ""
+  - name: ARANGO_GATEWAY_APP_NAME
+    value: "arango-gateway-app"
+  - name: ARANGO_GATEWAY_IFRAME_USE_WORKSPACE_APPS_URL
+    value: "false"
+  - name: ARANGO_GATEWAY_IFRAME_BASE_URL
+    value: ""
+  - name: ARANGO_GATEWAY_REGISTRY_TABLE
+    value: "workspace.default.arango_gateway_registry"
+  - name: ARANGO_REGISTRY_TABLE
+    value: "workspace.default.arango_connection_registry"
+  - name: UC_GRAPH_VOLUME_NAME
+    value: "arango_agent_volume"
+  - name: UC_GRAPH_SNAPSHOT_BASE
+    value: ""
+
+  - name: ARANGO_AGENT_BASE_URL
+    description: Optional arango-mcp-app URL; empty → UC ARANGO_AGENT_REGISTRY_TABLE
+    value: ""
+  - name: ARANGO_AGENT_REGISTRY_TABLE
+    value: "workspace.default.arango_agent_registry"
+  - name: BRONZE_INJECTOR_BASE_URL
+    value: ""
+  - name: ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE
+    value: "workspace.default.arango_bronze_simulated_injector_registry"
+
+  - name: DEBUG_STARTUP_CHECKS
+    value: "true"
+
+  # OntoExtract / local Arango (gateway mode in Databricks — set via registry)
+  - name: APP_ENV
+    value: "production"
+  - name: APP_LOG_LEVEL
+    value: "INFO"
+
+resources:
+  - name: sql-warehouse
+    sql_warehouse:
+      id: ${DATABRICKS_SQL_WAREHOUSE_ID}
+      permission: CAN_USE
+  - name: mcp-arango-agent-invoke
+    app:
+      name: mcp-arango-agent
+      permission: CAN_USE
+  - name: arango-gateway-app-invoke
+    app:
+      name: arango-gateway-app
+      permission: CAN_USE

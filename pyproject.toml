@@ -1,0 +1,74 @@
+[project]
+name = "arango-workflow-app"
+version = "0.1.0"
+description = "Unified Databricks workflow dashboard — OntoExtract UI + platform shell"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "python-arango>=8.1",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "python-multipart>=0.0.18",
+    "langchain>=0.3",
+    "langchain-anthropic>=0.3",
+    "langchain-openai>=0.3",
+    "structlog>=24.4",
+    "httpx>=0.28",
+    "celery[redis]>=5.4",
+    "python-docx>=1.1",
+    "python-pptx>=1.0",
+    "pymupdf>=1.25",
+    "tiktoken>=0.9",
+    "openai>=1.60",
+    "redis>=5.2",
+    "mcp>=1.0",
+    "langgraph>=0.2",
+    "rdflib>=7.0",
+    "arango-entity-resolution>=0.1",
+    "aiofiles>=24.1",
+    "PyJWT>=2.8",
+    "prometheus_client>=0.21",
+    "databricks-sdk>=0.74.0",
+    "requests>=2.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "pytest-cov>=6.0",
+    "ruff==0.15.12",
+    "mypy>=1.14",
+    "types-requests>=2.32",
+    "pre-commit>=4.0",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "integration: tests requiring a running ArangoDB instance",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

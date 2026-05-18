@@ -1,0 +1,30 @@
+# Databricks Apps: pip installs from repo root when present.
+# See pyproject.toml for the full dependency set.
+fastapi>=0.115
+uvicorn[standard]>=0.34
+httpx>=0.28
+pydantic>=2.10
+pydantic-settings>=2.7
+python-multipart>=0.0.18
+structlog>=24.4
+PyJWT>=2.8
+databricks-sdk>=0.74.0
+requests>=2.28.0
+python-arango>=8.1
+langchain>=0.3
+langchain-anthropic>=0.3
+langchain-openai>=0.3
+langgraph>=0.2
+openai>=1.60
+tiktoken>=0.9
+python-docx>=1.1
+python-pptx>=1.0
+pymupdf>=1.25
+aiofiles>=24.1
+prometheus_client>=0.21
+rdflib>=7.0
+langgraph>=0.2
+celery[redis]>=5.4
+redis>=5.2
+mcp>=1.0
+arango-entity-resolution>=0.1

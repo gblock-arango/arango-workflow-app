@@ -1,0 +1,86 @@
+{
+  "classes": [
+    {
+      "uri": "http://example.org/enterprise#Organization",
+      "label": "Organization",
+      "description": "A legal entity encompassing departments, employees, and business operations.",
+      "rdf_type": "owl:Class",
+      "parent_uri": null,
+      "confidence": 0.94
+    },
+    {
+      "uri": "http://example.org/enterprise#Department",
+      "label": "Department",
+      "description": "An organizational unit responsible for a distinct business function.",
+      "rdf_type": "owl:Class",
+      "parent_uri": "http://example.org/enterprise#Organization",
+      "confidence": 0.91
+    },
+    {
+      "uri": "http://example.org/enterprise#Employee",
+      "label": "Employee",
+      "description": "A person who works for an organization in a defined capacity.",
+      "rdf_type": "owl:Class",
+      "parent_uri": null,
+      "confidence": 0.90
+    },
+    {
+      "uri": "http://example.org/enterprise#Manager",
+      "label": "Manager",
+      "description": "An employee responsible for leading a department or team.",
+      "rdf_type": "owl:Class",
+      "parent_uri": "http://example.org/enterprise#Employee",
+      "confidence": 0.87
+    },
+    {
+      "uri": "http://example.org/enterprise#DataAsset",
+      "label": "Data Asset",
+      "description": "A managed data resource governed by organizational policies for quality and compliance.",
+      "rdf_type": "owl:Class",
+      "parent_uri": null,
+      "confidence": 0.82
+    },
+    {
+      "uri": "http://example.org/enterprise#DataSteward",
+      "label": "Data Steward",
+      "description": "A person responsible for the quality, lineage, and compliance of a data domain.",
+      "rdf_type": "owl:Class",
+      "parent_uri": "http://example.org/enterprise#Employee",
+      "confidence": 0.78
+    }
+  ],
+  "properties": [
+    {
+      "uri": "http://example.org/enterprise#hasDepartment",
+      "label": "has department",
+      "description": "Links an organization to its departments.",
+      "rdf_type": "owl:ObjectProperty",
+      "domain_uri": "http://example.org/enterprise#Organization",
+      "range_uri": "http://example.org/enterprise#Department"
+    },
+    {
+      "uri": "http://example.org/enterprise#manages",
+      "label": "manages",
+      "description": "Links a manager to the department they lead.",
+      "rdf_type": "owl:ObjectProperty",
+      "domain_uri": "http://example.org/enterprise#Manager",
+      "range_uri": "http://example.org/enterprise#Department"
+    },
+    {
+      "uri": "http://example.org/enterprise#owns",
+      "label": "owns",
+      "description": "Links a department to the data assets it is responsible for.",
+      "rdf_type": "owl:ObjectProperty",
+      "domain_uri": "http://example.org/enterprise#Department",
+      "range_uri": "http://example.org/enterprise#DataAsset"
+    },
+    {
+      "uri": "http://example.org/enterprise#stewards",
+      "label": "stewards",
+      "description": "Links a data steward to the data assets they govern.",
+      "rdf_type": "owl:ObjectProperty",
+      "domain_uri": "http://example.org/enterprise#DataSteward",
+      "range_uri": "http://example.org/enterprise#DataAsset"
+    }
+  ]
+}

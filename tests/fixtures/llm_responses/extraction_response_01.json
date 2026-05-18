@@ -1,0 +1,78 @@
+{
+  "classes": [
+    {
+      "uri": "http://example.org/enterprise#Organization",
+      "label": "Organization",
+      "description": "A top-level legal business entity that encompasses departments, employees, and projects.",
+      "rdf_type": "owl:Class",
+      "parent_uri": null,
+      "confidence": 0.95
+    },
+    {
+      "uri": "http://example.org/enterprise#Department",
+      "label": "Department",
+      "description": "A functional subdivision within an organization, responsible for a specific business area.",
+      "rdf_type": "owl:Class",
+      "parent_uri": "http://example.org/enterprise#Organization",
+      "confidence": 0.93
+    },
+    {
+      "uri": "http://example.org/enterprise#Employee",
+      "label": "Employee",
+      "description": "An individual employed by an organization, assigned roles and participating in projects.",
+      "rdf_type": "owl:Class",
+      "parent_uri": null,
+      "confidence": 0.92
+    },
+    {
+      "uri": "http://example.org/enterprise#Project",
+      "label": "Project",
+      "description": "A time-bound initiative with defined objectives, deliverables, and lifecycle stages.",
+      "rdf_type": "owl:Class",
+      "parent_uri": null,
+      "confidence": 0.90
+    },
+    {
+      "uri": "http://example.org/enterprise#Role",
+      "label": "Role",
+      "description": "A named set of responsibilities assigned to employees within the organization.",
+      "rdf_type": "owl:Class",
+      "parent_uri": null,
+      "confidence": 0.88
+    }
+  ],
+  "properties": [
+    {
+      "uri": "http://example.org/enterprise#hasDepartment",
+      "label": "has department",
+      "description": "Links an organization to its constituent departments.",
+      "rdf_type": "owl:ObjectProperty",
+      "domain_uri": "http://example.org/enterprise#Organization",
+      "range_uri": "http://example.org/enterprise#Department"
+    },
+    {
+      "uri": "http://example.org/enterprise#employedBy",
+      "label": "employed by",
+      "description": "Links an employee to the organization they work for.",
+      "rdf_type": "owl:ObjectProperty",
+      "domain_uri": "http://example.org/enterprise#Employee",
+      "range_uri": "http://example.org/enterprise#Organization"
+    },
+    {
+      "uri": "http://example.org/enterprise#hasRole",
+      "label": "has role",
+      "description": "Assigns a role to an employee.",
+      "rdf_type": "owl:ObjectProperty",
+      "domain_uri": "http://example.org/enterprise#Employee",
+      "range_uri": "http://example.org/enterprise#Role"
+    },
+    {
+      "uri": "http://example.org/enterprise#contributesTo",
+      "label": "contributes to",
+      "description": "Links an employee to a project they participate in.",
+      "rdf_type": "owl:ObjectProperty",
+      "domain_uri": "http://example.org/enterprise#Employee",
+      "range_uri": "http://example.org/enterprise#Project"
+    }
+  ]
+}
