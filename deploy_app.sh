@@ -88,7 +88,7 @@ databricks sync . "${SOURCE_CODE_PATH}" "${PROFILE_ARGS[@]}"
 if ! databricks apps get "${APP_NAME}" "${PROFILE_ARGS[@]}" &>/dev/null; then
   echo "Creating Databricks App '${APP_NAME}'…"
   databricks apps create "${APP_NAME}" \
-    --description "Arango workflow — OntoExtract UI + platform shell; Genie/MCP via BFF" \
+    --description "Arango workflow — OntoExtract UI; platform BFF reserved for later" \
     "${PROFILE_ARGS[@]}"
 fi
 
@@ -111,8 +111,6 @@ if [[ -z "${APP_URL}" ]]; then
   echo "ERROR: Could not extract URL from Databricks app metadata." >&2
   exit 1
 fi
-
-APP_WORKFLOW_URL="${APP_URL}/workflow"
 
 SET_USER_SCOPES_SCRIPT="${SCRIPT_DIR}/scripts/set_user_api_scopes.sh"
 if [[ -x "${SET_USER_SCOPES_SCRIPT}" ]]; then
@@ -158,5 +156,4 @@ fi
 
 echo
 echo "DATABRICKS_APP_URL=${APP_URL}"
-echo "DATABRICKS_APP_WORKFLOW_URL=${APP_WORKFLOW_URL}"
-printf '  \033]8;;%s\033\\%s\033]8;;\033\\\n' "${APP_WORKFLOW_URL}" "→ Open workflow dashboard"
+printf '  \033]8;;%s\033\\%s\033]8;;\033\\\n' "${APP_URL}" "→ Open OntoExtract app"

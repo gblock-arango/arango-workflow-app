@@ -1,0 +1,47 @@
+[
+  {
+    "_key": "account-takeover",
+    "@id": "ex:attack-pattern/account-takeover",
+    "@type": "AttackPattern",
+    "name": "account-takeover",
+    "domain": "cyber_fraud",
+    "description": "Account takeover using a new device, anomalous IP, credential reset, and high-value payment",
+    "annotation": "Attack pattern 'account-takeover' describes Account takeover using a new device, anomalous IP, credential reset, and high-value payment. It acts as a semantic label for graph paths whose structure indicates a known fraud or cyber risk mode in the cyber_fraud domain."
+  },
+  {
+    "_key": "synthetic-identity",
+    "@id": "ex:attack-pattern/synthetic-identity",
+    "@type": "AttackPattern",
+    "name": "synthetic-identity",
+    "domain": "fraud",
+    "description": "Synthetic identity behavior involving new accounts, shared devices, and rapid value movement",
+    "annotation": "Attack pattern 'synthetic-identity' describes Synthetic identity behavior involving new accounts, shared devices, and rapid value movement. It acts as a semantic label for graph paths whose structure indicates a known fraud or cyber risk mode in the fraud domain."
+  },
+  {
+    "_key": "mule-ring",
+    "@id": "ex:attack-pattern/mule-ring",
+    "@type": "AttackPattern",
+    "name": "mule-ring",
+    "domain": "fraud",
+    "description": "Money mule ring pattern with many incoming payments followed by rapid outbound transfers",
+    "annotation": "Attack pattern 'mule-ring' describes Money mule ring pattern with many incoming payments followed by rapid outbound transfers. It acts as a semantic label for graph paths whose structure indicates a known fraud or cyber risk mode in the fraud domain."
+  },
+  {
+    "_key": "card-testing",
+    "@id": "ex:attack-pattern/card-testing",
+    "@type": "AttackPattern",
+    "name": "card-testing",
+    "domain": "fraud",
+    "description": "Low-value authorization probes followed by higher-value attempted transaction",
+    "annotation": "Attack pattern 'card-testing' describes Low-value authorization probes followed by higher-value attempted transaction. It acts as a semantic label for graph paths whose structure indicates a known fraud or cyber risk mode in the fraud domain."
+  },
+  {
+    "_key": "credential-stuffing",
+    "@id": "ex:attack-pattern/credential-stuffing",
+    "@type": "AttackPattern",
+    "name": "credential-stuffing",
+    "domain": "cyber",
+    "description": "Multiple failed logins across accounts from shared infrastructure followed by successful payment",
+    "annotation": "Attack pattern 'credential-stuffing' describes Multiple failed logins across accounts from shared infrastructure followed by successful payment. It acts as a semantic label for graph paths whose structure indicates a known fraud or cyber risk mode in the cyber domain."
+  }
+]

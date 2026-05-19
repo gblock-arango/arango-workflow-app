@@ -19,8 +19,10 @@ const pathPrefix = (
 const staticExport = process.env.AOE_STATIC_EXPORT === "1";
 
 // Dev proxy: browser uses same-origin /api/* → FastAPI (see api-client.ts).
+// Prefer BACKEND_PROXY_URL; else derive from repo-root BACKEND_PORT (see .env).
+const backendPort = process.env.BACKEND_PORT || "8010";
 const backendTarget = (
-  process.env.BACKEND_PROXY_URL || "http://127.0.0.1:8010"
+  process.env.BACKEND_PROXY_URL || `http://127.0.0.1:${backendPort}`
 ).replace(/\/$/, "");
 
 /** @type {import('next').NextConfig} */

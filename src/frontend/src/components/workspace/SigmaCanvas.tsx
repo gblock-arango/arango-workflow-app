@@ -994,7 +994,7 @@ export default function SigmaCanvas({
         width: "100%",
         height: "100%",
         position: "relative",
-        background: "#111118",
+        background: "#ffffff",
         overflow: "hidden",
       }}
     >

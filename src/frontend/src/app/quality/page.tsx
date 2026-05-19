@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function QualityPage() {
-  redirect("/dashboard?tab=per-ontology-quality");
+  redirect("/ontology-quality?tab=per-ontology-quality");
 }

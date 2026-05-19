@@ -20,7 +20,7 @@
  */
 
 import type { LensType } from "@/components/workspace/LensToolbar";
-import type { GraphViewMode } from "@/app/workspace/page";
+import type { GraphViewMode } from "@/types/workspace";
 import type { PerOntologyQualityApiShape } from "@/lib/perOntologyQualityDimensions";
 
 /** Single item the asset-info side panel can show. Matches the inline

@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import Link from "next/link";
 import dynamic from "next/dynamic";
 import { api } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
+import AppHeader from "@/components/layout/AppHeader";
 import RunList from "@/components/pipeline/RunList";
 import RunMetrics from "@/components/pipeline/RunMetrics";
 import ErrorLog from "@/components/pipeline/ErrorLog";
@@ -86,17 +86,11 @@ function PipelineMonitorInner() {
 
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">
-              Pipeline Monitor
-            </h1>
-            <p className="text-sm text-gray-500">
-              Real-time extraction pipeline dashboard
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
+      <AppHeader
+        title="Agents"
+        subtitle="Real-time extraction pipeline dashboard"
+        actions={
+          <>
             {selectedRunId && (
               <div className="flex items-center gap-2 text-xs">
                 <span
@@ -120,16 +114,24 @@ function PipelineMonitorInner() {
                 <div className="absolute right-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
                   <button
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => { setResetOpen(false); handleReset(false); }}
+                    onClick={() => {
+                      setResetOpen(false);
+                      handleReset(false);
+                    }}
                     disabled={resetBusy}
                     className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 rounded-t-lg"
                   >
                     Reset Ontology Data
-                    <span className="block text-gray-400 mt-0.5">Keeps documents &amp; chunks</span>
+                    <span className="block text-gray-400 mt-0.5">
+                      Keeps documents &amp; chunks
+                    </span>
                   </button>
                   <button
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => { setResetOpen(false); handleReset(true); }}
+                    onClick={() => {
+                      setResetOpen(false);
+                      handleReset(true);
+                    }}
                     disabled={resetBusy}
                     className="w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50 border-t border-gray-100 rounded-b-lg"
                   >
@@ -145,28 +147,9 @@ function PipelineMonitorInner() {
             >
               {sidebarOpen ? "Hide Runs" : "Show Runs"}
             </button>
-            <Link
-              href="/workspace"
-              className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
-            >
-              Workspace
-            </Link>
-            <Link
-              href="/dashboard"
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Dashboard
-            </Link>
-            {/* Raw <a> so the trailing slash survives — Next <Link href="/"> drops it. */}
-            <a
-              href={withBasePath("/")}
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Home
-            </a>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <div className="max-w-[1600px] mx-auto flex flex-col md:flex-row">
         {/* Sidebar: Run List */}
@@ -223,10 +206,10 @@ function PipelineMonitorInner() {
                         {selectedRunId}
                       </span>
                       <a
-                        href={withBasePath(`/workspace?ontologyId=${selectedRunId}`)}
+                        href={withBasePath(`/dashboard?ontologyId=${selectedRunId}`)}
                         className="text-xs px-3 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
                       >
-                        Open in Workspace
+                        Open in Dashboard
                       </a>
                       <a
                         href={withBasePath(`/curation?runId=${selectedRunId}`)}

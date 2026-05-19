@@ -1,0 +1,42 @@
+[
+  {
+    "_key": "account-takeover",
+    "@id": "ex:attack-pattern/account-takeover",
+    "@type": "AttackPattern",
+    "name": "account-takeover",
+    "domain": "cyber_fraud",
+    "description": "Account takeover using a new device, anomalous IP, credential reset, and high-value payment"
+  },
+  {
+    "_key": "synthetic-identity",
+    "@id": "ex:attack-pattern/synthetic-identity",
+    "@type": "AttackPattern",
+    "name": "synthetic-identity",
+    "domain": "fraud",
+    "description": "Synthetic identity behavior involving new accounts, shared devices, and rapid value movement"
+  },
+  {
+    "_key": "mule-ring",
+    "@id": "ex:attack-pattern/mule-ring",
+    "@type": "AttackPattern",
+    "name": "mule-ring",
+    "domain": "fraud",
+    "description": "Money mule ring pattern with many incoming payments followed by rapid outbound transfers"
+  },
+  {
+    "_key": "card-testing",
+    "@id": "ex:attack-pattern/card-testing",
+    "@type": "AttackPattern",
+    "name": "card-testing",
+    "domain": "fraud",
+    "description": "Low-value authorization probes followed by higher-value attempted transaction"
+  },
+  {
+    "_key": "credential-stuffing",
+    "@id": "ex:attack-pattern/credential-stuffing",
+    "@type": "AttackPattern",
+    "name": "credential-stuffing",
+    "domain": "cyber",
+    "description": "Multiple failed logins across accounts from shared infrastructure followed by successful payment"
+  }
+]

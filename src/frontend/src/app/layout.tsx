@@ -9,8 +9,9 @@ function staticAsset(path: string): string {
 }
 
 export const metadata: Metadata = {
-  title: "Arango Workflow",
-  description: "Unified Databricks workflow dashboard — OntoExtract + platform shell",
+  title: "Arango Graph-Accelerated Agents",
+  description:
+    "RBAC-compliant graph knowledge for Genie Q&A, GraphRAG, GraphML, and adaptive CDC",
   icons: {
     icon: staticAsset("/favicon.svg"),
     shortcut: staticAsset("/favicon.svg"),

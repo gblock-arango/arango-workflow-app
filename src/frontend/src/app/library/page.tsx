@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import Link from "next/link";
 import { api, ApiError, backendUrl, type PaginatedResponse } from "@/lib/api-client";
+import AppHeader from "@/components/layout/AppHeader";
 import { withBasePath } from "@/lib/base-path";
 import type {
   OntologyRegistryEntry,
@@ -322,39 +322,10 @@ export default function LibraryPage() {
 
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">
-              Ontology Library
-            </h1>
-            <p className="text-sm text-gray-500">
-              Browse registered ontologies and explore class hierarchies.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link
-              href="/workspace"
-              className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
-            >
-              Workspace
-            </Link>
-            <Link
-              href="/dashboard"
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Dashboard
-            </Link>
-            {/* Raw <a> so the trailing slash survives — Next <Link href="/"> drops it. */}
-            <a
-              href={withBasePath("/")}
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Home
-            </a>
-          </div>
-        </div>
-      </header>
+      <AppHeader
+        title="Ontology Library"
+        subtitle="Browse registered ontologies and explore class hierarchies."
+      />
 
       <div className="max-w-[1600px] mx-auto px-6 py-6">
         {/* Search bar (J.7) */}
@@ -529,10 +500,10 @@ export default function LibraryPage() {
                   {/* Action buttons */}
                   <div className="flex gap-2 mb-3">
                     <a
-                      href={withBasePath(`/workspace?ontologyId=${selectedOntology._key}`)}
+                      href={withBasePath(`/dashboard?ontologyId=${selectedOntology._key}`)}
                       className="flex-1 text-center text-xs px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium"
                     >
-                      Open in Workspace
+                      Open in Dashboard
                     </a>
                     <a
                       href={withBasePath(`/ontology/edit?ontologyId=${selectedOntology._key}`)}
@@ -710,10 +681,10 @@ export default function LibraryPage() {
 
                     {/* Class-level actions */}
                     <a
-                      href={withBasePath(`/workspace?ontologyId=${selectedOntology._key}`)}
+                      href={withBasePath(`/dashboard?ontologyId=${selectedOntology._key}`)}
                       className="block w-full text-center text-xs px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors font-medium"
                     >
-                      View in Workspace
+                      View in Dashboard
                     </a>
                   </div>
                 )}

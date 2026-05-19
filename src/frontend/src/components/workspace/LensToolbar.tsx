@@ -4,7 +4,7 @@ import { withBasePath } from "@/lib/base-path";
 
 export type LensType = "semantic" | "confidence" | "curation" | "diff" | "source";
 
-const LENS_LABELS: Record<LensType, string> = {
+export const LENS_LABELS: Record<LensType, string> = {
   semantic: "Semantic",
   confidence: "Confidence",
   curation: "Curation Status",

@@ -1,0 +1,4982 @@
+{
+  "@context": {
+    "ex": "https://example.com/fraud-cyber#",
+    "schema": "https://schema.org/",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "Account": "ex:Account",
+    "Transaction": "ex:Transaction",
+    "Device": "ex:Device",
+    "IPAddress": "ex:IPAddress",
+    "AttackPattern": "ex:AttackPattern",
+    "FraudSignal": "ex:FraudSignal",
+    "initiated": {
+      "@id": "ex:initiated",
+      "@type": "@id"
+    },
+    "usedDevice": {
+      "@id": "ex:usedDevice",
+      "@type": "@id"
+    },
+    "originatedFrom": {
+      "@id": "ex:originatedFrom",
+      "@type": "@id"
+    },
+    "matchesPattern": {
+      "@id": "ex:matchesPattern",
+      "@type": "@id"
+    },
+    "triggeredSignal": {
+      "@id": "ex:triggeredSignal",
+      "@type": "@id"
+    },
+    "amount": {
+      "@id": "ex:amount",
+      "@type": "xsd:decimal"
+    },
+    "timestamp": {
+      "@id": "ex:timestamp",
+      "@type": "xsd:dateTime"
+    },
+    "riskScore": {
+      "@id": "ex:riskScore",
+      "@type": "xsd:decimal"
+    },
+    "description": "schema:description"
+  },
+  "@graph": [
+    {
+      "@id": "ex:account/A001",
+      "@type": "Account",
+      "accountId": "A001",
+      "accountType": "consumer",
+      "country": "GB",
+      "status": "active",
+      "baselineRisk": 0.61,
+      "createdAt": "2025-08-16T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A002",
+      "@type": "Account",
+      "accountId": "A002",
+      "accountType": "consumer",
+      "country": "BR",
+      "status": "active",
+      "baselineRisk": 0.17,
+      "createdAt": "2024-08-05T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A003",
+      "@type": "Account",
+      "accountId": "A003",
+      "accountType": "consumer",
+      "country": "US",
+      "status": "active",
+      "baselineRisk": 0.42,
+      "createdAt": "2025-08-06T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A004",
+      "@type": "Account",
+      "accountId": "A004",
+      "accountType": "consumer",
+      "country": "BR",
+      "status": "active",
+      "baselineRisk": 0.49,
+      "createdAt": "2024-03-29T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A005",
+      "@type": "Account",
+      "accountId": "A005",
+      "accountType": "merchant",
+      "country": "NL",
+      "status": "active",
+      "baselineRisk": 0.62,
+      "createdAt": "2024-12-28T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A006",
+      "@type": "Account",
+      "accountId": "A006",
+      "accountType": "consumer",
+      "country": "US",
+      "status": "active",
+      "baselineRisk": 0.56,
+      "createdAt": "2025-01-24T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A007",
+      "@type": "Account",
+      "accountId": "A007",
+      "accountType": "consumer",
+      "country": "CA",
+      "status": "active",
+      "baselineRisk": 0.35,
+      "createdAt": "2025-12-18T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A008",
+      "@type": "Account",
+      "accountId": "A008",
+      "accountType": "consumer",
+      "country": "DE",
+      "status": "active",
+      "baselineRisk": 0.13,
+      "createdAt": "2024-07-22T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A009",
+      "@type": "Account",
+      "accountId": "A009",
+      "accountType": "consumer",
+      "country": "SG",
+      "status": "active",
+      "baselineRisk": 0.28,
+      "createdAt": "2025-11-25T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A010",
+      "@type": "Account",
+      "accountId": "A010",
+      "accountType": "business",
+      "country": "US",
+      "status": "watchlist",
+      "baselineRisk": 0.9,
+      "createdAt": "2024-09-13T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A011",
+      "@type": "Account",
+      "accountId": "A011",
+      "accountType": "merchant",
+      "country": "DE",
+      "status": "active",
+      "baselineRisk": 0.31,
+      "createdAt": "2025-09-17T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A012",
+      "@type": "Account",
+      "accountId": "A012",
+      "accountType": "consumer",
+      "country": "CA",
+      "status": "active",
+      "baselineRisk": 0.66,
+      "createdAt": "2026-01-10T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A013",
+      "@type": "Account",
+      "accountId": "A013",
+      "accountType": "consumer",
+      "country": "NL",
+      "status": "watchlist",
+      "baselineRisk": 0.79,
+      "createdAt": "2025-06-21T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A014",
+      "@type": "Account",
+      "accountId": "A014",
+      "accountType": "consumer",
+      "country": "US",
+      "status": "active",
+      "baselineRisk": 0.44,
+      "createdAt": "2025-04-03T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A015",
+      "@type": "Account",
+      "accountId": "A015",
+      "accountType": "consumer",
+      "country": "US",
+      "status": "active",
+      "baselineRisk": 0.23,
+      "createdAt": "2024-06-20T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A016",
+      "@type": "Account",
+      "accountId": "A016",
+      "accountType": "consumer",
+      "country": "US",
+      "status": "active",
+      "baselineRisk": 0.2,
+      "createdAt": "2025-03-09T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A017",
+      "@type": "Account",
+      "accountId": "A017",
+      "accountType": "merchant",
+      "country": "CA",
+      "status": "active",
+      "baselineRisk": 0.28,
+      "createdAt": "2025-05-04T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A018",
+      "@type": "Account",
+      "accountId": "A018",
+      "accountType": "consumer",
+      "country": "CA",
+      "status": "watchlist",
+      "baselineRisk": 0.78,
+      "createdAt": "2023-12-12T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A019",
+      "@type": "Account",
+      "accountId": "A019",
+      "accountType": "consumer",
+      "country": "NL",
+      "status": "active",
+      "baselineRisk": 0.08,
+      "createdAt": "2026-01-24T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A020",
+      "@type": "Account",
+      "accountId": "A020",
+      "accountType": "merchant",
+      "country": "DE",
+      "status": "active",
+      "baselineRisk": 0.23,
+      "createdAt": "2024-05-30T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A021",
+      "@type": "Account",
+      "accountId": "A021",
+      "accountType": "business",
+      "country": "US",
+      "status": "active",
+      "baselineRisk": 0.48,
+      "createdAt": "2025-11-10T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A022",
+      "@type": "Account",
+      "accountId": "A022",
+      "accountType": "merchant",
+      "country": "BR",
+      "status": "active",
+      "baselineRisk": 0.26,
+      "createdAt": "2024-02-27T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A023",
+      "@type": "Account",
+      "accountId": "A023",
+      "accountType": "merchant",
+      "country": "NL",
+      "status": "active",
+      "baselineRisk": 0.56,
+      "createdAt": "2025-08-20T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A024",
+      "@type": "Account",
+      "accountId": "A024",
+      "accountType": "consumer",
+      "country": "BR",
+      "status": "watchlist",
+      "baselineRisk": 0.92,
+      "createdAt": "2024-11-12T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A025",
+      "@type": "Account",
+      "accountId": "A025",
+      "accountType": "consumer",
+      "country": "US",
+      "status": "active",
+      "baselineRisk": 0.13,
+      "createdAt": "2024-06-28T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A026",
+      "@type": "Account",
+      "accountId": "A026",
+      "accountType": "business",
+      "country": "NG",
+      "status": "active",
+      "baselineRisk": 0.19,
+      "createdAt": "2025-03-03T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A027",
+      "@type": "Account",
+      "accountId": "A027",
+      "accountType": "business",
+      "country": "BR",
+      "status": "active",
+      "baselineRisk": 0.38,
+      "createdAt": "2024-09-12T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A028",
+      "@type": "Account",
+      "accountId": "A028",
+      "accountType": "consumer",
+      "country": "US",
+      "status": "watchlist",
+      "baselineRisk": 0.8,
+      "createdAt": "2024-05-03T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A029",
+      "@type": "Account",
+      "accountId": "A029",
+      "accountType": "consumer",
+      "country": "DE",
+      "status": "watchlist",
+      "baselineRisk": 0.82,
+      "createdAt": "2025-12-08T08:00:00Z"
+    },
+    {
+      "@id": "ex:account/A030",
+      "@type": "Account",
+      "accountId": "A030",
+      "accountType": "consumer",
+      "country": "SG",
+      "status": "active",
+      "baselineRisk": 0.31,
+      "createdAt": "2024-03-23T08:00:00Z"
+    },
+    {
+      "@id": "ex:transaction/T001",
+      "@type": "Transaction",
+      "transactionId": "T001",
+      "amount": 1071.95,
+      "currency": "USD",
+      "timestamp": "2026-05-01T08:49:00Z",
+      "channel": "web",
+      "merchantCategory": "crypto_exchange",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T002",
+      "@type": "Transaction",
+      "transactionId": "T002",
+      "amount": 645.42,
+      "currency": "USD",
+      "timestamp": "2026-05-01T09:31:00Z",
+      "channel": "atm",
+      "merchantCategory": "crypto_exchange",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T003",
+      "@type": "Transaction",
+      "transactionId": "T003",
+      "amount": 157.58,
+      "currency": "USD",
+      "timestamp": "2026-05-01T10:01:00Z",
+      "channel": "web",
+      "merchantCategory": "electronics",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T004",
+      "@type": "Transaction",
+      "transactionId": "T004",
+      "amount": 8091.47,
+      "currency": "USD",
+      "timestamp": "2026-05-01T10:30:00Z",
+      "channel": "pos",
+      "merchantCategory": "electronics",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T005",
+      "@type": "Transaction",
+      "transactionId": "T005",
+      "amount": 5893.64,
+      "currency": "USD",
+      "timestamp": "2026-05-01T11:18:00Z",
+      "channel": "pos",
+      "merchantCategory": "travel",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T006",
+      "@type": "Transaction",
+      "transactionId": "T006",
+      "amount": 602.71,
+      "currency": "USD",
+      "timestamp": "2026-05-01T11:46:00Z",
+      "channel": "api",
+      "merchantCategory": "retail",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T007",
+      "@type": "Transaction",
+      "transactionId": "T007",
+      "amount": 9463.01,
+      "currency": "USD",
+      "timestamp": "2026-05-01T12:21:00Z",
+      "channel": "pos",
+      "merchantCategory": "crypto_exchange",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T008",
+      "@type": "Transaction",
+      "transactionId": "T008",
+      "amount": 644.85,
+      "currency": "USD",
+      "timestamp": "2026-05-01T13:10:00Z",
+      "channel": "pos",
+      "merchantCategory": "gaming",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T009",
+      "@type": "Transaction",
+      "transactionId": "T009",
+      "amount": 1477.6,
+      "currency": "USD",
+      "timestamp": "2026-05-01T13:50:00Z",
+      "channel": "api",
+      "merchantCategory": "gaming",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T010",
+      "@type": "Transaction",
+      "transactionId": "T010",
+      "amount": 1960.13,
+      "currency": "USD",
+      "timestamp": "2026-05-01T14:27:00Z",
+      "channel": "mobile",
+      "merchantCategory": "money_transfer",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T011",
+      "@type": "Transaction",
+      "transactionId": "T011",
+      "amount": 4813.75,
+      "currency": "USD",
+      "timestamp": "2026-05-01T14:55:00Z",
+      "channel": "web",
+      "merchantCategory": "electronics",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T012",
+      "@type": "Transaction",
+      "transactionId": "T012",
+      "amount": 376.44,
+      "currency": "USD",
+      "timestamp": "2026-05-01T15:38:00Z",
+      "channel": "pos",
+      "merchantCategory": "gaming",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T013",
+      "@type": "Transaction",
+      "transactionId": "T013",
+      "amount": 67.74,
+      "currency": "USD",
+      "timestamp": "2026-05-01T16:12:00Z",
+      "channel": "pos",
+      "merchantCategory": "travel",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T014",
+      "@type": "Transaction",
+      "transactionId": "T014",
+      "amount": 1980.28,
+      "currency": "USD",
+      "timestamp": "2026-05-01T16:39:00Z",
+      "channel": "api",
+      "merchantCategory": "crypto_exchange",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T015",
+      "@type": "Transaction",
+      "transactionId": "T015",
+      "amount": 2143.1,
+      "currency": "USD",
+      "timestamp": "2026-05-01T17:19:00Z",
+      "channel": "mobile",
+      "merchantCategory": "utility",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T016",
+      "@type": "Transaction",
+      "transactionId": "T016",
+      "amount": 78.91,
+      "currency": "USD",
+      "timestamp": "2026-05-01T18:02:00Z",
+      "channel": "atm",
+      "merchantCategory": "utility",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T017",
+      "@type": "Transaction",
+      "transactionId": "T017",
+      "amount": 1921.96,
+      "currency": "USD",
+      "timestamp": "2026-05-01T18:44:00Z",
+      "channel": "mobile",
+      "merchantCategory": "crypto_exchange",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T018",
+      "@type": "Transaction",
+      "transactionId": "T018",
+      "amount": 76.47,
+      "currency": "USD",
+      "timestamp": "2026-05-01T19:12:00Z",
+      "channel": "atm",
+      "merchantCategory": "money_transfer",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T019",
+      "@type": "Transaction",
+      "transactionId": "T019",
+      "amount": 1420.22,
+      "currency": "USD",
+      "timestamp": "2026-05-01T19:55:00Z",
+      "channel": "pos",
+      "merchantCategory": "money_transfer",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T020",
+      "@type": "Transaction",
+      "transactionId": "T020",
+      "amount": 2118.51,
+      "currency": "USD",
+      "timestamp": "2026-05-01T20:28:00Z",
+      "channel": "web",
+      "merchantCategory": "electronics",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T021",
+      "@type": "Transaction",
+      "transactionId": "T021",
+      "amount": 1343.5,
+      "currency": "USD",
+      "timestamp": "2026-05-01T21:13:00Z",
+      "channel": "web",
+      "merchantCategory": "retail",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T022",
+      "@type": "Transaction",
+      "transactionId": "T022",
+      "amount": 3476.0,
+      "currency": "USD",
+      "timestamp": "2026-05-01T21:36:00Z",
+      "channel": "api",
+      "merchantCategory": "travel",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T023",
+      "@type": "Transaction",
+      "transactionId": "T023",
+      "amount": 3115.58,
+      "currency": "USD",
+      "timestamp": "2026-05-01T22:20:00Z",
+      "channel": "pos",
+      "merchantCategory": "crypto_exchange",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T024",
+      "@type": "Transaction",
+      "transactionId": "T024",
+      "amount": 908.21,
+      "currency": "USD",
+      "timestamp": "2026-05-01T22:48:00Z",
+      "channel": "api",
+      "merchantCategory": "money_transfer",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T025",
+      "@type": "Transaction",
+      "transactionId": "T025",
+      "amount": 1036.35,
+      "currency": "USD",
+      "timestamp": "2026-05-01T23:39:00Z",
+      "channel": "mobile",
+      "merchantCategory": "travel",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T026",
+      "@type": "Transaction",
+      "transactionId": "T026",
+      "amount": 37.64,
+      "currency": "USD",
+      "timestamp": "2026-05-02T00:22:00Z",
+      "channel": "pos",
+      "merchantCategory": "money_transfer",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T027",
+      "@type": "Transaction",
+      "transactionId": "T027",
+      "amount": 513.59,
+      "currency": "USD",
+      "timestamp": "2026-05-02T00:45:00Z",
+      "channel": "mobile",
+      "merchantCategory": "electronics",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T028",
+      "@type": "Transaction",
+      "transactionId": "T028",
+      "amount": 1015.53,
+      "currency": "USD",
+      "timestamp": "2026-05-02T01:36:00Z",
+      "channel": "pos",
+      "merchantCategory": "crypto_exchange",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T029",
+      "@type": "Transaction",
+      "transactionId": "T029",
+      "amount": 1966.54,
+      "currency": "USD",
+      "timestamp": "2026-05-02T01:56:00Z",
+      "channel": "atm",
+      "merchantCategory": "crypto_exchange",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T030",
+      "@type": "Transaction",
+      "transactionId": "T030",
+      "amount": 134.22,
+      "currency": "USD",
+      "timestamp": "2026-05-02T02:37:00Z",
+      "channel": "web",
+      "merchantCategory": "retail",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T031",
+      "@type": "Transaction",
+      "transactionId": "T031",
+      "amount": 1320.11,
+      "currency": "USD",
+      "timestamp": "2026-05-02T03:21:00Z",
+      "channel": "pos",
+      "merchantCategory": "utility",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T032",
+      "@type": "Transaction",
+      "transactionId": "T032",
+      "amount": 1003.9,
+      "currency": "USD",
+      "timestamp": "2026-05-02T03:51:00Z",
+      "channel": "api",
+      "merchantCategory": "utility",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T033",
+      "@type": "Transaction",
+      "transactionId": "T033",
+      "amount": 2246.83,
+      "currency": "USD",
+      "timestamp": "2026-05-02T04:31:00Z",
+      "channel": "api",
+      "merchantCategory": "travel",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T034",
+      "@type": "Transaction",
+      "transactionId": "T034",
+      "amount": 164.7,
+      "currency": "USD",
+      "timestamp": "2026-05-02T05:11:00Z",
+      "channel": "api",
+      "merchantCategory": "travel",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T035",
+      "@type": "Transaction",
+      "transactionId": "T035",
+      "amount": 1993.02,
+      "currency": "USD",
+      "timestamp": "2026-05-02T05:53:00Z",
+      "channel": "web",
+      "merchantCategory": "utility",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T036",
+      "@type": "Transaction",
+      "transactionId": "T036",
+      "amount": 1881.25,
+      "currency": "USD",
+      "timestamp": "2026-05-02T06:25:00Z",
+      "channel": "pos",
+      "merchantCategory": "gaming",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T037",
+      "@type": "Transaction",
+      "transactionId": "T037",
+      "amount": 88.13,
+      "currency": "USD",
+      "timestamp": "2026-05-02T06:59:00Z",
+      "channel": "atm",
+      "merchantCategory": "gaming",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T038",
+      "@type": "Transaction",
+      "transactionId": "T038",
+      "amount": 1186.72,
+      "currency": "USD",
+      "timestamp": "2026-05-02T07:38:00Z",
+      "channel": "pos",
+      "merchantCategory": "travel",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T039",
+      "@type": "Transaction",
+      "transactionId": "T039",
+      "amount": 25.9,
+      "currency": "USD",
+      "timestamp": "2026-05-02T08:11:00Z",
+      "channel": "atm",
+      "merchantCategory": "money_transfer",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T040",
+      "@type": "Transaction",
+      "transactionId": "T040",
+      "amount": 1660.62,
+      "currency": "USD",
+      "timestamp": "2026-05-02T08:53:00Z",
+      "channel": "api",
+      "merchantCategory": "utility",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T041",
+      "@type": "Transaction",
+      "transactionId": "T041",
+      "amount": 2149.51,
+      "currency": "USD",
+      "timestamp": "2026-05-02T09:19:00Z",
+      "channel": "web",
+      "merchantCategory": "utility",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T042",
+      "@type": "Transaction",
+      "transactionId": "T042",
+      "amount": 543.84,
+      "currency": "USD",
+      "timestamp": "2026-05-02T10:09:00Z",
+      "channel": "web",
+      "merchantCategory": "travel",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T043",
+      "@type": "Transaction",
+      "transactionId": "T043",
+      "amount": 1342.82,
+      "currency": "USD",
+      "timestamp": "2026-05-02T10:34:00Z",
+      "channel": "mobile",
+      "merchantCategory": "money_transfer",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T044",
+      "@type": "Transaction",
+      "transactionId": "T044",
+      "amount": 887.72,
+      "currency": "USD",
+      "timestamp": "2026-05-02T11:14:00Z",
+      "channel": "web",
+      "merchantCategory": "travel",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T045",
+      "@type": "Transaction",
+      "transactionId": "T045",
+      "amount": 1756.79,
+      "currency": "USD",
+      "timestamp": "2026-05-02T12:03:00Z",
+      "channel": "web",
+      "merchantCategory": "money_transfer",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T046",
+      "@type": "Transaction",
+      "transactionId": "T046",
+      "amount": 52.52,
+      "currency": "USD",
+      "timestamp": "2026-05-02T12:35:00Z",
+      "channel": "atm",
+      "merchantCategory": "electronics",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T047",
+      "@type": "Transaction",
+      "transactionId": "T047",
+      "amount": 972.18,
+      "currency": "USD",
+      "timestamp": "2026-05-02T13:15:00Z",
+      "channel": "api",
+      "merchantCategory": "travel",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T048",
+      "@type": "Transaction",
+      "transactionId": "T048",
+      "amount": 7896.18,
+      "currency": "USD",
+      "timestamp": "2026-05-02T13:38:00Z",
+      "channel": "api",
+      "merchantCategory": "retail",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T049",
+      "@type": "Transaction",
+      "transactionId": "T049",
+      "amount": 87.42,
+      "currency": "USD",
+      "timestamp": "2026-05-02T14:23:00Z",
+      "channel": "mobile",
+      "merchantCategory": "retail",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T050",
+      "@type": "Transaction",
+      "transactionId": "T050",
+      "amount": 1939.7,
+      "currency": "USD",
+      "timestamp": "2026-05-02T14:58:00Z",
+      "channel": "pos",
+      "merchantCategory": "electronics",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T051",
+      "@type": "Transaction",
+      "transactionId": "T051",
+      "amount": 1527.08,
+      "currency": "USD",
+      "timestamp": "2026-05-02T15:47:00Z",
+      "channel": "atm",
+      "merchantCategory": "retail",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T052",
+      "@type": "Transaction",
+      "transactionId": "T052",
+      "amount": 40.21,
+      "currency": "USD",
+      "timestamp": "2026-05-02T16:22:00Z",
+      "channel": "api",
+      "merchantCategory": "retail",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T053",
+      "@type": "Transaction",
+      "transactionId": "T053",
+      "amount": 2591.93,
+      "currency": "USD",
+      "timestamp": "2026-05-02T16:49:00Z",
+      "channel": "mobile",
+      "merchantCategory": "electronics",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T054",
+      "@type": "Transaction",
+      "transactionId": "T054",
+      "amount": 2075.24,
+      "currency": "USD",
+      "timestamp": "2026-05-02T17:33:00Z",
+      "channel": "api",
+      "merchantCategory": "gaming",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T055",
+      "@type": "Transaction",
+      "transactionId": "T055",
+      "amount": 1725.21,
+      "currency": "USD",
+      "timestamp": "2026-05-02T17:55:00Z",
+      "channel": "pos",
+      "merchantCategory": "crypto_exchange",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T056",
+      "@type": "Transaction",
+      "transactionId": "T056",
+      "amount": 248.13,
+      "currency": "USD",
+      "timestamp": "2026-05-02T18:32:00Z",
+      "channel": "pos",
+      "merchantCategory": "money_transfer",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T057",
+      "@type": "Transaction",
+      "transactionId": "T057",
+      "amount": 574.14,
+      "currency": "USD",
+      "timestamp": "2026-05-02T19:24:00Z",
+      "channel": "web",
+      "merchantCategory": "utility",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T058",
+      "@type": "Transaction",
+      "transactionId": "T058",
+      "amount": 355.01,
+      "currency": "USD",
+      "timestamp": "2026-05-02T20:04:00Z",
+      "channel": "api",
+      "merchantCategory": "electronics",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T059",
+      "@type": "Transaction",
+      "transactionId": "T059",
+      "amount": 1321.58,
+      "currency": "USD",
+      "timestamp": "2026-05-02T20:42:00Z",
+      "channel": "mobile",
+      "merchantCategory": "utility",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T060",
+      "@type": "Transaction",
+      "transactionId": "T060",
+      "amount": 2178.32,
+      "currency": "USD",
+      "timestamp": "2026-05-02T21:09:00Z",
+      "channel": "pos",
+      "merchantCategory": "travel",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T061",
+      "@type": "Transaction",
+      "transactionId": "T061",
+      "amount": 5951.75,
+      "currency": "USD",
+      "timestamp": "2026-05-02T21:45:00Z",
+      "channel": "web",
+      "merchantCategory": "crypto_exchange",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T062",
+      "@type": "Transaction",
+      "transactionId": "T062",
+      "amount": 1524.38,
+      "currency": "USD",
+      "timestamp": "2026-05-02T22:29:00Z",
+      "channel": "api",
+      "merchantCategory": "electronics",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T063",
+      "@type": "Transaction",
+      "transactionId": "T063",
+      "amount": 6537.97,
+      "currency": "USD",
+      "timestamp": "2026-05-02T22:59:00Z",
+      "channel": "pos",
+      "merchantCategory": "gaming",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T064",
+      "@type": "Transaction",
+      "transactionId": "T064",
+      "amount": 1822.92,
+      "currency": "USD",
+      "timestamp": "2026-05-02T23:30:00Z",
+      "channel": "web",
+      "merchantCategory": "crypto_exchange",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T065",
+      "@type": "Transaction",
+      "transactionId": "T065",
+      "amount": 55.5,
+      "currency": "USD",
+      "timestamp": "2026-05-03T00:19:00Z",
+      "channel": "api",
+      "merchantCategory": "gaming",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T066",
+      "@type": "Transaction",
+      "transactionId": "T066",
+      "amount": 5691.4,
+      "currency": "USD",
+      "timestamp": "2026-05-03T00:55:00Z",
+      "channel": "api",
+      "merchantCategory": "travel",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T067",
+      "@type": "Transaction",
+      "transactionId": "T067",
+      "amount": 2092.96,
+      "currency": "USD",
+      "timestamp": "2026-05-03T01:27:00Z",
+      "channel": "pos",
+      "merchantCategory": "electronics",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T068",
+      "@type": "Transaction",
+      "transactionId": "T068",
+      "amount": 419.74,
+      "currency": "USD",
+      "timestamp": "2026-05-03T02:14:00Z",
+      "channel": "atm",
+      "merchantCategory": "gaming",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T069",
+      "@type": "Transaction",
+      "transactionId": "T069",
+      "amount": 749.95,
+      "currency": "USD",
+      "timestamp": "2026-05-03T02:36:00Z",
+      "channel": "mobile",
+      "merchantCategory": "money_transfer",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T070",
+      "@type": "Transaction",
+      "transactionId": "T070",
+      "amount": 104.82,
+      "currency": "USD",
+      "timestamp": "2026-05-03T03:12:00Z",
+      "channel": "api",
+      "merchantCategory": "money_transfer",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T071",
+      "@type": "Transaction",
+      "transactionId": "T071",
+      "amount": 1819.22,
+      "currency": "USD",
+      "timestamp": "2026-05-03T03:47:00Z",
+      "channel": "pos",
+      "merchantCategory": "retail",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T072",
+      "@type": "Transaction",
+      "transactionId": "T072",
+      "amount": 5950.75,
+      "currency": "USD",
+      "timestamp": "2026-05-03T04:25:00Z",
+      "channel": "mobile",
+      "merchantCategory": "money_transfer",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T073",
+      "@type": "Transaction",
+      "transactionId": "T073",
+      "amount": 87.79,
+      "currency": "USD",
+      "timestamp": "2026-05-03T05:21:00Z",
+      "channel": "pos",
+      "merchantCategory": "utility",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T074",
+      "@type": "Transaction",
+      "transactionId": "T074",
+      "amount": 908.16,
+      "currency": "USD",
+      "timestamp": "2026-05-03T05:41:00Z",
+      "channel": "atm",
+      "merchantCategory": "electronics",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T075",
+      "@type": "Transaction",
+      "transactionId": "T075",
+      "amount": 1559.27,
+      "currency": "USD",
+      "timestamp": "2026-05-03T06:28:00Z",
+      "channel": "atm",
+      "merchantCategory": "retail",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T076",
+      "@type": "Transaction",
+      "transactionId": "T076",
+      "amount": 2030.06,
+      "currency": "USD",
+      "timestamp": "2026-05-03T07:08:00Z",
+      "channel": "mobile",
+      "merchantCategory": "utility",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T077",
+      "@type": "Transaction",
+      "transactionId": "T077",
+      "amount": 2556.46,
+      "currency": "USD",
+      "timestamp": "2026-05-03T07:29:00Z",
+      "channel": "api",
+      "merchantCategory": "gaming",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T078",
+      "@type": "Transaction",
+      "transactionId": "T078",
+      "amount": 56.35,
+      "currency": "USD",
+      "timestamp": "2026-05-03T08:21:00Z",
+      "channel": "api",
+      "merchantCategory": "money_transfer",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T079",
+      "@type": "Transaction",
+      "transactionId": "T079",
+      "amount": 1268.66,
+      "currency": "USD",
+      "timestamp": "2026-05-03T08:50:00Z",
+      "channel": "atm",
+      "merchantCategory": "electronics",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T080",
+      "@type": "Transaction",
+      "transactionId": "T080",
+      "amount": 2174.8,
+      "currency": "USD",
+      "timestamp": "2026-05-03T09:40:00Z",
+      "channel": "mobile",
+      "merchantCategory": "retail",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T081",
+      "@type": "Transaction",
+      "transactionId": "T081",
+      "amount": 1926.36,
+      "currency": "USD",
+      "timestamp": "2026-05-03T10:11:00Z",
+      "channel": "web",
+      "merchantCategory": "travel",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T082",
+      "@type": "Transaction",
+      "transactionId": "T082",
+      "amount": 187.75,
+      "currency": "USD",
+      "timestamp": "2026-05-03T10:42:00Z",
+      "channel": "api",
+      "merchantCategory": "travel",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T083",
+      "@type": "Transaction",
+      "transactionId": "T083",
+      "amount": 851.52,
+      "currency": "USD",
+      "timestamp": "2026-05-03T11:21:00Z",
+      "channel": "atm",
+      "merchantCategory": "utility",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T084",
+      "@type": "Transaction",
+      "transactionId": "T084",
+      "amount": 1649.22,
+      "currency": "USD",
+      "timestamp": "2026-05-03T12:01:00Z",
+      "channel": "web",
+      "merchantCategory": "utility",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T085",
+      "@type": "Transaction",
+      "transactionId": "T085",
+      "amount": 125.03,
+      "currency": "USD",
+      "timestamp": "2026-05-03T12:26:00Z",
+      "channel": "api",
+      "merchantCategory": "money_transfer",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T086",
+      "@type": "Transaction",
+      "transactionId": "T086",
+      "amount": 1255.89,
+      "currency": "USD",
+      "timestamp": "2026-05-03T13:07:00Z",
+      "channel": "mobile",
+      "merchantCategory": "crypto_exchange",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T087",
+      "@type": "Transaction",
+      "transactionId": "T087",
+      "amount": 2010.4,
+      "currency": "USD",
+      "timestamp": "2026-05-03T13:43:00Z",
+      "channel": "mobile",
+      "merchantCategory": "retail",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T088",
+      "@type": "Transaction",
+      "transactionId": "T088",
+      "amount": 1985.13,
+      "currency": "USD",
+      "timestamp": "2026-05-03T14:33:00Z",
+      "channel": "mobile",
+      "merchantCategory": "electronics",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T089",
+      "@type": "Transaction",
+      "transactionId": "T089",
+      "amount": 1526.43,
+      "currency": "USD",
+      "timestamp": "2026-05-03T15:07:00Z",
+      "channel": "api",
+      "merchantCategory": "crypto_exchange",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T090",
+      "@type": "Transaction",
+      "transactionId": "T090",
+      "amount": 1268.93,
+      "currency": "USD",
+      "timestamp": "2026-05-03T15:48:00Z",
+      "channel": "api",
+      "merchantCategory": "gaming",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T091",
+      "@type": "Transaction",
+      "transactionId": "T091",
+      "amount": 5.93,
+      "currency": "USD",
+      "timestamp": "2026-05-03T16:08:00Z",
+      "channel": "pos",
+      "merchantCategory": "gaming",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T092",
+      "@type": "Transaction",
+      "transactionId": "T092",
+      "amount": 1345.37,
+      "currency": "USD",
+      "timestamp": "2026-05-03T16:55:00Z",
+      "channel": "mobile",
+      "merchantCategory": "gaming",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T093",
+      "@type": "Transaction",
+      "transactionId": "T093",
+      "amount": 1989.9,
+      "currency": "USD",
+      "timestamp": "2026-05-03T17:41:00Z",
+      "channel": "web",
+      "merchantCategory": "money_transfer",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T094",
+      "@type": "Transaction",
+      "transactionId": "T094",
+      "amount": 2003.44,
+      "currency": "USD",
+      "timestamp": "2026-05-03T18:08:00Z",
+      "channel": "atm",
+      "merchantCategory": "crypto_exchange",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T095",
+      "@type": "Transaction",
+      "transactionId": "T095",
+      "amount": 1831.28,
+      "currency": "USD",
+      "timestamp": "2026-05-03T18:43:00Z",
+      "channel": "atm",
+      "merchantCategory": "utility",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T096",
+      "@type": "Transaction",
+      "transactionId": "T096",
+      "amount": 2119.29,
+      "currency": "USD",
+      "timestamp": "2026-05-03T19:16:00Z",
+      "channel": "mobile",
+      "merchantCategory": "utility",
+      "decision": "review",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T097",
+      "@type": "Transaction",
+      "transactionId": "T097",
+      "amount": 221.41,
+      "currency": "USD",
+      "timestamp": "2026-05-03T20:01:00Z",
+      "channel": "web",
+      "merchantCategory": "money_transfer",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T098",
+      "@type": "Transaction",
+      "transactionId": "T098",
+      "amount": 853.73,
+      "currency": "USD",
+      "timestamp": "2026-05-03T20:46:00Z",
+      "channel": "api",
+      "merchantCategory": "electronics",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:transaction/T099",
+      "@type": "Transaction",
+      "transactionId": "T099",
+      "amount": 8697.05,
+      "currency": "USD",
+      "timestamp": "2026-05-03T21:10:00Z",
+      "channel": "web",
+      "merchantCategory": "gaming",
+      "decision": "review",
+      "isFraud": true
+    },
+    {
+      "@id": "ex:transaction/T100",
+      "@type": "Transaction",
+      "transactionId": "T100",
+      "amount": 2083.12,
+      "currency": "USD",
+      "timestamp": "2026-05-03T21:49:00Z",
+      "channel": "atm",
+      "merchantCategory": "electronics",
+      "decision": "approve",
+      "isFraud": false
+    },
+    {
+      "@id": "ex:device/D001",
+      "@type": "Device",
+      "deviceId": "D001",
+      "deviceType": "windows",
+      "isEmulator": false,
+      "firstSeen": "2026-01-29T08:00:00Z"
+    },
+    {
+      "@id": "ex:device/D002",
+      "@type": "Device",
+      "deviceId": "D002",
+      "deviceType": "linux",
+      "isEmulator": false,
+      "firstSeen": "2025-06-14T08:00:00Z"
+    },
+    {
+      "@id": "ex:device/D003",
+      "@type": "Device",
+      "deviceId": "D003",
+      "deviceType": "windows",
+      "isEmulator": false,
+      "firstSeen": "2025-08-14T08:00:00Z"
+    },
+    {
+      "@id": "ex:device/D004",
+      "@type": "Device",
+      "deviceId": "D004",
+      "deviceType": "linux",
+      "isEmulator": false,
+      "firstSeen": "2025-10-21T08:00:00Z"
+    },
+    {
+      "@id": "ex:device/D005",
+      "@type": "Device",
+      "deviceId": "D005",
+      "deviceType": "android",
+      "isEmulator": false,
+      "firstSeen": "2025-08-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:device/D006",
+      "@type": "Device",
+      "deviceId": "D006",
+      "deviceType": "ios",
+      "isEmulator": false,
+      "firstSeen": "2025-08-23T08:00:00Z"
+    },
+    {
+      "@id": "ex:device/D007",
+      "@type": "Device",
+      "deviceId": "D007",
+      "deviceType": "ios",
+      "isEmulator": true,
+      "firstSeen": "2025-10-27T08:00:00Z"
+    },
+    {
+      "@id": "ex:device/D008",
+      "@type": "Device",
+      "deviceId": "D008",
+      "deviceType": "windows",
+      "isEmulator": false,
+      "firstSeen": "2025-12-28T08:00:00Z"
+    },
+    {
+      "@id": "ex:device/D009",
+      "@type": "Device",
+      "deviceId": "D009",
+      "deviceType": "linux",
+      "isEmulator": false,
+      "firstSeen": "2026-03-18T08:00:00Z"
+    },
+    {
+      "@id": "ex:device/D010",
+      "@type": "Device",
+      "deviceId": "D010",
+      "deviceType": "macos",
+      "isEmulator": false,
+      "firstSeen": "2025-08-01T08:00:00Z"
+    },
+    {
+      "@id": "ex:ip/203.0.113.11",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.11",
+      "asn": "AS15169",
+      "country": "US",
+      "isProxy": false,
+      "threatScore": 0.52
+    },
+    {
+      "@id": "ex:ip/203.0.113.12",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.12",
+      "asn": "AS15169",
+      "country": "GB",
+      "isProxy": false,
+      "threatScore": 0.34
+    },
+    {
+      "@id": "ex:ip/203.0.113.13",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.13",
+      "asn": "AS15169",
+      "country": "BR",
+      "isProxy": true,
+      "threatScore": 0.9
+    },
+    {
+      "@id": "ex:ip/203.0.113.14",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.14",
+      "asn": "AS20473",
+      "country": "CA",
+      "isProxy": false,
+      "threatScore": 0.23
+    },
+    {
+      "@id": "ex:ip/203.0.113.15",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.15",
+      "asn": "AS20473",
+      "country": "DE",
+      "isProxy": false,
+      "threatScore": 0.29
+    },
+    {
+      "@id": "ex:ip/203.0.113.16",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.16",
+      "asn": "AS13335",
+      "country": "CA",
+      "isProxy": false,
+      "threatScore": 0.19
+    },
+    {
+      "@id": "ex:ip/203.0.113.17",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.17",
+      "asn": "AS9009",
+      "country": "BR",
+      "isProxy": true,
+      "threatScore": 0.73
+    },
+    {
+      "@id": "ex:ip/203.0.113.18",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.18",
+      "asn": "AS15169",
+      "country": "US",
+      "isProxy": true,
+      "threatScore": 0.35
+    },
+    {
+      "@id": "ex:ip/203.0.113.19",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.19",
+      "asn": "AS15169",
+      "country": "US",
+      "isProxy": false,
+      "threatScore": 0.47
+    },
+    {
+      "@id": "ex:ip/203.0.113.20",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.20",
+      "asn": "AS13335",
+      "country": "BR",
+      "isProxy": false,
+      "threatScore": 0.37
+    },
+    {
+      "@id": "ex:ip/203.0.113.21",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.21",
+      "asn": "AS15169",
+      "country": "BR",
+      "isProxy": true,
+      "threatScore": 0.69
+    },
+    {
+      "@id": "ex:ip/203.0.113.22",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.22",
+      "asn": "AS9009",
+      "country": "NG",
+      "isProxy": false,
+      "threatScore": 0.43
+    },
+    {
+      "@id": "ex:ip/203.0.113.23",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.23",
+      "asn": "AS8075",
+      "country": "CA",
+      "isProxy": true,
+      "threatScore": 0.37
+    },
+    {
+      "@id": "ex:ip/203.0.113.24",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.24",
+      "asn": "AS16509",
+      "country": "NL",
+      "isProxy": false,
+      "threatScore": 0.48
+    },
+    {
+      "@id": "ex:ip/203.0.113.25",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.25",
+      "asn": "AS13335",
+      "country": "US",
+      "isProxy": true,
+      "threatScore": 0.4
+    },
+    {
+      "@id": "ex:ip/203.0.113.26",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.26",
+      "asn": "AS13335",
+      "country": "CA",
+      "isProxy": false,
+      "threatScore": 0.3
+    },
+    {
+      "@id": "ex:ip/203.0.113.27",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.27",
+      "asn": "AS15169",
+      "country": "NL",
+      "isProxy": true,
+      "threatScore": 0.71
+    },
+    {
+      "@id": "ex:ip/203.0.113.28",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.28",
+      "asn": "AS8075",
+      "country": "CA",
+      "isProxy": false,
+      "threatScore": 0.05
+    },
+    {
+      "@id": "ex:ip/203.0.113.29",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.29",
+      "asn": "AS9009",
+      "country": "US",
+      "isProxy": true,
+      "threatScore": 0.55
+    },
+    {
+      "@id": "ex:ip/203.0.113.30",
+      "@type": "IPAddress",
+      "ipAddress": "203.0.113.30",
+      "asn": "AS13335",
+      "country": "US",
+      "isProxy": false,
+      "threatScore": 0.47
+    },
+    {
+      "@id": "ex:attack-pattern/account-takeover",
+      "@type": "AttackPattern",
+      "name": "account-takeover",
+      "domain": "cyber_fraud",
+      "description": "Account takeover using a new device, anomalous IP, credential reset, and high-value payment"
+    },
+    {
+      "@id": "ex:attack-pattern/synthetic-identity",
+      "@type": "AttackPattern",
+      "name": "synthetic-identity",
+      "domain": "fraud",
+      "description": "Synthetic identity behavior involving new accounts, shared devices, and rapid value movement"
+    },
+    {
+      "@id": "ex:attack-pattern/mule-ring",
+      "@type": "AttackPattern",
+      "name": "mule-ring",
+      "domain": "fraud",
+      "description": "Money mule ring pattern with many incoming payments followed by rapid outbound transfers"
+    },
+    {
+      "@id": "ex:attack-pattern/card-testing",
+      "@type": "AttackPattern",
+      "name": "card-testing",
+      "domain": "fraud",
+      "description": "Low-value authorization probes followed by higher-value attempted transaction"
+    },
+    {
+      "@id": "ex:attack-pattern/credential-stuffing",
+      "@type": "AttackPattern",
+      "name": "credential-stuffing",
+      "domain": "cyber",
+      "description": "Multiple failed logins across accounts from shared infrastructure followed by successful payment"
+    },
+    {
+      "@id": "ex:signal/S001",
+      "@type": "FraudSignal",
+      "signalId": "S001",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T004: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-01T10:30:00Z"
+    },
+    {
+      "@id": "ex:signal/S002",
+      "@type": "FraudSignal",
+      "signalId": "S002",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T005: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-01T11:18:00Z"
+    },
+    {
+      "@id": "ex:signal/S003",
+      "@type": "FraudSignal",
+      "signalId": "S003",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T007: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-01T12:21:00Z"
+    },
+    {
+      "@id": "ex:signal/S004",
+      "@type": "FraudSignal",
+      "signalId": "S004",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T011: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-01T14:55:00Z"
+    },
+    {
+      "@id": "ex:signal/S005",
+      "@type": "FraudSignal",
+      "signalId": "S005",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T022: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-01T21:36:00Z"
+    },
+    {
+      "@id": "ex:signal/S006",
+      "@type": "FraudSignal",
+      "signalId": "S006",
+      "riskScore": 0.98,
+      "severity": "high",
+      "description": "Suspicious transaction T023: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-01T22:20:00Z"
+    },
+    {
+      "@id": "ex:signal/S007",
+      "@type": "FraudSignal",
+      "signalId": "S007",
+      "riskScore": 0.95,
+      "severity": "high",
+      "description": "Suspicious transaction T033: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-02T04:31:00Z"
+    },
+    {
+      "@id": "ex:signal/S008",
+      "@type": "FraudSignal",
+      "signalId": "S008",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T041: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-02T09:19:00Z"
+    },
+    {
+      "@id": "ex:signal/S009",
+      "@type": "FraudSignal",
+      "signalId": "S009",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T048: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-02T13:38:00Z"
+    },
+    {
+      "@id": "ex:signal/S010",
+      "@type": "FraudSignal",
+      "signalId": "S010",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T053: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-02T16:49:00Z"
+    },
+    {
+      "@id": "ex:signal/S011",
+      "@type": "FraudSignal",
+      "signalId": "S011",
+      "riskScore": 0.96,
+      "severity": "high",
+      "description": "Suspicious transaction T054: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-02T17:33:00Z"
+    },
+    {
+      "@id": "ex:signal/S012",
+      "@type": "FraudSignal",
+      "signalId": "S012",
+      "riskScore": 0.98,
+      "severity": "high",
+      "description": "Suspicious transaction T055: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-02T17:55:00Z"
+    },
+    {
+      "@id": "ex:signal/S013",
+      "@type": "FraudSignal",
+      "signalId": "S013",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T061: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-02T21:45:00Z"
+    },
+    {
+      "@id": "ex:signal/S014",
+      "@type": "FraudSignal",
+      "signalId": "S014",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T063: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-02T22:59:00Z"
+    },
+    {
+      "@id": "ex:signal/S015",
+      "@type": "FraudSignal",
+      "signalId": "S015",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T066: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-03T00:55:00Z"
+    },
+    {
+      "@id": "ex:signal/S016",
+      "@type": "FraudSignal",
+      "signalId": "S016",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T072: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-03T04:25:00Z"
+    },
+    {
+      "@id": "ex:signal/S017",
+      "@type": "FraudSignal",
+      "signalId": "S017",
+      "riskScore": 0.97,
+      "severity": "high",
+      "description": "Suspicious transaction T074: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-03T05:41:00Z"
+    },
+    {
+      "@id": "ex:signal/S018",
+      "@type": "FraudSignal",
+      "signalId": "S018",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T077: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-03T07:29:00Z"
+    },
+    {
+      "@id": "ex:signal/S019",
+      "@type": "FraudSignal",
+      "signalId": "S019",
+      "riskScore": 0.99,
+      "severity": "high",
+      "description": "Suspicious transaction T099: high-risk account/IP/device pattern",
+      "createdAt": "2026-05-03T21:10:00Z"
+    },
+    {
+      "@id": "ex:edge/E001",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A006",
+      "ex:target": "ex:transaction/T001",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T08:49:00Z"
+    },
+    {
+      "@id": "ex:edge/E002",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T001",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E003",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T001",
+      "ex:target": "ex:ip/IP016",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.3
+    },
+    {
+      "@id": "ex:edge/E004",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A013",
+      "ex:target": "ex:transaction/T002",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T09:31:00Z"
+    },
+    {
+      "@id": "ex:edge/E005",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T002",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E006",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T002",
+      "ex:target": "ex:ip/IP015",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.4
+    },
+    {
+      "@id": "ex:edge/E007",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A002",
+      "ex:target": "ex:transaction/T003",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T10:01:00Z"
+    },
+    {
+      "@id": "ex:edge/E008",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T003",
+      "ex:target": "ex:device/D010",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E009",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T003",
+      "ex:target": "ex:ip/IP018",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.05
+    },
+    {
+      "@id": "ex:edge/E010",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A028",
+      "ex:target": "ex:transaction/T004",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T10:30:00Z"
+    },
+    {
+      "@id": "ex:edge/E011",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T004",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E012",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T004",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.9
+    },
+    {
+      "@id": "ex:edge/E013",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T004",
+      "ex:target": "ex:attack_pattern/synthetic-identity",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.79
+    },
+    {
+      "@id": "ex:edge/E014",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T004",
+      "ex:target": "ex:fraud_signal/S001",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E015",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A029",
+      "ex:target": "ex:transaction/T005",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T11:18:00Z"
+    },
+    {
+      "@id": "ex:edge/E016",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T005",
+      "ex:target": "ex:device/D010",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E017",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T005",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.9
+    },
+    {
+      "@id": "ex:edge/E018",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T005",
+      "ex:target": "ex:attack_pattern/mule-ring",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.74
+    },
+    {
+      "@id": "ex:edge/E019",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T005",
+      "ex:target": "ex:fraud_signal/S002",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E020",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A023",
+      "ex:target": "ex:transaction/T006",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T11:46:00Z"
+    },
+    {
+      "@id": "ex:edge/E021",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T006",
+      "ex:target": "ex:device/D006",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E022",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T006",
+      "ex:target": "ex:ip/IP008",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.35
+    },
+    {
+      "@id": "ex:edge/E023",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A010",
+      "ex:target": "ex:transaction/T007",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T12:21:00Z"
+    },
+    {
+      "@id": "ex:edge/E024",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T007",
+      "ex:target": "ex:device/D001",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E025",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T007",
+      "ex:target": "ex:ip/IP019",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.55
+    },
+    {
+      "@id": "ex:edge/E026",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T007",
+      "ex:target": "ex:attack_pattern/synthetic-identity",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.94
+    },
+    {
+      "@id": "ex:edge/E027",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T007",
+      "ex:target": "ex:fraud_signal/S003",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E028",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A029",
+      "ex:target": "ex:transaction/T008",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T13:10:00Z"
+    },
+    {
+      "@id": "ex:edge/E029",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T008",
+      "ex:target": "ex:device/D002",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E030",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T008",
+      "ex:target": "ex:ip/IP012",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.43
+    },
+    {
+      "@id": "ex:edge/E031",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A026",
+      "ex:target": "ex:transaction/T009",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T13:50:00Z"
+    },
+    {
+      "@id": "ex:edge/E032",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T009",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E033",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T009",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.9
+    },
+    {
+      "@id": "ex:edge/E034",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A005",
+      "ex:target": "ex:transaction/T010",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T14:27:00Z"
+    },
+    {
+      "@id": "ex:edge/E035",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T010",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E036",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T010",
+      "ex:target": "ex:ip/IP004",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.23
+    },
+    {
+      "@id": "ex:edge/E037",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A029",
+      "ex:target": "ex:transaction/T011",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T14:55:00Z"
+    },
+    {
+      "@id": "ex:edge/E038",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T011",
+      "ex:target": "ex:device/D006",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E039",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T011",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.69
+    },
+    {
+      "@id": "ex:edge/E040",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T011",
+      "ex:target": "ex:attack_pattern/mule-ring",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.69
+    },
+    {
+      "@id": "ex:edge/E041",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T011",
+      "ex:target": "ex:fraud_signal/S004",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E042",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A011",
+      "ex:target": "ex:transaction/T012",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T15:38:00Z"
+    },
+    {
+      "@id": "ex:edge/E043",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T012",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E044",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T012",
+      "ex:target": "ex:ip/IP009",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.47
+    },
+    {
+      "@id": "ex:edge/E045",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A004",
+      "ex:target": "ex:transaction/T013",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T16:12:00Z"
+    },
+    {
+      "@id": "ex:edge/E046",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T013",
+      "ex:target": "ex:device/D002",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E047",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T013",
+      "ex:target": "ex:ip/IP005",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.29
+    },
+    {
+      "@id": "ex:edge/E048",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A002",
+      "ex:target": "ex:transaction/T014",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T16:39:00Z"
+    },
+    {
+      "@id": "ex:edge/E049",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T014",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E050",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T014",
+      "ex:target": "ex:ip/IP012",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.43
+    },
+    {
+      "@id": "ex:edge/E051",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A012",
+      "ex:target": "ex:transaction/T015",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T17:19:00Z"
+    },
+    {
+      "@id": "ex:edge/E052",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T015",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E053",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T015",
+      "ex:target": "ex:ip/IP014",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.48
+    },
+    {
+      "@id": "ex:edge/E054",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A026",
+      "ex:target": "ex:transaction/T016",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T18:02:00Z"
+    },
+    {
+      "@id": "ex:edge/E055",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T016",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E056",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T016",
+      "ex:target": "ex:ip/IP014",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.48
+    },
+    {
+      "@id": "ex:edge/E057",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A026",
+      "ex:target": "ex:transaction/T017",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T18:44:00Z"
+    },
+    {
+      "@id": "ex:edge/E058",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T017",
+      "ex:target": "ex:device/D002",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E059",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T017",
+      "ex:target": "ex:ip/IP013",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.37
+    },
+    {
+      "@id": "ex:edge/E060",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A027",
+      "ex:target": "ex:transaction/T018",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T19:12:00Z"
+    },
+    {
+      "@id": "ex:edge/E061",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T018",
+      "ex:target": "ex:device/D004",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E062",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T018",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.73
+    },
+    {
+      "@id": "ex:edge/E063",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A025",
+      "ex:target": "ex:transaction/T019",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T19:55:00Z"
+    },
+    {
+      "@id": "ex:edge/E064",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T019",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E065",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T019",
+      "ex:target": "ex:ip/IP012",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.43
+    },
+    {
+      "@id": "ex:edge/E066",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A009",
+      "ex:target": "ex:transaction/T020",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T20:28:00Z"
+    },
+    {
+      "@id": "ex:edge/E067",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T020",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E068",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T020",
+      "ex:target": "ex:ip/IP019",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.55
+    },
+    {
+      "@id": "ex:edge/E069",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A026",
+      "ex:target": "ex:transaction/T021",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T21:13:00Z"
+    },
+    {
+      "@id": "ex:edge/E070",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T021",
+      "ex:target": "ex:device/D006",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E071",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T021",
+      "ex:target": "ex:ip/IP014",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.48
+    },
+    {
+      "@id": "ex:edge/E072",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A029",
+      "ex:target": "ex:transaction/T022",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T21:36:00Z"
+    },
+    {
+      "@id": "ex:edge/E073",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T022",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E074",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T022",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.73
+    },
+    {
+      "@id": "ex:edge/E075",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T022",
+      "ex:target": "ex:attack_pattern/account-takeover",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.88
+    },
+    {
+      "@id": "ex:edge/E076",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T022",
+      "ex:target": "ex:fraud_signal/S005",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E077",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A018",
+      "ex:target": "ex:transaction/T023",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T22:20:00Z"
+    },
+    {
+      "@id": "ex:edge/E078",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T023",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E079",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T023",
+      "ex:target": "ex:ip/IP017",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.71
+    },
+    {
+      "@id": "ex:edge/E080",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T023",
+      "ex:target": "ex:attack_pattern/card-testing",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.87
+    },
+    {
+      "@id": "ex:edge/E081",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T023",
+      "ex:target": "ex:fraud_signal/S006",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.98
+    },
+    {
+      "@id": "ex:edge/E082",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A029",
+      "ex:target": "ex:transaction/T024",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T22:48:00Z"
+    },
+    {
+      "@id": "ex:edge/E083",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T024",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E084",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T024",
+      "ex:target": "ex:ip/IP010",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.37
+    },
+    {
+      "@id": "ex:edge/E085",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A019",
+      "ex:target": "ex:transaction/T025",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-01T23:39:00Z"
+    },
+    {
+      "@id": "ex:edge/E086",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T025",
+      "ex:target": "ex:device/D010",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E087",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T025",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.69
+    },
+    {
+      "@id": "ex:edge/E088",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A026",
+      "ex:target": "ex:transaction/T026",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T00:22:00Z"
+    },
+    {
+      "@id": "ex:edge/E089",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T026",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E090",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T026",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.9
+    },
+    {
+      "@id": "ex:edge/E091",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A025",
+      "ex:target": "ex:transaction/T027",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T00:45:00Z"
+    },
+    {
+      "@id": "ex:edge/E092",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T027",
+      "ex:target": "ex:device/D004",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E093",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T027",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.69
+    },
+    {
+      "@id": "ex:edge/E094",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A016",
+      "ex:target": "ex:transaction/T028",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T01:36:00Z"
+    },
+    {
+      "@id": "ex:edge/E095",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T028",
+      "ex:target": "ex:device/D010",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E096",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T028",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.9
+    },
+    {
+      "@id": "ex:edge/E097",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A008",
+      "ex:target": "ex:transaction/T029",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T01:56:00Z"
+    },
+    {
+      "@id": "ex:edge/E098",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T029",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E099",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T029",
+      "ex:target": "ex:ip/IP001",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.52
+    },
+    {
+      "@id": "ex:edge/E100",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A023",
+      "ex:target": "ex:transaction/T030",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T02:37:00Z"
+    },
+    {
+      "@id": "ex:edge/E101",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T030",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E102",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T030",
+      "ex:target": "ex:ip/IP015",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.4
+    },
+    {
+      "@id": "ex:edge/E103",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A022",
+      "ex:target": "ex:transaction/T031",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T03:21:00Z"
+    },
+    {
+      "@id": "ex:edge/E104",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T031",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E105",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T031",
+      "ex:target": "ex:ip/IP018",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.05
+    },
+    {
+      "@id": "ex:edge/E106",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A018",
+      "ex:target": "ex:transaction/T032",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T03:51:00Z"
+    },
+    {
+      "@id": "ex:edge/E107",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T032",
+      "ex:target": "ex:device/D008",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E108",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T032",
+      "ex:target": "ex:ip/IP016",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.3
+    },
+    {
+      "@id": "ex:edge/E109",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A018",
+      "ex:target": "ex:transaction/T033",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T04:31:00Z"
+    },
+    {
+      "@id": "ex:edge/E110",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T033",
+      "ex:target": "ex:device/D008",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E111",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T033",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.69
+    },
+    {
+      "@id": "ex:edge/E112",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T033",
+      "ex:target": "ex:attack_pattern/synthetic-identity",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.74
+    },
+    {
+      "@id": "ex:edge/E113",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T033",
+      "ex:target": "ex:fraud_signal/S007",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.95
+    },
+    {
+      "@id": "ex:edge/E114",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A023",
+      "ex:target": "ex:transaction/T034",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T05:11:00Z"
+    },
+    {
+      "@id": "ex:edge/E115",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T034",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E116",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T034",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.73
+    },
+    {
+      "@id": "ex:edge/E117",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A007",
+      "ex:target": "ex:transaction/T035",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T05:53:00Z"
+    },
+    {
+      "@id": "ex:edge/E118",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T035",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E119",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T035",
+      "ex:target": "ex:ip/IP013",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.37
+    },
+    {
+      "@id": "ex:edge/E120",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A012",
+      "ex:target": "ex:transaction/T036",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T06:25:00Z"
+    },
+    {
+      "@id": "ex:edge/E121",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T036",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E122",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T036",
+      "ex:target": "ex:ip/IP017",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.71
+    },
+    {
+      "@id": "ex:edge/E123",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A009",
+      "ex:target": "ex:transaction/T037",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T06:59:00Z"
+    },
+    {
+      "@id": "ex:edge/E124",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T037",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E125",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T037",
+      "ex:target": "ex:ip/IP016",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.3
+    },
+    {
+      "@id": "ex:edge/E126",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A030",
+      "ex:target": "ex:transaction/T038",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T07:38:00Z"
+    },
+    {
+      "@id": "ex:edge/E127",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T038",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E128",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T038",
+      "ex:target": "ex:ip/IP020",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.47
+    },
+    {
+      "@id": "ex:edge/E129",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A014",
+      "ex:target": "ex:transaction/T039",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T08:11:00Z"
+    },
+    {
+      "@id": "ex:edge/E130",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T039",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E131",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T039",
+      "ex:target": "ex:ip/IP015",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.4
+    },
+    {
+      "@id": "ex:edge/E132",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A011",
+      "ex:target": "ex:transaction/T040",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T08:53:00Z"
+    },
+    {
+      "@id": "ex:edge/E133",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T040",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E134",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T040",
+      "ex:target": "ex:ip/IP009",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.47
+    },
+    {
+      "@id": "ex:edge/E135",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A024",
+      "ex:target": "ex:transaction/T041",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T09:19:00Z"
+    },
+    {
+      "@id": "ex:edge/E136",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T041",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E137",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T041",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.69
+    },
+    {
+      "@id": "ex:edge/E138",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T041",
+      "ex:target": "ex:attack_pattern/synthetic-identity",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.74
+    },
+    {
+      "@id": "ex:edge/E139",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T041",
+      "ex:target": "ex:fraud_signal/S008",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E140",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A001",
+      "ex:target": "ex:transaction/T042",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T10:09:00Z"
+    },
+    {
+      "@id": "ex:edge/E141",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T042",
+      "ex:target": "ex:device/D010",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E142",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T042",
+      "ex:target": "ex:ip/IP005",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.29
+    },
+    {
+      "@id": "ex:edge/E143",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A009",
+      "ex:target": "ex:transaction/T043",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T10:34:00Z"
+    },
+    {
+      "@id": "ex:edge/E144",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T043",
+      "ex:target": "ex:device/D006",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E145",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T043",
+      "ex:target": "ex:ip/IP006",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.19
+    },
+    {
+      "@id": "ex:edge/E146",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A018",
+      "ex:target": "ex:transaction/T044",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T11:14:00Z"
+    },
+    {
+      "@id": "ex:edge/E147",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T044",
+      "ex:target": "ex:device/D010",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E148",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T044",
+      "ex:target": "ex:ip/IP013",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.37
+    },
+    {
+      "@id": "ex:edge/E149",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A025",
+      "ex:target": "ex:transaction/T045",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T12:03:00Z"
+    },
+    {
+      "@id": "ex:edge/E150",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T045",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E151",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T045",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.9
+    },
+    {
+      "@id": "ex:edge/E152",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A003",
+      "ex:target": "ex:transaction/T046",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T12:35:00Z"
+    },
+    {
+      "@id": "ex:edge/E153",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T046",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E154",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T046",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.69
+    },
+    {
+      "@id": "ex:edge/E155",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A021",
+      "ex:target": "ex:transaction/T047",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T13:15:00Z"
+    },
+    {
+      "@id": "ex:edge/E156",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T047",
+      "ex:target": "ex:device/D008",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E157",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T047",
+      "ex:target": "ex:ip/IP005",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.29
+    },
+    {
+      "@id": "ex:edge/E158",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A029",
+      "ex:target": "ex:transaction/T048",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T13:38:00Z"
+    },
+    {
+      "@id": "ex:edge/E159",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T048",
+      "ex:target": "ex:device/D010",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E160",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T048",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.73
+    },
+    {
+      "@id": "ex:edge/E161",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T048",
+      "ex:target": "ex:attack_pattern/card-testing",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.84
+    },
+    {
+      "@id": "ex:edge/E162",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T048",
+      "ex:target": "ex:fraud_signal/S009",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E163",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A022",
+      "ex:target": "ex:transaction/T049",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T14:23:00Z"
+    },
+    {
+      "@id": "ex:edge/E164",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T049",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E165",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T049",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.69
+    },
+    {
+      "@id": "ex:edge/E166",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A009",
+      "ex:target": "ex:transaction/T050",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T14:58:00Z"
+    },
+    {
+      "@id": "ex:edge/E167",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T050",
+      "ex:target": "ex:device/D006",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E168",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T050",
+      "ex:target": "ex:ip/IP009",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.47
+    },
+    {
+      "@id": "ex:edge/E169",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A024",
+      "ex:target": "ex:transaction/T051",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T15:47:00Z"
+    },
+    {
+      "@id": "ex:edge/E170",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T051",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E171",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T051",
+      "ex:target": "ex:ip/IP008",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.35
+    },
+    {
+      "@id": "ex:edge/E172",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A008",
+      "ex:target": "ex:transaction/T052",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T16:22:00Z"
+    },
+    {
+      "@id": "ex:edge/E173",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T052",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E174",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T052",
+      "ex:target": "ex:ip/IP008",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.35
+    },
+    {
+      "@id": "ex:edge/E175",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A024",
+      "ex:target": "ex:transaction/T053",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T16:49:00Z"
+    },
+    {
+      "@id": "ex:edge/E176",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T053",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E177",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T053",
+      "ex:target": "ex:ip/IP017",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.71
+    },
+    {
+      "@id": "ex:edge/E178",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T053",
+      "ex:target": "ex:attack_pattern/mule-ring",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.71
+    },
+    {
+      "@id": "ex:edge/E179",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T053",
+      "ex:target": "ex:fraud_signal/S010",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E180",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A018",
+      "ex:target": "ex:transaction/T054",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T17:33:00Z"
+    },
+    {
+      "@id": "ex:edge/E181",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T054",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E182",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T054",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.73
+    },
+    {
+      "@id": "ex:edge/E183",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T054",
+      "ex:target": "ex:attack_pattern/credential-stuffing",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.85
+    },
+    {
+      "@id": "ex:edge/E184",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T054",
+      "ex:target": "ex:fraud_signal/S011",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.96
+    },
+    {
+      "@id": "ex:edge/E185",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A010",
+      "ex:target": "ex:transaction/T055",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T17:55:00Z"
+    },
+    {
+      "@id": "ex:edge/E186",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T055",
+      "ex:target": "ex:device/D004",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E187",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T055",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.69
+    },
+    {
+      "@id": "ex:edge/E188",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T055",
+      "ex:target": "ex:attack_pattern/account-takeover",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.83
+    },
+    {
+      "@id": "ex:edge/E189",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T055",
+      "ex:target": "ex:fraud_signal/S012",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.98
+    },
+    {
+      "@id": "ex:edge/E190",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A023",
+      "ex:target": "ex:transaction/T056",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T18:32:00Z"
+    },
+    {
+      "@id": "ex:edge/E191",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T056",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E192",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T056",
+      "ex:target": "ex:ip/IP016",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.3
+    },
+    {
+      "@id": "ex:edge/E193",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A011",
+      "ex:target": "ex:transaction/T057",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T19:24:00Z"
+    },
+    {
+      "@id": "ex:edge/E194",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T057",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E195",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T057",
+      "ex:target": "ex:ip/IP002",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.34
+    },
+    {
+      "@id": "ex:edge/E196",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A003",
+      "ex:target": "ex:transaction/T058",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T20:04:00Z"
+    },
+    {
+      "@id": "ex:edge/E197",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T058",
+      "ex:target": "ex:device/D010",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E198",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T058",
+      "ex:target": "ex:ip/IP002",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.34
+    },
+    {
+      "@id": "ex:edge/E199",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A025",
+      "ex:target": "ex:transaction/T059",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T20:42:00Z"
+    },
+    {
+      "@id": "ex:edge/E200",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T059",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E201",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T059",
+      "ex:target": "ex:ip/IP020",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.47
+    },
+    {
+      "@id": "ex:edge/E202",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A015",
+      "ex:target": "ex:transaction/T060",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T21:09:00Z"
+    },
+    {
+      "@id": "ex:edge/E203",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T060",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E204",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T060",
+      "ex:target": "ex:ip/IP019",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.55
+    },
+    {
+      "@id": "ex:edge/E205",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A024",
+      "ex:target": "ex:transaction/T061",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T21:45:00Z"
+    },
+    {
+      "@id": "ex:edge/E206",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T061",
+      "ex:target": "ex:device/D002",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E207",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T061",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.73
+    },
+    {
+      "@id": "ex:edge/E208",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T061",
+      "ex:target": "ex:attack_pattern/credential-stuffing",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.7
+    },
+    {
+      "@id": "ex:edge/E209",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T061",
+      "ex:target": "ex:fraud_signal/S013",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E210",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A001",
+      "ex:target": "ex:transaction/T062",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T22:29:00Z"
+    },
+    {
+      "@id": "ex:edge/E211",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T062",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E212",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T062",
+      "ex:target": "ex:ip/IP015",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.4
+    },
+    {
+      "@id": "ex:edge/E213",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A010",
+      "ex:target": "ex:transaction/T063",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T22:59:00Z"
+    },
+    {
+      "@id": "ex:edge/E214",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T063",
+      "ex:target": "ex:device/D008",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E215",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T063",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.9
+    },
+    {
+      "@id": "ex:edge/E216",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T063",
+      "ex:target": "ex:attack_pattern/synthetic-identity",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.8
+    },
+    {
+      "@id": "ex:edge/E217",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T063",
+      "ex:target": "ex:fraud_signal/S014",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E218",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A018",
+      "ex:target": "ex:transaction/T064",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-02T23:30:00Z"
+    },
+    {
+      "@id": "ex:edge/E219",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T064",
+      "ex:target": "ex:device/D004",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E220",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T064",
+      "ex:target": "ex:ip/IP009",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.47
+    },
+    {
+      "@id": "ex:edge/E221",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A027",
+      "ex:target": "ex:transaction/T065",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T00:19:00Z"
+    },
+    {
+      "@id": "ex:edge/E222",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T065",
+      "ex:target": "ex:device/D010",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E223",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T065",
+      "ex:target": "ex:ip/IP010",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.37
+    },
+    {
+      "@id": "ex:edge/E224",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A028",
+      "ex:target": "ex:transaction/T066",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T00:55:00Z"
+    },
+    {
+      "@id": "ex:edge/E225",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T066",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E226",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T066",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.9
+    },
+    {
+      "@id": "ex:edge/E227",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T066",
+      "ex:target": "ex:attack_pattern/account-takeover",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.74
+    },
+    {
+      "@id": "ex:edge/E228",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T066",
+      "ex:target": "ex:fraud_signal/S015",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E229",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A022",
+      "ex:target": "ex:transaction/T067",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T01:27:00Z"
+    },
+    {
+      "@id": "ex:edge/E230",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T067",
+      "ex:target": "ex:device/D010",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E231",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T067",
+      "ex:target": "ex:ip/IP019",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.55
+    },
+    {
+      "@id": "ex:edge/E232",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A021",
+      "ex:target": "ex:transaction/T068",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T02:14:00Z"
+    },
+    {
+      "@id": "ex:edge/E233",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T068",
+      "ex:target": "ex:device/D008",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E234",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T068",
+      "ex:target": "ex:ip/IP009",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.47
+    },
+    {
+      "@id": "ex:edge/E235",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A016",
+      "ex:target": "ex:transaction/T069",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T02:36:00Z"
+    },
+    {
+      "@id": "ex:edge/E236",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T069",
+      "ex:target": "ex:device/D006",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E237",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T069",
+      "ex:target": "ex:ip/IP014",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.48
+    },
+    {
+      "@id": "ex:edge/E238",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A010",
+      "ex:target": "ex:transaction/T070",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T03:12:00Z"
+    },
+    {
+      "@id": "ex:edge/E239",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T070",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E240",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T070",
+      "ex:target": "ex:ip/IP018",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.05
+    },
+    {
+      "@id": "ex:edge/E241",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A025",
+      "ex:target": "ex:transaction/T071",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T03:47:00Z"
+    },
+    {
+      "@id": "ex:edge/E242",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T071",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E243",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T071",
+      "ex:target": "ex:ip/IP017",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.71
+    },
+    {
+      "@id": "ex:edge/E244",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A028",
+      "ex:target": "ex:transaction/T072",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T04:25:00Z"
+    },
+    {
+      "@id": "ex:edge/E245",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T072",
+      "ex:target": "ex:device/D006",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E246",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T072",
+      "ex:target": "ex:ip/IP017",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.71
+    },
+    {
+      "@id": "ex:edge/E247",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T072",
+      "ex:target": "ex:attack_pattern/mule-ring",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.8
+    },
+    {
+      "@id": "ex:edge/E248",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T072",
+      "ex:target": "ex:fraud_signal/S016",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E249",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A023",
+      "ex:target": "ex:transaction/T073",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T05:21:00Z"
+    },
+    {
+      "@id": "ex:edge/E250",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T073",
+      "ex:target": "ex:device/D008",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E251",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T073",
+      "ex:target": "ex:ip/IP004",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.23
+    },
+    {
+      "@id": "ex:edge/E252",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A010",
+      "ex:target": "ex:transaction/T074",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T05:41:00Z"
+    },
+    {
+      "@id": "ex:edge/E253",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T074",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E254",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T074",
+      "ex:target": "ex:ip/IP017",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.71
+    },
+    {
+      "@id": "ex:edge/E255",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T074",
+      "ex:target": "ex:attack_pattern/synthetic-identity",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.82
+    },
+    {
+      "@id": "ex:edge/E256",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T074",
+      "ex:target": "ex:fraud_signal/S017",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.97
+    },
+    {
+      "@id": "ex:edge/E257",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A023",
+      "ex:target": "ex:transaction/T075",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T06:28:00Z"
+    },
+    {
+      "@id": "ex:edge/E258",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T075",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E259",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T075",
+      "ex:target": "ex:ip/IP017",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.71
+    },
+    {
+      "@id": "ex:edge/E260",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A005",
+      "ex:target": "ex:transaction/T076",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T07:08:00Z"
+    },
+    {
+      "@id": "ex:edge/E261",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T076",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E262",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T076",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.73
+    },
+    {
+      "@id": "ex:edge/E263",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A024",
+      "ex:target": "ex:transaction/T077",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T07:29:00Z"
+    },
+    {
+      "@id": "ex:edge/E264",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T077",
+      "ex:target": "ex:device/D006",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E265",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T077",
+      "ex:target": "ex:ip/IP017",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.71
+    },
+    {
+      "@id": "ex:edge/E266",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T077",
+      "ex:target": "ex:attack_pattern/credential-stuffing",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.84
+    },
+    {
+      "@id": "ex:edge/E267",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T077",
+      "ex:target": "ex:fraud_signal/S018",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E268",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A022",
+      "ex:target": "ex:transaction/T078",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T08:21:00Z"
+    },
+    {
+      "@id": "ex:edge/E269",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T078",
+      "ex:target": "ex:device/D008",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E270",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T078",
+      "ex:target": "ex:ip/IP005",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.29
+    },
+    {
+      "@id": "ex:edge/E271",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A011",
+      "ex:target": "ex:transaction/T079",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T08:50:00Z"
+    },
+    {
+      "@id": "ex:edge/E272",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T079",
+      "ex:target": "ex:device/D004",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E273",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T079",
+      "ex:target": "ex:ip/IP008",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.35
+    },
+    {
+      "@id": "ex:edge/E274",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A023",
+      "ex:target": "ex:transaction/T080",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T09:40:00Z"
+    },
+    {
+      "@id": "ex:edge/E275",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T080",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E276",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T080",
+      "ex:target": "ex:ip/IP013",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.37
+    },
+    {
+      "@id": "ex:edge/E277",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A019",
+      "ex:target": "ex:transaction/T081",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T10:11:00Z"
+    },
+    {
+      "@id": "ex:edge/E278",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T081",
+      "ex:target": "ex:device/D006",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E279",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T081",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.9
+    },
+    {
+      "@id": "ex:edge/E280",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A005",
+      "ex:target": "ex:transaction/T082",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T10:42:00Z"
+    },
+    {
+      "@id": "ex:edge/E281",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T082",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E282",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T082",
+      "ex:target": "ex:ip/IP005",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.29
+    },
+    {
+      "@id": "ex:edge/E283",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A028",
+      "ex:target": "ex:transaction/T083",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T11:21:00Z"
+    },
+    {
+      "@id": "ex:edge/E284",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T083",
+      "ex:target": "ex:device/D006",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E285",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T083",
+      "ex:target": "ex:ip/IP018",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.05
+    },
+    {
+      "@id": "ex:edge/E286",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A008",
+      "ex:target": "ex:transaction/T084",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T12:01:00Z"
+    },
+    {
+      "@id": "ex:edge/E287",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T084",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E288",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T084",
+      "ex:target": "ex:ip/IP008",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.35
+    },
+    {
+      "@id": "ex:edge/E289",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A023",
+      "ex:target": "ex:transaction/T085",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T12:26:00Z"
+    },
+    {
+      "@id": "ex:edge/E290",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T085",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E291",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T085",
+      "ex:target": "ex:ip/IP001",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.52
+    },
+    {
+      "@id": "ex:edge/E292",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A008",
+      "ex:target": "ex:transaction/T086",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T13:07:00Z"
+    },
+    {
+      "@id": "ex:edge/E293",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T086",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E294",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T086",
+      "ex:target": "ex:ip/IP014",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.48
+    },
+    {
+      "@id": "ex:edge/E295",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A013",
+      "ex:target": "ex:transaction/T087",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T13:43:00Z"
+    },
+    {
+      "@id": "ex:edge/E296",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T087",
+      "ex:target": "ex:device/D010",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E297",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T087",
+      "ex:target": "ex:ip/IP016",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.3
+    },
+    {
+      "@id": "ex:edge/E298",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A029",
+      "ex:target": "ex:transaction/T088",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T14:33:00Z"
+    },
+    {
+      "@id": "ex:edge/E299",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T088",
+      "ex:target": "ex:device/D001",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E300",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T088",
+      "ex:target": "ex:ip/IP015",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.4
+    },
+    {
+      "@id": "ex:edge/E301",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A019",
+      "ex:target": "ex:transaction/T089",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T15:07:00Z"
+    },
+    {
+      "@id": "ex:edge/E302",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T089",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E303",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T089",
+      "ex:target": "ex:ip/IP014",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.48
+    },
+    {
+      "@id": "ex:edge/E304",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A004",
+      "ex:target": "ex:transaction/T090",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T15:48:00Z"
+    },
+    {
+      "@id": "ex:edge/E305",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T090",
+      "ex:target": "ex:device/D004",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E306",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T090",
+      "ex:target": "ex:ip/IP017",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.71
+    },
+    {
+      "@id": "ex:edge/E307",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A027",
+      "ex:target": "ex:transaction/T091",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T16:08:00Z"
+    },
+    {
+      "@id": "ex:edge/E308",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T091",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E309",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T091",
+      "ex:target": "ex:ip/IP009",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.47
+    },
+    {
+      "@id": "ex:edge/E310",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A029",
+      "ex:target": "ex:transaction/T092",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T16:55:00Z"
+    },
+    {
+      "@id": "ex:edge/E311",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T092",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E312",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T092",
+      "ex:target": "ex:ip/IP008",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.35
+    },
+    {
+      "@id": "ex:edge/E313",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A022",
+      "ex:target": "ex:transaction/T093",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T17:41:00Z"
+    },
+    {
+      "@id": "ex:edge/E314",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T093",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E315",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T093",
+      "ex:target": "ex:ip/IP004",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.23
+    },
+    {
+      "@id": "ex:edge/E316",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A012",
+      "ex:target": "ex:transaction/T094",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T18:08:00Z"
+    },
+    {
+      "@id": "ex:edge/E317",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T094",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E318",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T094",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.9
+    },
+    {
+      "@id": "ex:edge/E319",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A018",
+      "ex:target": "ex:transaction/T095",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T18:43:00Z"
+    },
+    {
+      "@id": "ex:edge/E320",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T095",
+      "ex:target": "ex:device/D006",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E321",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T095",
+      "ex:target": "ex:ip/IP009",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.47
+    },
+    {
+      "@id": "ex:edge/E322",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A011",
+      "ex:target": "ex:transaction/T096",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T19:16:00Z"
+    },
+    {
+      "@id": "ex:edge/E323",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T096",
+      "ex:target": "ex:device/D002",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E324",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T096",
+      "ex:target": "ex:ip/IP015",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.4
+    },
+    {
+      "@id": "ex:edge/E325",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A026",
+      "ex:target": "ex:transaction/T097",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T20:01:00Z"
+    },
+    {
+      "@id": "ex:edge/E326",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T097",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E327",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T097",
+      "ex:target": "ex:ip/IP012",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.43
+    },
+    {
+      "@id": "ex:edge/E328",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A022",
+      "ex:target": "ex:transaction/T098",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T20:46:00Z"
+    },
+    {
+      "@id": "ex:edge/E329",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T098",
+      "ex:target": "ex:device/D005",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E330",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T098",
+      "ex:target": "ex:ip/IP019",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.55
+    },
+    {
+      "@id": "ex:edge/E331",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A028",
+      "ex:target": "ex:transaction/T099",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T21:10:00Z"
+    },
+    {
+      "@id": "ex:edge/E332",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T099",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": true
+    },
+    {
+      "@id": "ex:edge/E333",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T099",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.69
+    },
+    {
+      "@id": "ex:edge/E334",
+      "@type": "ex:MatchespatternEdge",
+      "ex:source": "ex:transaction/T099",
+      "ex:target": "ex:attack_pattern/mule-ring",
+      "ex:predicate": "matchesPattern",
+      "ex:confidence": 0.86
+    },
+    {
+      "@id": "ex:edge/E335",
+      "@type": "ex:TriggeredsignalEdge",
+      "ex:source": "ex:transaction/T099",
+      "ex:target": "ex:fraud_signal/S019",
+      "ex:predicate": "triggeredSignal",
+      "ex:riskScore": 0.99
+    },
+    {
+      "@id": "ex:edge/E336",
+      "@type": "ex:InitiatedEdge",
+      "ex:source": "ex:account/A004",
+      "ex:target": "ex:transaction/T100",
+      "ex:predicate": "initiated",
+      "ex:timestamp": "2026-05-03T21:49:00Z"
+    },
+    {
+      "@id": "ex:edge/E337",
+      "@type": "ex:UseddeviceEdge",
+      "ex:source": "ex:transaction/T100",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "usedDevice",
+      "ex:isNewDeviceForAccount": false
+    },
+    {
+      "@id": "ex:edge/E338",
+      "@type": "ex:OriginatedfromEdge",
+      "ex:source": "ex:transaction/T100",
+      "ex:target": "ex:ip/IP002",
+      "ex:predicate": "originatedFrom",
+      "ex:ipThreatScore": 0.34
+    },
+    {
+      "@id": "ex:edge/E339",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A022",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2026-03-18T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E340",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A024",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2026-03-18T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E341",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A023",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2026-03-18T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E342",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A018",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2026-03-18T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E343",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A014",
+      "ex:target": "ex:device/D009",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2026-03-18T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E344",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A029",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-08-14T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E345",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A014",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-08-14T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E346",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A021",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-08-14T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E347",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A004",
+      "ex:target": "ex:device/D003",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-08-14T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E348",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A020",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-10-27T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E349",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A014",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-10-27T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E350",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A009",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-10-27T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E351",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A002",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-10-27T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E352",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A023",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-10-27T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E353",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A012",
+      "ex:target": "ex:device/D007",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-10-27T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E354",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A015",
+      "ex:target": "ex:device/D004",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-10-21T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E355",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A008",
+      "ex:target": "ex:device/D004",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-10-21T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E356",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A028",
+      "ex:target": "ex:device/D004",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-10-21T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E357",
+      "@type": "ex:HasuseddeviceEdge",
+      "ex:source": "ex:account/A012",
+      "ex:target": "ex:device/D004",
+      "ex:predicate": "hasUsedDevice",
+      "ex:firstSeen": "2025-10-21T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E358",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A022",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E359",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A012",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E360",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A018",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E361",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A029",
+      "ex:target": "ex:ip/IP003",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E362",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A002",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E363",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A013",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E364",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A009",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E365",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A007",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E366",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A004",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E367",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A015",
+      "ex:target": "ex:ip/IP007",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E368",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A022",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E369",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A007",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E370",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A021",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    },
+    {
+      "@id": "ex:edge/E371",
+      "@type": "ex:HasusedipEdge",
+      "ex:source": "ex:account/A020",
+      "ex:target": "ex:ip/IP011",
+      "ex:predicate": "hasUsedIP",
+      "ex:lastSeen": "2026-05-02T08:00:00Z"
+    }
+  ]
+}

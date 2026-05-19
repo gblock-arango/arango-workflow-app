@@ -1,0 +1,92 @@
+[
+  {
+    "_key": "D001",
+    "@id": "ex:device/D001",
+    "@type": "Device",
+    "deviceId": "D001",
+    "deviceType": "windows",
+    "isEmulator": false,
+    "firstSeen": "2026-01-29T08:00:00Z"
+  },
+  {
+    "_key": "D002",
+    "@id": "ex:device/D002",
+    "@type": "Device",
+    "deviceId": "D002",
+    "deviceType": "linux",
+    "isEmulator": false,
+    "firstSeen": "2025-06-14T08:00:00Z"
+  },
+  {
+    "_key": "D003",
+    "@id": "ex:device/D003",
+    "@type": "Device",
+    "deviceId": "D003",
+    "deviceType": "windows",
+    "isEmulator": false,
+    "firstSeen": "2025-08-14T08:00:00Z"
+  },
+  {
+    "_key": "D004",
+    "@id": "ex:device/D004",
+    "@type": "Device",
+    "deviceId": "D004",
+    "deviceType": "linux",
+    "isEmulator": false,
+    "firstSeen": "2025-10-21T08:00:00Z"
+  },
+  {
+    "_key": "D005",
+    "@id": "ex:device/D005",
+    "@type": "Device",
+    "deviceId": "D005",
+    "deviceType": "android",
+    "isEmulator": false,
+    "firstSeen": "2025-08-02T08:00:00Z"
+  },
+  {
+    "_key": "D006",
+    "@id": "ex:device/D006",
+    "@type": "Device",
+    "deviceId": "D006",
+    "deviceType": "ios",
+    "isEmulator": false,
+    "firstSeen": "2025-08-23T08:00:00Z"
+  },
+  {
+    "_key": "D007",
+    "@id": "ex:device/D007",
+    "@type": "Device",
+    "deviceId": "D007",
+    "deviceType": "ios",
+    "isEmulator": true,
+    "firstSeen": "2025-10-27T08:00:00Z"
+  },
+  {
+    "_key": "D008",
+    "@id": "ex:device/D008",
+    "@type": "Device",
+    "deviceId": "D008",
+    "deviceType": "windows",
+    "isEmulator": false,
+    "firstSeen": "2025-12-28T08:00:00Z"
+  },
+  {
+    "_key": "D009",
+    "@id": "ex:device/D009",
+    "@type": "Device",
+    "deviceId": "D009",
+    "deviceType": "linux",
+    "isEmulator": false,
+    "firstSeen": "2026-03-18T08:00:00Z"
+  },
+  {
+    "_key": "D010",
+    "@id": "ex:device/D010",
+    "@type": "Device",
+    "deviceId": "D010",
+    "deviceType": "macos",
+    "isEmulator": false,
+    "firstSeen": "2025-08-01T08:00:00Z"
+  }
+]

@@ -1,0 +1,11 @@
+@id,@type,_key,deviceId,deviceType,firstSeen,isEmulator
+ex:device/D001,Device,D001,D001,windows,2026-01-29T08:00:00Z,False
+ex:device/D002,Device,D002,D002,linux,2025-06-14T08:00:00Z,False
+ex:device/D003,Device,D003,D003,windows,2025-08-14T08:00:00Z,False
+ex:device/D004,Device,D004,D004,linux,2025-10-21T08:00:00Z,False
+ex:device/D005,Device,D005,D005,android,2025-08-02T08:00:00Z,False
+ex:device/D006,Device,D006,D006,ios,2025-08-23T08:00:00Z,False
+ex:device/D007,Device,D007,D007,ios,2025-10-27T08:00:00Z,True
+ex:device/D008,Device,D008,D008,windows,2025-12-28T08:00:00Z,False
+ex:device/D009,Device,D009,D009,linux,2026-03-18T08:00:00Z,False
+ex:device/D010,Device,D010,D010,macos,2025-08-01T08:00:00Z,False

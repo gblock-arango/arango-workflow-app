@@ -1,6 +1,6 @@
 # arango-workflow-app
 
-Unified **Databricks App** control plane ([arango-agent-autograph-job/README.md](../arango-agent-autograph-job/README.md)): FastAPI BFF + Next.js UI combining **OntoExtract** with the **arango-dashboard-app** platform layout.
+Unified **Databricks App** ([arango-agent-autograph-job/README.md](../arango-agent-autograph-job/README.md)): FastAPI BFF + Next.js UI with the **OntoExtract** frontend (same look and routes as [arango-ontoextract](../arango-ontoextract/)). Platform shell (dashboard-app layout) is backend-only for now — not exposed in the UI yet.
 
 ## Repository layout
 
@@ -31,32 +31,68 @@ arango-workflow-app/
 
 | Path | Description |
 |------|-------------|
-| `/workflow` | Platform shell — Arango iframe, Databricks Graph, Genie/MCP chat |
-| `/workspace`, `/pipeline`, … | OntoExtract pages |
-| `/api/workflow/*` | Control-plane BFF (config, chat proxies) |
+| `/`, `/dashboard`, `/ontology-quality`, `/pipeline`, … | OntoExtract UI (graph canvas at `/dashboard`; quality at `/ontology-quality`) |
 | `/api/v1/*` | OntoExtract REST API |
+| `/api/workflow/*` | Control-plane BFF (reserved; no UI yet) |
 
-## Local development
+## Quick Start
 
-**Python:** 3.11+ recommended (`pyproject.toml`). Python 3.10 works with `app/compat.py` shims (`StrEnum`, `UTC`).
+Same workflow as [arango-ontoextract](../arango-ontoextract/):
 
 ```bash
-# One-time: install backend dependencies
-pip install -r requirements.txt
+cd arango-workflow-app
+cp .env.example .env          # Add your API keys (or reuse your ontoextract .env)
+make setup                     # Python .venv at repo root + npm install in src/frontend
 
-# Backend
-export PYTHONPATH=src
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
-
-# Frontend (separate terminal)
-cd src/frontend && npm install && npm run dev
-
-# If you still see "Cannot find native binding" (npm optional-deps bug):
-#   ./scripts/frontend-install.sh
-#   # or: cd src/frontend && rm -rf node_modules package-lock.json && npm install
+make infra                     # ArangoDB + Redis via Docker
+make backend                   # FastAPI on :8010 (default; same as ontoextract Makefile)
 ```
 
-Open `http://localhost:3000/workflow` (or the port Next prints if 3000 is busy).
+In a second terminal (or use `make dev` to run API + UI together):
+
+```bash
+make ui                        # Next.js on :3000 — hot reload on every save
+```
+
+### Live frontend development
+
+Edit files under `src/frontend/src/` and the browser updates automatically (Next.js Fast Refresh):
+
+| What to edit | Shows at |
+|--------------|----------|
+| `src/frontend/src/app/page.tsx` | Home `/` |
+| `src/frontend/src/app/dashboard/page.tsx` | Graph canvas (formerly `/workspace`) |
+| `src/frontend/src/app/ontology-quality/page.tsx` | Quality dashboard (formerly `/dashboard`) |
+| `src/frontend/src/components/**` | Shared UI |
+
+Keep **`make ui`** running in one terminal and **`make backend`** in another. After changing `BACKEND_PORT` or `BACKEND_PROXY_URL` in `.env`, restart `make ui` so the API proxy picks up the new port.
+
+If the UI looks stale, hard-refresh the browser (Ctrl+Shift+R) or run `make clean` then `make ui`.
+
+| Service | URL |
+|---------|-----|
+| Backend API | http://localhost:8010 |
+| API Docs (Swagger) | http://localhost:8010/docs |
+| Frontend | http://localhost:3000 |
+| ArangoDB UI | http://localhost:8530 |
+
+**Differences from ontoextract:** venv lives at **repo root** (`.venv/`), code under `src/app/` (not `backend/`), frontend under `src/frontend/` (not `frontend/`). Default API port is **8010** (not 8000) so it matches `src/frontend/.env.development`.
+
+**Python:** 3.11+ recommended (`pyproject.toml`). Python 3.10 works with `app/compat.py` shims.
+
+If you see `Cannot find native binding` on `npm run dev`:
+
+```bash
+./scripts/frontend-install.sh
+```
+
+### Manual / alternate commands
+
+```bash
+export PYTHONPATH=src
+.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
+cd src/frontend && npm run dev
+```
 
 Static export for single-process deploy:
 

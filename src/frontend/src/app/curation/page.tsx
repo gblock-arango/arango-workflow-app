@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
+import AppHeader from "@/components/layout/AppHeader";
 import { api, ApiError } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import {
@@ -340,19 +341,15 @@ function CurationPageInner() {
 
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">
-              Visual Curation
-            </h1>
-            <p className="text-sm text-gray-500">
-              Staging run{" "}
-              <span className="font-mono text-gray-600">{runId}</span>
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
+      <AppHeader
+        title="Visual Curation"
+        subtitle={
+          <>
+            Staging run <span className="font-mono text-gray-600">{runId}</span>
+          </>
+        }
+        actions={
+          <>
             <CurationThroughputCounter />
             <div className="flex rounded-lg border border-gray-200 overflow-hidden">
               <button
@@ -391,28 +388,9 @@ function CurationPageInner() {
             >
               Promote
             </button>
-            <a
-              href={withBasePath("/dashboard")}
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Dashboard
-            </a>
-            <a
-              href={withBasePath("/library")}
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Library
-            </a>
-            {/* Raw <a> so the trailing slash survives — Next <Link href="/"> drops it. */}
-            <a
-              href={withBasePath("/")}
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Home
-            </a>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {/* Historical snapshot banner */}
       {snapshotTimestamp && (

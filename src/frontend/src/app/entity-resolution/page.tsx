@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { api, ApiError } from "@/lib/api-client";
-import { withBasePath } from "@/lib/base-path";
+import AppHeader from "@/components/layout/AppHeader";
 import type { PaginatedResponse } from "@/lib/api-client";
 import type {
   OntologyClass,
@@ -214,45 +214,28 @@ export default function EntityResolutionPage() {
 
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">
-              Entity Resolution
-            </h1>
-            <p className="text-sm text-gray-500">
-              Detect duplicates, review merge candidates, and manage clusters
-            </p>
+      <AppHeader
+        title="Entity Resolution"
+        subtitle="Detect duplicates, review merge candidates, and manage clusters"
+        actions={
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`text-xs px-3 py-1.5 ${
+                  activeTab === tab.id
+                    ? "bg-blue-50 text-blue-700 font-medium"
+                    : "text-gray-500 hover:bg-gray-50"
+                } ${tab.id !== "candidates" ? "border-l border-gray-200" : ""}`}
+                data-testid={`tab-${tab.id}`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-          <div className="flex items-center gap-3">
-            {/* Tab switcher */}
-            <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-              {TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`text-xs px-3 py-1.5 ${
-                    activeTab === tab.id
-                      ? "bg-blue-50 text-blue-700 font-medium"
-                      : "text-gray-500 hover:bg-gray-50"
-                  } ${tab.id !== "candidates" ? "border-l border-gray-200" : ""}`}
-                  data-testid={`tab-${tab.id}`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-            {/* Raw <a> so the trailing slash survives — Next <Link href="/"> drops it. */}
-            <a
-              href={withBasePath("/")}
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Home
-            </a>
-          </div>
-        </div>
-      </header>
+        }
+      />
 
       {/* Main content */}
       <div className="max-w-[1600px] mx-auto flex min-h-[calc(100vh-73px)]">

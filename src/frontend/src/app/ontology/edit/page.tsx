@@ -324,10 +324,10 @@ function OntologyEditorPageInner() {
 
             <div className="flex items-center gap-3">
               <Link
-                href={`/workspace?ontologyId=${ontologyId}`}
+                href={`/dashboard?ontologyId=${ontologyId}`}
                 className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
               >
-                Open in Workspace
+                Open in Dashboard
               </Link>
               <Link
                 href="/library"

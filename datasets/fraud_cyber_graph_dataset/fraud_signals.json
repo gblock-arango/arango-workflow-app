@@ -1,0 +1,192 @@
+[
+  {
+    "_key": "S001",
+    "@id": "ex:signal/S001",
+    "@type": "FraudSignal",
+    "signalId": "S001",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T004: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-01T10:30:00Z"
+  },
+  {
+    "_key": "S002",
+    "@id": "ex:signal/S002",
+    "@type": "FraudSignal",
+    "signalId": "S002",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T005: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-01T11:18:00Z"
+  },
+  {
+    "_key": "S003",
+    "@id": "ex:signal/S003",
+    "@type": "FraudSignal",
+    "signalId": "S003",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T007: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-01T12:21:00Z"
+  },
+  {
+    "_key": "S004",
+    "@id": "ex:signal/S004",
+    "@type": "FraudSignal",
+    "signalId": "S004",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T011: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-01T14:55:00Z"
+  },
+  {
+    "_key": "S005",
+    "@id": "ex:signal/S005",
+    "@type": "FraudSignal",
+    "signalId": "S005",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T022: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-01T21:36:00Z"
+  },
+  {
+    "_key": "S006",
+    "@id": "ex:signal/S006",
+    "@type": "FraudSignal",
+    "signalId": "S006",
+    "riskScore": 0.98,
+    "severity": "high",
+    "description": "Suspicious transaction T023: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-01T22:20:00Z"
+  },
+  {
+    "_key": "S007",
+    "@id": "ex:signal/S007",
+    "@type": "FraudSignal",
+    "signalId": "S007",
+    "riskScore": 0.95,
+    "severity": "high",
+    "description": "Suspicious transaction T033: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-02T04:31:00Z"
+  },
+  {
+    "_key": "S008",
+    "@id": "ex:signal/S008",
+    "@type": "FraudSignal",
+    "signalId": "S008",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T041: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-02T09:19:00Z"
+  },
+  {
+    "_key": "S009",
+    "@id": "ex:signal/S009",
+    "@type": "FraudSignal",
+    "signalId": "S009",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T048: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-02T13:38:00Z"
+  },
+  {
+    "_key": "S010",
+    "@id": "ex:signal/S010",
+    "@type": "FraudSignal",
+    "signalId": "S010",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T053: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-02T16:49:00Z"
+  },
+  {
+    "_key": "S011",
+    "@id": "ex:signal/S011",
+    "@type": "FraudSignal",
+    "signalId": "S011",
+    "riskScore": 0.96,
+    "severity": "high",
+    "description": "Suspicious transaction T054: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-02T17:33:00Z"
+  },
+  {
+    "_key": "S012",
+    "@id": "ex:signal/S012",
+    "@type": "FraudSignal",
+    "signalId": "S012",
+    "riskScore": 0.98,
+    "severity": "high",
+    "description": "Suspicious transaction T055: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-02T17:55:00Z"
+  },
+  {
+    "_key": "S013",
+    "@id": "ex:signal/S013",
+    "@type": "FraudSignal",
+    "signalId": "S013",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T061: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-02T21:45:00Z"
+  },
+  {
+    "_key": "S014",
+    "@id": "ex:signal/S014",
+    "@type": "FraudSignal",
+    "signalId": "S014",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T063: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-02T22:59:00Z"
+  },
+  {
+    "_key": "S015",
+    "@id": "ex:signal/S015",
+    "@type": "FraudSignal",
+    "signalId": "S015",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T066: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-03T00:55:00Z"
+  },
+  {
+    "_key": "S016",
+    "@id": "ex:signal/S016",
+    "@type": "FraudSignal",
+    "signalId": "S016",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T072: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-03T04:25:00Z"
+  },
+  {
+    "_key": "S017",
+    "@id": "ex:signal/S017",
+    "@type": "FraudSignal",
+    "signalId": "S017",
+    "riskScore": 0.97,
+    "severity": "high",
+    "description": "Suspicious transaction T074: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-03T05:41:00Z"
+  },
+  {
+    "_key": "S018",
+    "@id": "ex:signal/S018",
+    "@type": "FraudSignal",
+    "signalId": "S018",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T077: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-03T07:29:00Z"
+  },
+  {
+    "_key": "S019",
+    "@id": "ex:signal/S019",
+    "@type": "FraudSignal",
+    "signalId": "S019",
+    "riskScore": 0.99,
+    "severity": "high",
+    "description": "Suspicious transaction T099: high-risk account/IP/device pattern",
+    "createdAt": "2026-05-03T21:10:00Z"
+  }
+]

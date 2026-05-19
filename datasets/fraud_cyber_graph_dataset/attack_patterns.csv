@@ -1,0 +1,6 @@
+@id,@type,_key,description,domain,name
+ex:attack-pattern/account-takeover,AttackPattern,account-takeover,"Account takeover using a new device, anomalous IP, credential reset, and high-value payment",cyber_fraud,account-takeover
+ex:attack-pattern/synthetic-identity,AttackPattern,synthetic-identity,"Synthetic identity behavior involving new accounts, shared devices, and rapid value movement",fraud,synthetic-identity
+ex:attack-pattern/mule-ring,AttackPattern,mule-ring,Money mule ring pattern with many incoming payments followed by rapid outbound transfers,fraud,mule-ring
+ex:attack-pattern/card-testing,AttackPattern,card-testing,Low-value authorization probes followed by higher-value attempted transaction,fraud,card-testing
+ex:attack-pattern/credential-stuffing,AttackPattern,credential-stuffing,Multiple failed logins across accounts from shared infrastructure followed by successful payment,cyber,credential-stuffing

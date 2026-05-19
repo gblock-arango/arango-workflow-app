@@ -1,8 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { api, ApiError, backendUrl } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
+import { useActivePipelineAgents } from "@/lib/useActivePipelineAgents";
 
 interface HealthStatus {
   status: string;
@@ -14,6 +16,8 @@ interface LibraryStats {
 }
 
 type ConnectionState = "loading" | "connected" | "error";
+
+const img = (path: string) => withBasePath(path);
 
 export default function Home() {
   const [health, setHealth] = useState<ConnectionState>("loading");
@@ -30,13 +34,27 @@ export default function Home() {
         if (!r.ok) {
           const hint =
             typeof data.detail === "string" ? data.detail : `HTTP ${r.status}`;
+          if (r.status === 500 && !data.detail) {
+            throw new Error(
+              "API unreachable. Start the backend (make backend) and ensure BACKEND_PROXY_URL matches.",
+            );
+          }
           throw new Error(hint);
         }
         return data;
       })
       .then((data: HealthStatus) => {
-        setHealth(data.status === "ready" ? "connected" : "error");
-        setHealthDetail(data.database ?? data.status);
+        if (data.status === "ready") {
+          setHealth("connected");
+          setHealthDetail(data.database ?? "connected");
+        } else {
+          setHealth("error");
+          setHealthDetail(
+            data.database
+              ? `Database not ready: ${data.database}`
+              : "Database not ready",
+          );
+        }
       })
       .catch((err) => {
         setHealth("error");
@@ -54,117 +72,156 @@ export default function Home() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-gray-50 text-gray-900">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-5xl mx-auto px-6 py-8">
-          <h1 className="text-3xl font-bold tracking-tight">
-            Arango Workflow
-          </h1>
-          <p className="mt-2 text-gray-500 text-lg">
-            Unified Databricks control plane: platform shell (Arango embed, UC
-            graph actions, Genie/MCP chat) plus full OntoExtract workspace.
-          </p>
+    <main className="min-h-screen bg-gradient-to-b from-slate-100 via-gray-50 to-gray-50 text-gray-900">
+      {/* Hero */}
+      <header className="border-b border-gray-200/80 bg-white/90 backdrop-blur-sm">
+        <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col gap-6 lg:flex-row lg:items-center lg:gap-8">
+          <div className="flex-shrink-0 flex justify-center lg:justify-start">
+            <Image
+              src={img("/images/arangoai-mascot.png")}
+              alt="ArangoAI mascot"
+              width={140}
+              height={140}
+              className="h-28 w-auto sm:h-32 object-contain drop-shadow-md"
+              priority
+            />
+          </div>
+
+          <div className="flex-1 text-center lg:text-left min-w-0">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900">
+              Arango Graph-Accelerated Agents
+            </h1>
+            <p className="mt-3 text-base sm:text-lg text-gray-600 leading-relaxed max-w-3xl">
+              RBAC-compliant graph knowledge directly from your tables for
+              Genie-driven Q&amp;A, GraphRAG, GraphML, anomaly detection, and
+              adaptive CDC.
+            </p>
+          </div>
+
+          <div className="flex-shrink-0 flex flex-col items-center lg:items-end gap-2">
+            <Image
+              src={img("/images/arango-logo-transparent.png")}
+              alt="Arango"
+              width={200}
+              height={56}
+              className="h-10 sm:h-12 w-auto object-contain"
+              priority
+            />
+            <HeroConnectionStatus health={health} healthDetail={healthDetail} />
+          </div>
         </div>
       </header>
 
-      <div className="max-w-5xl mx-auto px-6 py-10 space-y-8">
-        {/* Status row */}
-        <section className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          {/* Health indicator */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-              Backend Status
-            </h2>
-            <div className="flex items-center gap-3">
-              <span
-                className={`inline-block h-3 w-3 rounded-full ${
-                  health === "loading"
-                    ? "bg-yellow-400 animate-pulse"
-                    : health === "connected"
-                      ? "bg-green-500"
-                      : "bg-red-500"
-                }`}
-              />
-              <span className="text-lg font-medium capitalize">
-                {health === "loading"
-                  ? "Checking\u2026"
-                  : health === "connected"
-                    ? "Connected"
-                    : "Unavailable"}
-              </span>
-            </div>
-            {health === "error" && healthDetail && (
-              <p className="mt-2 text-sm text-red-600">{healthDetail}</p>
-            )}
-          </div>
-
-          {/* System stats */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-              System Stats
-            </h2>
+      <div className="max-w-6xl mx-auto px-6 pt-6 pb-10 space-y-6">
+        {/* Status / medallion row */}
+        <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+          <StatCard title="GRAPHS">
             {statsError ? (
-              <p className="text-sm text-gray-400">
-                Stats unavailable — backend may be offline.
-              </p>
+              <p className="text-sm text-gray-400">Unavailable</p>
             ) : ontologyCount === null ? (
               <p className="text-sm text-gray-400 animate-pulse">Loading…</p>
             ) : (
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold">{ontologyCount}</span>
-                <span className="text-gray-500">
-                  registered{" "}
-                  {ontologyCount === 1 ? "ontology" : "ontologies"}
-                </span>
-              </div>
+              <p className="text-2xl font-bold tabular-nums">{ontologyCount}</p>
             )}
-          </div>
+            <p className="text-xs text-gray-500 mt-1">registered ontologies</p>
+          </StatCard>
+
+          <StatCard title="BRONZE" titleClassName="text-[#b87333]">
+            <p className="text-2xl font-bold text-[#cd7f32] tabular-nums">—</p>
+            <p className="text-xs text-gray-500 mt-1">raw ingest</p>
+          </StatCard>
+
+          <StatCard title="SILVER" titleClassName="text-[#8a9199]">
+            <p className="text-2xl font-bold text-[#a8a9ad] tabular-nums">—</p>
+            <p className="text-xs text-gray-500 mt-1">curated graph</p>
+          </StatCard>
+
+          <StatCard title="GOLD" titleClassName="text-[#c9a227]">
+            <p className="text-2xl font-bold text-[#d4af37] tabular-nums">—</p>
+            <p className="text-xs text-gray-500 mt-1">production ready</p>
+          </StatCard>
+
+          <StatCardLink href="/adaptive-cdc" title="ADAPTIVE CDC" titleClassName="text-indigo-600">
+            <p className="text-2xl font-bold text-indigo-600 tabular-nums">—</p>
+            <p className="text-xs text-gray-500 mt-1">stream sync</p>
+          </StatCardLink>
+
+          <AgentsCard />
         </section>
 
-        {/* Quick actions */}
+        {/* Workflows */}
         <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-            Quick Actions
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
-            <ActionCard
-              title="Workflow dashboard"
-              description="Platform shell: Arango iframe, UC graph actions, Genie/MCP chat."
-              href="/workflow"
-              accentColor="bg-teal-600"
-            />
+          <div className="flex items-center justify-between gap-4 mb-2">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Workflows
+            </h2>
+            <NavButton href="/dashboard">Dashboard</NavButton>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            <ActionCard
-              title="Workspace"
-              description="Unified graph canvas for viewing, editing, and curating ontologies."
-              href="/workspace"
-              accentColor="bg-indigo-600"
+
+          <div className="space-y-2">
+            <WorkflowLane
+              title="Build Your Graph"
+              badge="AutoGraph"
+              badgeClassName="bg-indigo-100 text-indigo-800"
+              actions={[
+                { label: "Add Tables", href: "/upload", description: "Register UC tables" },
+                {
+                  label: "Upload Documents",
+                  href: "/upload",
+                  description: "PDF, DOCX, Markdown",
+                },
+                {
+                  label: "View Ontologies",
+                  href: "/library",
+                  description: "Browse graph library",
+                },
+              ]}
             />
-            <ActionCard
-              title="Upload Document"
-              description="Ingest a PDF, DOCX, or Markdown file for ontology extraction."
-              href="/upload"
-              accentColor="bg-blue-600"
+
+            <WorkflowLane
+              title="Recognize Anomalies in Streams"
+              badge="AutoDetect"
+              badgeClassName="bg-emerald-100 text-emerald-800"
+              actions={[
+                {
+                  label: "Identity Patterns",
+                  href: "/adaptive-cdc",
+                  description: "Discover stream signatures",
+                },
+                {
+                  label: "Train and Infer",
+                  href: "/pipeline",
+                  description: "GraphML on live events",
+                },
+                {
+                  label: "Integrate Alerts",
+                  href: "/adaptive-cdc",
+                  description: "Route to observability",
+                },
+              ]}
             />
-            <ActionCard
-              title="View Ontologies"
-              description="Browse the ontology library and explore class hierarchies."
-              href="/library"
-              accentColor="bg-emerald-600"
-            />
-            <ActionCard
-              title="Pipeline Monitor"
-              description="Track extraction runs, agent steps, and pipeline health."
-              href="/pipeline"
-              accentColor="bg-violet-600"
-            />
-            <ActionCard
-              title="Quality Dashboard"
-              description="View quality metrics, LLM-as-judge scores, and ontology health."
-              href="/dashboard"
-              accentColor="bg-amber-600"
+
+            <WorkflowLane
+              title="Smarten Your Catalog"
+              badge="AutoEnrich"
+              badgeClassName="bg-amber-100 text-amber-900"
+              actions={[
+                {
+                  label: "Annotate Tables",
+                  href: "/library",
+                  description: "Column & table tags",
+                },
+                {
+                  label: "Link Glossaries",
+                  href: "/ontology-quality",
+                  description: "Unity Catalog terms",
+                },
+                {
+                  label: "Publish Tags",
+                  href: "/ontology-quality",
+                  description: "Share enriched metadata",
+                },
+              ]}
             />
           </div>
         </section>
@@ -173,29 +230,191 @@ export default function Home() {
   );
 }
 
-function ActionCard({
+function StatCard({
   title,
-  description,
-  href,
-  accentColor,
+  titleClassName = "text-gray-500",
+  children,
 }: {
   title: string;
-  description: string;
+  titleClassName?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm min-h-[100px] flex flex-col">
+      <h2
+        className={`text-xs font-bold uppercase tracking-wide mb-3 ${titleClassName}`}
+      >
+        {title}
+      </h2>
+      <div className="flex-1 flex flex-col justify-center">{children}</div>
+    </div>
+  );
+}
+
+function StatCardLink({
+  href,
+  title,
+  titleClassName = "text-gray-500",
+  children,
+}: {
   href: string;
-  accentColor: string;
+  title: string;
+  titleClassName?: string;
+  children: React.ReactNode;
 }) {
   return (
     <a
       href={withBasePath(href)}
-      className="group block bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow overflow-hidden"
+      className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm min-h-[100px] flex flex-col hover:border-indigo-300 hover:shadow-md transition-all group"
     >
-      <div className={`${accentColor} h-1`} />
-      <div className="p-5">
-        <h3 className="font-semibold text-gray-900 group-hover:text-gray-700">
-          {title}
-        </h3>
-        <p className="mt-1 text-sm text-gray-500">{description}</p>
+      <h2
+        className={`text-xs font-bold uppercase tracking-wide mb-3 group-hover:text-indigo-700 ${titleClassName}`}
+      >
+        {title}
+      </h2>
+      <div className="flex-1 flex flex-col justify-center">{children}</div>
+    </a>
+  );
+}
+
+function HeroConnectionStatus({
+  health,
+  healthDetail,
+}: {
+  health: ConnectionState;
+  healthDetail: string;
+}) {
+  return (
+    <div className="text-center lg:text-right -translate-x-[5px]">
+      <div className="flex items-center justify-center lg:justify-end gap-2">
+        <span
+          className={`inline-block h-2 w-2 rounded-full shrink-0 ${
+            health === "loading"
+              ? "bg-yellow-400 animate-pulse"
+              : health === "connected"
+                ? "bg-emerald-500"
+                : "bg-red-500"
+          }`}
+        />
+        <span
+          className={`text-sm font-medium capitalize ${
+            health === "connected" ? "text-emerald-600" : "text-gray-600"
+          }`}
+        >
+          {health === "loading"
+            ? "Checking…"
+            : health === "connected"
+              ? "Connected"
+              : "Unavailable"}
+        </span>
       </div>
+      {health === "error" && healthDetail && (
+        <p className="mt-1 text-xs text-red-600 max-w-[200px] line-clamp-2">{healthDetail}</p>
+      )}
+    </div>
+  );
+}
+
+function AgentsCard() {
+  const { count, loading, error } = useActivePipelineAgents();
+
+  return (
+    <StatCardLink href="/pipeline" title="AGENTS" titleClassName="text-violet-700">
+      {loading ? (
+        <p className="text-sm text-gray-400 animate-pulse">Loading…</p>
+      ) : error ? (
+        <p className="text-sm text-gray-400">Unavailable</p>
+      ) : (
+        <p className="text-2xl font-bold text-violet-700 tabular-nums">{count ?? 0}</p>
+      )}
+      <p className="text-xs text-gray-500 mt-1">
+        active {count === 1 ? "agent" : "agents"}
+      </p>
+    </StatCardLink>
+  );
+}
+
+function NavButton({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={withBasePath(href)}
+      className="inline-flex items-center justify-center rounded-xl px-6 py-3 text-sm font-semibold text-gray-800 bg-white border border-gray-200 shadow-sm hover:bg-gray-50 hover:border-gray-300 transition-colors"
+    >
+      {children}
+    </a>
+  );
+}
+
+function WorkflowLane({
+  title,
+  badge,
+  badgeClassName,
+  actions,
+}: {
+  title: string;
+  badge: string;
+  badgeClassName: string;
+  actions: {
+    label: string;
+    href: string;
+    description: string;
+    disabled?: boolean;
+  }[];
+}) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white flex flex-wrap items-center gap-3">
+        <span
+          className={`text-xs font-semibold px-2.5 py-1 rounded-full shrink-0 ${badgeClassName}`}
+        >
+          {badge}
+        </span>
+        <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+      </div>
+      <div className="p-5 grid grid-cols-3 gap-3">
+        {actions.map((action) => (
+          <WorkflowAction key={action.label} {...action} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WorkflowAction({
+  label,
+  href,
+  description,
+  disabled,
+}: {
+  label: string;
+  href: string;
+  description: string;
+  disabled?: boolean;
+}) {
+  const className =
+    "flex flex-col w-full min-w-0 h-full rounded-xl border border-gray-200 bg-gray-50/80 px-4 py-3 text-left transition-all " +
+    (disabled
+      ? "opacity-60 cursor-not-allowed"
+      : "hover:border-indigo-300 hover:bg-indigo-50/50 hover:shadow-sm");
+
+  const inner = (
+    <>
+      <span className="font-semibold text-gray-900 text-sm">{label}</span>
+      <span className="text-xs text-gray-500 mt-1">{description}</span>
+    </>
+  );
+
+  if (disabled) {
+    return (
+      <span className={className} aria-disabled="true">
+        {inner}
+      </span>
+    );
+  }
+
+  return (
+    <a href={withBasePath(href)} className={className}>
+      {inner}
     </a>
   );
 }
