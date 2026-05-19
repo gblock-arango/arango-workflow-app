@@ -164,11 +164,11 @@ export default function Home() {
               badge="AutoGraph"
               badgeClassName="bg-indigo-100 text-indigo-800"
               actions={[
-                { label: "Add Tables", href: "/upload", description: "Register UC tables" },
+                { label: "Add Tables", href: "/upload", description: "Import UC tables" },
                 {
                   label: "Upload Documents",
                   href: "/upload",
-                  description: "PDF, DOCX, Markdown",
+                  description: "Ingest PDF, DOCX, PPTX, Markdown",
                 },
                 {
                   label: "View Ontologies",
