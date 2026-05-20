@@ -29,7 +29,10 @@ import {
   buildSyntheticRdfsRangeClassEdges,
   RDFS_RANGE_CLASS_LABEL_FALLBACK,
 } from "@/components/graph/graphCanvasEdges";
-import { ONTOLOGY_EDGE_COLORS as EDGE_COLORS } from "@/components/graph/graphVisualPalette";
+import {
+  GRAPH_CANVAS_BACKGROUND,
+  ONTOLOGY_EDGE_COLORS as EDGE_COLORS,
+} from "@/components/graph/graphVisualPalette";
 import {
   confidenceNodeColor,
   normalizeConfidence01,
@@ -51,8 +54,8 @@ function statusBorderForClass(cls: OntologyClass): string {
   return "#f59e0b";
 }
 
-/** Neutral outline so semantic/confidence/diff/source lenses are not dominated by curation. */
-const NEUTRAL_NODE_BORDER = "#475569";
+/** Neutral outline on black canvas (light gray, not slate). */
+const NEUTRAL_NODE_BORDER = "#e2e8f0";
 
 function borderColorForLens(lens: LensType, cls: OntologyClass): string {
   if (lens === "curation") return statusBorderForClass(cls);
@@ -105,7 +108,7 @@ function lensNodeColor(
       return STATUS_NODE_COLORS[cls.status ?? "pending"] ?? "#94a3b8";
     case "diff":
       if (visibleNodeKeys != null && visibleNodeKeys.size > 0) {
-        return visibleNodeKeys.has(cls._key) ? "#34d399" : "#475569";
+        return visibleNodeKeys.has(cls._key) ? "#34d399" : "#94a3b8";
       }
       return semanticNodeColor(cls);
     case "source": {
@@ -195,8 +198,8 @@ function lensEdgeVisual(
 
 /* ── Dark-theme hover label renderer ──────────────────── */
 
-const HOVER_BG = "#1e1e3a";
-const HOVER_TEXT = "#e2e8f0";
+const HOVER_BG = "#f8fafc";
+const HOVER_TEXT = "#0f172a";
 const HOVER_SHADOW = "rgba(0,0,0,0.6)";
 
 function drawDarkNodeHover(
@@ -618,10 +621,10 @@ export default function SigmaCanvas({
       renderLabels: true,
       renderEdgeLabels: true,
       labelRenderedSizeThreshold: 6,
-      labelColor: { color: "#e2e8f0" },
+      labelColor: { color: "#f8fafc" },
       labelFont: "Inter, system-ui, sans-serif",
       labelSize: 13,
-      edgeLabelColor: { color: "#94a3b8" },
+      edgeLabelColor: { color: "#cbd5e1" },
       edgeLabelFont: "Inter, system-ui, sans-serif",
       edgeLabelSize: 10,
       defaultDrawNodeHover: drawDarkNodeHover,
@@ -974,7 +977,7 @@ export default function SigmaCanvas({
   if (classes.length === 0) {
     return (
       <div
-        className="flex items-center justify-center h-full text-gray-500"
+        className="flex items-center justify-center h-full text-gray-400"
         data-testid="sigma-empty"
       >
         <div className="text-center">
@@ -994,7 +997,7 @@ export default function SigmaCanvas({
         width: "100%",
         height: "100%",
         position: "relative",
-        background: "#ffffff",
+        background: GRAPH_CANVAS_BACKGROUND,
         overflow: "hidden",
       }}
     >
@@ -1007,7 +1010,7 @@ export default function SigmaCanvas({
         </div>
       )}
       {/* Node/edge count — subtle top-left overlay */}
-      <div className="absolute bottom-2 right-2 z-20 text-[10px] text-gray-600 pointer-events-none">
+      <div className="absolute bottom-2 right-2 z-20 text-[10px] text-gray-400 pointer-events-none">
         {graph.order} nodes &middot; {graph.size} edges
       </div>
       <div

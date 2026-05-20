@@ -168,7 +168,7 @@ export default function Home() {
                 {
                   label: "Upload Documents",
                   href: "/upload",
-                  description: "Ingest PDF, DOCX, PPTX, Markdown",
+                  description: "Ingest PDF, DOCX, PPTX, Markdown, JSON, JSON-LD",
                 },
                 {
                   label: "View Ontologies",
@@ -184,9 +184,9 @@ export default function Home() {
               badgeClassName="bg-emerald-100 text-emerald-800"
               actions={[
                 {
-                  label: "Identity Patterns",
-                  href: "/adaptive-cdc",
-                  description: "Discover stream signatures",
+                  label: "Identify Patterns",
+                  href: "/graph-patterns",
+                  description: "Graphlet swim lanes from KG and Gold CDC",
                 },
                 {
                   label: "Train and Infer",

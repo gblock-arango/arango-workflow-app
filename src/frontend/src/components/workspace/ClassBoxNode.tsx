@@ -44,9 +44,8 @@ function ClassBoxNode({ data }: NodeProps<ClassBoxNodeData>) {
       }`}
       style={{ borderWidth: 2, borderStyle: "solid", borderColor }}
     >
-      <Handle type="target" position={Position.Top} className="!bg-gray-400 !w-2 !h-2" />
+      <Handle type="target" position={Position.Top} className="!bg-gray-300 !w-2 !h-2" />
 
-      {/* Header */}
       <div
         className="px-3 py-1.5 flex items-center gap-1.5"
         style={{ backgroundColor: headerColor }}
@@ -62,9 +61,8 @@ function ClassBoxNode({ data }: NodeProps<ClassBoxNodeData>) {
         </span>
       </div>
 
-      {/* Properties */}
       {visibleProps.length > 0 && (
-        <div className="bg-gray-900/80 divide-y divide-gray-700/50">
+        <div className="bg-white divide-y divide-gray-200">
           {visibleProps.map((prop) => {
             const rangeLabel = prop.target_class_label
               ?? prop.range_datatype
@@ -73,7 +71,7 @@ function ClassBoxNode({ data }: NodeProps<ClassBoxNodeData>) {
             return (
               <div
                 key={prop._key}
-                className="px-3 py-0.5 text-[10px] flex items-center gap-1 text-gray-300 hover:bg-gray-800/50 transition-colors"
+                className="px-3 py-0.5 text-[10px] flex items-center gap-1 text-gray-800 hover:bg-gray-100 transition-colors"
                 title={`${prop.label}: ${rangeLabel}`}
               >
                 <span className="truncate flex-1">{prop.label}</span>
@@ -94,12 +92,12 @@ function ClassBoxNode({ data }: NodeProps<ClassBoxNodeData>) {
       )}
 
       {visibleProps.length === 0 && (
-        <div className="bg-gray-900/80 px-3 py-1 text-[10px] text-gray-500 italic">
+        <div className="bg-white px-3 py-1 text-[10px] text-gray-500 italic">
           No properties
         </div>
       )}
 
-      <Handle type="source" position={Position.Bottom} className="!bg-gray-400 !w-2 !h-2" />
+      <Handle type="source" position={Position.Bottom} className="!bg-gray-300 !w-2 !h-2" />
     </div>
   );
 }

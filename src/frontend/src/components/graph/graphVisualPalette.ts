@@ -1,6 +1,9 @@
+/** Workspace graph canvas (Sigma + box-arrow). */
+export const GRAPH_CANVAS_BACKGROUND = "#000000";
+
 /**
  * Shared stroke colors for the ontology graph (semantic lens and defaults).
- * Chosen for separation on dark (#111118) backgrounds — spread across hue.
+ * Chosen for separation on black backgrounds — spread across hue.
  */
 export const ONTOLOGY_EDGE_COLORS: Record<string, string> = {
   subclass_of: "#a78bfa",

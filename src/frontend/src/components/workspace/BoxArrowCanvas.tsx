@@ -20,7 +20,10 @@ import {
   documentKey,
   buildSyntheticRdfsRangeClassEdges,
 } from "@/components/graph/graphCanvasEdges";
-import { ONTOLOGY_EDGE_COLORS as EDGE_COLORS } from "@/components/graph/graphVisualPalette";
+import {
+  GRAPH_CANVAS_BACKGROUND,
+  ONTOLOGY_EDGE_COLORS as EDGE_COLORS,
+} from "@/components/graph/graphVisualPalette";
 import {
   confidenceNodeColor,
   normalizeConfidence01,
@@ -36,7 +39,7 @@ const STATUS_NODE_COLORS: Record<CurationStatus, string> = {
   rejected: "#ef4444",
 };
 
-const NEUTRAL_BORDER = "#475569";
+const NEUTRAL_BORDER = "#e2e8f0";
 
 const BOX_DEFAULT_HEADER = "#6366f1";
 
@@ -53,7 +56,7 @@ function lensHeaderColor(
       return STATUS_NODE_COLORS[cls.status ?? "pending"] ?? "#94a3b8";
     case "diff":
       if (visibleNodeKeys != null && visibleNodeKeys.size > 0) {
-        return visibleNodeKeys.has(cls._key) ? "#34d399" : "#475569";
+        return visibleNodeKeys.has(cls._key) ? "#34d399" : "#94a3b8";
       }
       return BOX_DEFAULT_HEADER;
     case "source": {
@@ -237,8 +240,8 @@ export default function BoxArrowCanvas({
         source,
         target,
         label: displayLabel,
-        labelStyle: { fill: "#94a3b8", fontSize: 10, fontWeight: 500 },
-        labelBgStyle: { fill: "#1a1a2e", fillOpacity: 0.85 },
+        labelStyle: { fill: "#e2e8f0", fontSize: 10, fontWeight: 500 },
+        labelBgStyle: { fill: "#f8fafc", fillOpacity: 0.92 },
         labelBgPadding: [4, 2] as [number, number],
         style: {
           stroke: isSelected ? "#818cf8" : color,
@@ -260,8 +263,8 @@ export default function BoxArrowCanvas({
         source: syn.sourceClassKey,
         target: syn.targetClassKey,
         label: syn.label,
-        labelStyle: { fill: "#94a3b8", fontSize: 10, fontWeight: 500 },
-        labelBgStyle: { fill: "#1a1a2e", fillOpacity: 0.85 },
+        labelStyle: { fill: "#e2e8f0", fontSize: 10, fontWeight: 500 },
+        labelBgStyle: { fill: "#f8fafc", fillOpacity: 0.92 },
         labelBgPadding: [4, 2] as [number, number],
         style: {
           stroke: isSelected ? "#818cf8" : color,
@@ -390,7 +393,8 @@ export default function BoxArrowCanvas({
 
   return (
     <div
-      className="w-full h-full [&_.react-flow__pane]:!cursor-default"
+      className="w-full h-full bg-black [&_.react-flow__renderer]:!bg-black [&_.react-flow__pane]:!bg-black [&_.react-flow__pane]:!cursor-default"
+      style={{ background: GRAPH_CANVAS_BACKGROUND }}
       data-testid="box-arrow-canvas"
     >
       <ReactFlow
@@ -415,7 +419,7 @@ export default function BoxArrowCanvas({
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{ type: "smoothstep" }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#334155" />
+        <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#52525b" />
       </ReactFlow>
     </div>
   );

@@ -1249,7 +1249,7 @@ async def list_ontology_classes(
         run_aql(
             db,
             "FOR c IN ontology_classes FILTER c.ontology_id == @oid "
-            "AND c.expired == @never "
+            "AND (c.expired == @never OR c.expired == null) "
             "SORT c.label ASC " + return_clause,
             bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
         )

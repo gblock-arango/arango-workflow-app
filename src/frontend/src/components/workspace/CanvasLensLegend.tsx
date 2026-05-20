@@ -54,7 +54,7 @@ const LENS_META: Record<
     headline: "Diff (vs timeline)",
     swatches: [
       { color: "#34d399", label: "Entities visible at scrubbed time" },
-      { color: "#64748b", label: "Hidden / not in snapshot (when filter on)" },
+      { color: "#94a3b8", label: "Hidden / not in snapshot (when filter on)" },
     ],
     note: "Switching lenses does not re-run layout. Scrubbing the timeline changes which nodes exist — that can re-layout because the graph topology changes.",
   },

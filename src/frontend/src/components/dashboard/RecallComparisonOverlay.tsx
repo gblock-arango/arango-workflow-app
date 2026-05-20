@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiError } from "@/lib/api-client";
+import { ONTOLOGY_IMPORT_FILE_ACCEPT } from "@/lib/fileAccept";
 import {
   computeQualityRecall,
   inferRdfFormatFromFilename,
@@ -143,10 +144,10 @@ export default function RecallComparisonOverlay({
         <section className="space-y-4 px-6 py-5">
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium text-gray-700">Reference file (OWL / TTL)</span>
+              <span className="font-medium text-gray-700">Reference file (OWL / TTL / JSON-LD)</span>
               <input
                 type="file"
-                accept=".ttl,.owl,.rdf,.xml,.nt,.jsonld,.json-ld"
+                accept={ONTOLOGY_IMPORT_FILE_ACCEPT}
                 onChange={handleFile}
                 className="text-xs"
                 data-testid="recall-file-input"

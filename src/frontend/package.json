@@ -21,6 +21,7 @@
     "@tailwindcss/oxide-linux-x64-gnu": "^4.3.0",
     "@tailwindcss/postcss": "^4.2.2",
     "@types/dagre": "^0.7.54",
+    "@viz-js/viz": "^3.27.0",
     "dagre": "^0.8.5",
     "graphology": "^0.26.0",
     "graphology-layout": "^0.6.1",

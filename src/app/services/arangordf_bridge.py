@@ -19,8 +19,10 @@ from rdflib import Graph as RDFGraph
 
 from app.db.client import get_db
 from app.db.ontology_repo import create_class, create_edge, create_property
-from app.db.registry_repo import create_registry_entry
+from app.db.registry_repo import create_registry_entry, update_registry_entry
 from app.db.utils import run_aql
+from app.services import graph_json_import
+from app.services.jsonld_ontology_import import materialize_ontology_from_jsonld_document
 from app.services.temporal import NEVER_EXPIRES
 
 log = logging.getLogger(__name__)
@@ -74,6 +76,7 @@ def import_owl_to_graph(
         },
     )
 
+    used_pgt = False
     try:
         arango_rdf_cls = _ensure_arango_rdf()
     except ImportError:
@@ -84,6 +87,7 @@ def import_owl_to_graph(
             ontology_id=ontology_id,
         )
     else:
+        used_pgt = True
         adb_rdf = arango_rdf_cls(db)
 
         adb_rdf.init_rdf_collections(
@@ -102,13 +106,27 @@ def import_owl_to_graph(
         ontology_uri_prefix=ontology_uri_prefix,
         graph_name=graph_name,
     )
+    _backfill_workspace_temporal_fields(db, ontology_id=ontology_id)
+
+    if used_pgt and _count_live_workspace_classes(db, ontology_id) == 0:
+        log.info(
+            "no workspace classes after PGT import; materializing from RDF graph",
+            extra={"ontology_id": ontology_id},
+        )
+        _import_with_rdflib_fallback(
+            db,
+            rdf_graph=rdf_graph,
+            ontology_id=ontology_id,
+        )
 
     _ensure_named_graph(db, graph_name=graph_name)
 
+    class_count = _count_live_workspace_classes(db, ontology_id)
     stats = {
         "graph_name": graph_name,
         "ontology_id": ontology_id,
         "triple_count": triple_count,
+        "class_count": class_count,
         "imported": True,
     }
 
@@ -250,6 +268,58 @@ def _comment_for(graph: RDFGraph, subject: URIRef) -> str:
     return str(comment) if comment else ""
 
 
+def _class_uris_in_graph(rdf_graph: RDFGraph) -> set[str]:
+    """Collect class IRIs typed as OWL or RDFS Class (JSON-LD often uses rdfs:Class)."""
+    uris: set[str] = set()
+    for rdf_type in (OWL.Class, RDFS.Class):
+        uris.update(str(s) for s in rdf_graph.subjects(RDF.type, rdf_type))
+    return uris
+
+
+def _count_live_workspace_classes(db: StandardDatabase, ontology_id: str) -> int:
+    if not db.has_collection("ontology_classes"):
+        return 0
+    rows = list(
+        run_aql(
+            db,
+            "FOR c IN ontology_classes FILTER c.ontology_id == @oid "
+            "AND (c.expired == @never OR c.expired == null) "
+            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        )
+    )
+    return int(rows[0]) if rows else 0
+
+
+def _backfill_workspace_temporal_fields(db: StandardDatabase, *, ontology_id: str) -> int:
+    """Ensure PGT-tagged workspace docs have ``expired`` so list APIs return them."""
+    patched = 0
+    for col_name in (
+        "ontology_classes",
+        "ontology_properties",
+        "ontology_object_properties",
+        "ontology_datatype_properties",
+        "ontology_constraints",
+    ):
+        if not db.has_collection(col_name):
+            continue
+        rows = list(
+            run_aql(
+                db,
+                """
+                FOR doc IN @@col
+                  FILTER doc.ontology_id == @oid
+                  FILTER doc.expired == null
+                  UPDATE doc WITH { expired: @never } IN @@col
+                  RETURN 1
+                """,
+                bind_vars={"@col": col_name, "oid": ontology_id, "never": NEVER_EXPIRES},
+            )
+        )
+        patched += len(rows)
+    return patched
+
+
 def _import_with_rdflib_fallback(
     db: StandardDatabase,
     *,
@@ -267,17 +337,26 @@ def _import_with_rdflib_fallback(
 
     class_ids: dict[str, str] = {}
 
-    for class_uri in sorted({str(s) for s in rdf_graph.subjects(RDF.type, OWL.Class)}):
+    for class_uri in sorted(_class_uris_in_graph(rdf_graph)):
+        subject = URIRef(class_uri)
+        rdf_types = {str(o) for o in rdf_graph.objects(subject, RDF.type)}
+        rdf_type_label = (
+            "owl:Class"
+            if str(OWL.Class) in rdf_types
+            else "rdfs:Class"
+            if str(RDFS.Class) in rdf_types
+            else "rdfs:Class"
+        )
         doc = create_class(
             db,
             ontology_id=ontology_id,
             data={
                 "uri": class_uri,
-                "label": _label_for(rdf_graph, URIRef(class_uri)),
-                "description": _comment_for(rdf_graph, URIRef(class_uri)),
+                "label": _label_for(rdf_graph, subject),
+                "description": _comment_for(rdf_graph, subject),
                 "status": "approved",
                 "tier": "domain",
-                "rdf_type": "owl:Class",
+                "rdf_type": rdf_type_label,
             },
             created_by="import",
         )
@@ -399,8 +478,12 @@ def _tag_documents_with_ontology_id(
         query = f"""\
 FOR doc IN @@col
   {filter_clause}
-  UPDATE doc WITH {{ ontology_id: @oid }} IN @@col
+  UPDATE doc WITH {{
+    ontology_id: @oid,
+    expired: doc.expired == null ? @never : doc.expired
+  }} IN @@col
   RETURN 1"""
+        bind_vars["never"] = NEVER_EXPIRES
 
         result = list(run_aql(db, query, bind_vars=bind_vars))
         tagged += len(result)
@@ -650,6 +733,24 @@ def import_from_file(
     if db is None:
         db = get_db()
 
+    suffix = PurePosixPath(filename).suffix.lower()
+    if suffix == ".json":
+        try:
+            import json
+
+            payload = json.loads(file_content.decode("utf-8"))
+        except json.JSONDecodeError:
+            pass
+        else:
+            if graph_json_import.is_graph_dataset_payload(payload):
+                return graph_json_import.import_graph_from_json(
+                    file_content,
+                    filename,
+                    ontology_id,
+                    db=db,
+                    dataset_label=ontology_label,
+                )
+
     hint = _detect_format(filename)
     text = file_content.decode("utf-8")
     # Override the extension-based hint when the file's actual content
@@ -703,6 +804,26 @@ def import_from_file(
         ontology_uri_prefix=ontology_uri_prefix,
     )
 
+    if fmt == "json-ld":
+        try:
+            import json
+
+            jsonld_payload = json.loads(text)
+        except json.JSONDecodeError:
+            jsonld_payload = None
+        if isinstance(jsonld_payload, dict) and isinstance(jsonld_payload.get("@graph"), list):
+            mat = materialize_ontology_from_jsonld_document(
+                db,
+                jsonld_payload,
+                ontology_id,
+                ontology_uri_prefix=ontology_uri_prefix,
+            )
+            if mat.get("class_count", 0) > 0:
+                stats["class_count"] = mat["class_count"]
+                stats["jsonld_graph_materialized"] = True
+                stats["object_property_count"] = mat.get("object_property_count", 0)
+                stats["datatype_property_count"] = mat.get("datatype_property_count", 0)
+
     display_name = _registry_display_name_for_file_import(
         filename=filename,
         ontology_id=ontology_id,
@@ -729,6 +850,23 @@ def import_from_file(
 
     imports_sync = sync_owl_imports_edges(db, rdf_graph, ontology_id)
 
+    class_count = stats.get("class_count") or _count_live_workspace_classes(db, ontology_id)
+    property_count = stats.get("object_property_count", 0) + stats.get(
+        "datatype_property_count", 0
+    )
+    try:
+        update_registry_entry(
+            ontology_id,
+            {
+                "class_count": class_count,
+                "property_count": property_count,
+                "triple_count": triple_count,
+            },
+            db=db,
+        )
+    except Exception:
+        log.warning("Could not update registry counts after import", exc_info=True)
+
     log.info(
         "file import completed",
         extra={
@@ -736,6 +874,7 @@ def import_from_file(
             "source_filename": filename,
             "format": fmt,
             "triple_count": triple_count,
+            "class_count": class_count,
             "registry_key": registry_entry["_key"],
             "imports_edges_created": imports_sync.get("created", 0),
         },
@@ -747,6 +886,9 @@ def import_from_file(
         "filename": filename,
         "format": fmt,
         "registry_key": registry_entry["_key"],
+        "class_count": class_count,
+        "property_count": property_count,
+        "name": display_name,
         "imports_sync": imports_sync,
     }
 

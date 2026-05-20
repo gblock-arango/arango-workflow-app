@@ -4,6 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, backendUrl } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import AppHeader from "@/components/layout/AppHeader";
+import {
+  DOCUMENT_UPLOAD_FILE_ACCEPT,
+  isOntologyImportFilename,
+  ONTOLOGY_IMPORT_FILE_ACCEPT,
+} from "@/lib/fileAccept";
 
 interface UploadResult {
   doc_id: string;
@@ -162,6 +167,7 @@ export default function UploadPage() {
       setImportResult(finalResult);
       setImportState("success");
       loadDocuments();
+      loadOntologies();
     } catch (err) {
       setImportError(err instanceof Error ? err.message : String(err));
       setImportState("error");
@@ -249,7 +255,18 @@ export default function UploadPage() {
     throw new Error("Document processing timed out — please try extracting manually once it's ready.");
   };
 
+  const isJsonImportFile = (file: File) => isOntologyImportFilename(file.name);
+
   const uploadFile = async (file: File) => {
+    if (isJsonImportFile(file)) {
+      setMode("import");
+      if (!importName.trim()) {
+        setImportName(file.name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " "));
+      }
+      await importOWLFile(file);
+      return;
+    }
+
     setUploadState("uploading");
     setErrorMsg("");
     setResult(null);
@@ -311,7 +328,7 @@ export default function UploadPage() {
         subtitle={
           mode === "extract"
             ? "Ingest documents for ontology extraction"
-            : "Import OWL, TTL, or RDF ontologies"
+            : "Import OWL, TTL, RDF, or graph/ontology JSON"
         }
         contentClassName="max-w-4xl"
         footer={
@@ -326,7 +343,7 @@ export default function UploadPage() {
               onClick={() => setMode("import")}
               className={`text-sm px-4 py-2 rounded-lg font-medium transition-colors ${mode === "import" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
             >
-              Import OWL / TTL / RDF
+              Import OWL / TTL / RDF / JSON
             </button>
           </div>
         }
@@ -371,7 +388,7 @@ export default function UploadPage() {
                 <input
                   ref={importFileRef}
                   type="file"
-                  accept=".ttl,.owl,.rdf,.n3,.nt,.jsonld,.xml,.skos"
+                  accept={ONTOLOGY_IMPORT_FILE_ACCEPT}
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
@@ -381,10 +398,10 @@ export default function UploadPage() {
                 />
                 <div className="text-4xl text-gray-300 mb-3">🦉</div>
                 <p className="text-gray-600 font-medium">
-                  Drop an OWL, Turtle, RDF, or SKOS file here — or click to browse
+                  Drop an OWL, Turtle, RDF, SKOS, or JSON graph/ontology file here — or click to browse
                 </p>
                 <p className="text-sm text-gray-400 mt-1">
-                  Supported: .ttl, .owl, .rdf, .n3, .nt, .jsonld, .xml, .skos
+                  Supported: .ttl, .owl, .rdf, .n3, .nt, .jsonld, .json, .xml, .skos
                 </p>
               </div>
             </div>
@@ -420,7 +437,17 @@ export default function UploadPage() {
                   )}
                 </div>
                 <div className="mt-3 flex gap-3">
-                  <a href={withBasePath("/library")} className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+                  {importResult.ontology_id && (
+                    <a
+                      href={withBasePath(
+                        `/dashboard?ontologyId=${encodeURIComponent(String(importResult.ontology_id))}`,
+                      )}
+                      className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      Open in Dashboard
+                    </a>
+                  )}
+                  <a href={withBasePath("/library")} className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors">
                     View in Library
                   </a>
                   {importResult.ontology_id && (
@@ -494,7 +521,7 @@ export default function UploadPage() {
           <input
             ref={fileRef}
             type="file"
-            accept=".pdf,.docx,.md"
+            accept={DOCUMENT_UPLOAD_FILE_ACCEPT}
             onChange={handleFileSelect}
             className="hidden"
           />
@@ -503,7 +530,7 @@ export default function UploadPage() {
             Drop a file here or click to browse
           </p>
           <p className="mt-1 text-sm text-gray-400">
-            Supported formats: PDF, DOCX, Markdown
+            Supported formats: PDF, DOCX, PPTX, Markdown, JSON, JSON-LD (graph or ontology)
           </p>
         </div>
 
