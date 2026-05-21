@@ -1,4 +1,4 @@
-"""Workflow document storage on UC volume (upload + builtin corpora)."""
+"""Workflow document storage on UC volume (upload + builtin sample domains)."""
 
 from __future__ import annotations
 
@@ -9,11 +9,15 @@ from app.workflow_platform import workflow_data_volume as vol
 
 def workflow_data_status() -> dict[str, Any]:
     root = vol.workflow_data_root()
+    builtin_root = vol.workflow_data_builtin_root()
     return {
         "workflow_data_root": str(root),
+        "builtin_root": str(builtin_root),
+        "builtin_uc_path": vol.workflow_data_builtin_uc_path(),
+        "uploads_subdir": vol.UPLOADS_SUBDIR,
         "volume_name": vol.uc_graph_volume_name(),
         "exists": root.is_dir(),
-        "builtin_manifest": (root / vol.BUILTIN_SUBDIR / vol.SEED_MANIFEST_NAME).is_file(),
+        "builtin_manifest": (builtin_root / vol.SEED_MANIFEST_NAME).is_file(),
     }
 
 

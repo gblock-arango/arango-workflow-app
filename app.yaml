@@ -78,7 +78,7 @@ env:
   - name: UC_GRAPH_SNAPSHOT_BASE
     value: ""
   - name: UC_WORKFLOW_DATA_SUBDIR
-    description: "Subdirectory on UC_GRAPH_VOLUME_NAME for document uploads and builtin corpora"
+    description: "Subdirectory on UC_GRAPH_VOLUME_NAME for document uploads and builtin sample domains"
     value: "workflow-data"
   - name: WORKFLOW_DATA_SEED_ON_STARTUP
     description: "When true, copy repo datasets/ into workflow-data/builtin on app startup (requires /Volumes mount)"

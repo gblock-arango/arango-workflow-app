@@ -18,9 +18,9 @@ Two kinds of content live here:
 ## Layout
 
 ```
-samples/corpora/
+datasets/
 ├── README.md                     (this file)
-├── .gitignore                    (ignores external/)
+├── .seed_manifest.json           (reference; live copy on UC volume at builtin/.seed_manifest.json)
 ├── financial/
 │   ├── 10k-excerpt-acme.md       (Item 1 "Business" style)
 │   ├── loan-agreement-excerpt.md (covenant-heavy)
@@ -37,12 +37,25 @@ samples/corpora/
 │   ├── service-agreement-clauses.md
 │   ├── case-summary.md
 │   └── privacy-policy-excerpt.md
+├── cyber/                        (graph JSON/JSON-LD; not auto-seeded to UC builtin)
 └── external/                     (created by scripts/fetch-corpora.sh; gitignored)
     ├── redocred/
     ├── webnlg/
     ├── cuad/
     ├── craft/
     └── sec-edgar/
+```
+
+## Unity Catalog seed path (arango-workflow-app)
+
+Deploy copies each domain folder’s ingestible files (`.md`, `.pdf`, …) to:
+
+`/Volumes/workspace/default/arango_workflow_volume/workflow-data/builtin/<domain>/`
+
+There is **no** `builtin/corpora/` layer. Re-seed after layout changes:
+
+```bash
+python3 scripts/seed_workflow_volume_datasets.py --profile YOUR_PROFILE --force
 ```
 
 ## Fetching external corpora

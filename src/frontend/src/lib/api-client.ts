@@ -8,6 +8,17 @@
 import { getToken } from "@/lib/auth";
 import { getBasePath } from "@/lib/base-path";
 
+function isRelativeApiPath(url: string): boolean {
+  return url.startsWith("/") && !url.startsWith("//");
+}
+
+/** True when the UI is served from a non-local host (Databricks Apps, staging, etc.). */
+function isHostedAppOrigin(): boolean {
+  if (typeof window === "undefined") return false;
+  const h = window.location.hostname;
+  return h !== "localhost" && h !== "127.0.0.1";
+}
+
 // --- Response types -------------------------------------------------------
 
 export interface PaginatedResponse<T> {
@@ -81,6 +92,19 @@ function effectiveApiBaseUrl(): string {
   }
 
   const basePath = getBasePath();
+
+  // Databricks Apps: FastAPI serves /api on the same origin; avoid defaulting to 127.0.0.1:8010.
+  if (
+    typeof window !== "undefined" &&
+    isHostedAppOrigin() &&
+    (!trimmed || isRelativeApiPath(trimmed))
+  ) {
+    if (basePath) {
+      return resolveApiBaseUrl(`${window.location.origin}${basePath}`);
+    }
+    return "";
+  }
+
   if (!trimmed && basePath && typeof window !== "undefined") {
     return resolveApiBaseUrl(`${window.location.origin}${basePath}`);
   }
@@ -88,6 +112,23 @@ function effectiveApiBaseUrl(): string {
   return resolveApiBaseUrl(
     trimmed.length > 0 ? trimmed : DEFAULT_BACKEND_ORIGIN,
   );
+}
+
+/**
+ * Browser ``fetch`` to this app’s API (same-origin on Databricks Apps).
+ * Adds auth token when present; does not set ``Content-Type`` (safe for ``FormData``).
+ */
+export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  const token = getToken();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return fetch(backendUrl(path), {
+    ...init,
+    headers,
+    credentials: init?.credentials ?? "same-origin",
+  });
 }
 
 function resolveApiBaseUrl(baseUrl: string): string {

@@ -490,6 +490,11 @@ class GatewayDatabase:
         res = self._request("GET", f"/_db/{_q(self.name)}/_api/database/current")
         return _unwrap_arango_result(res, op="database")
 
+    def version(self) -> Any:
+        """``GET /_api/version`` — same contract as ``python-arango`` ``StandardDatabase.version``."""
+        res = self._request("GET", "/_api/version")
+        return _unwrap_arango_result(res, op="version")
+
     def collections(self) -> Any:
         res = self._request("GET", f"/_db/{_q(self.name)}/_api/collection")
         data = _unwrap_arango_result(res, op="collections")

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, backendUrl } from "@/lib/api-client";
+import { api, apiFetch } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import AppHeader from "@/components/layout/AppHeader";
 import {
@@ -77,6 +77,8 @@ export default function UploadPage() {
   const [builtinFiles, setBuiltinFiles] = useState<VolumeFileEntry[]>([]);
   const [builtinLoaded, setBuiltinLoaded] = useState(false);
   const [builtinIngesting, setBuiltinIngesting] = useState<string | null>(null);
+  const [volumeBuiltinPath, setVolumeBuiltinPath] = useState("");
+  const [volumeUploadsHint, setVolumeUploadsHint] = useState("");
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -115,6 +117,26 @@ export default function UploadPage() {
     }
   }, []);
 
+  const loadVolumeInfo = useCallback(async () => {
+    try {
+      const status = await api.get<{
+        builtin_uc_path?: string;
+        workflow_data_root?: string;
+        uploads_subdir?: string;
+      }>("/api/v1/documents/volume/status");
+      if (status.builtin_uc_path) {
+        setVolumeBuiltinPath(status.builtin_uc_path);
+      }
+      if (status.workflow_data_root && status.uploads_subdir) {
+        setVolumeUploadsHint(
+          `${status.workflow_data_root}/${status.uploads_subdir}/<doc-id>/`,
+        );
+      }
+    } catch {
+      /* non-critical */
+    }
+  }, []);
+
   const loadBuiltinFiles = useCallback(async () => {
     try {
       const res = await api.get<{ files: VolumeFileEntry[] }>(
@@ -131,8 +153,9 @@ export default function UploadPage() {
   useEffect(() => {
     loadDocuments();
     loadOntologies();
+    loadVolumeInfo();
     loadBuiltinFiles();
-  }, [loadDocuments, loadOntologies, loadBuiltinFiles]);
+  }, [loadDocuments, loadOntologies, loadVolumeInfo, loadBuiltinFiles]);
 
   const triggerExtraction = async (
     docId: string,
@@ -143,7 +166,7 @@ export default function UploadPage() {
       if (ontologyId) {
         payload.target_ontology_id = ontologyId;
       }
-      const res = await fetch(backendUrl("/api/v1/extraction/run"), {
+      const res = await apiFetch("/api/v1/extraction/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -172,7 +195,7 @@ export default function UploadPage() {
         ontology_id: id,
         ontology_label: label,
       });
-      const res = await fetch(backendUrl(`/api/v1/ontology/import?${params}`), {
+      const res = await apiFetch(`/api/v1/ontology/import?${params}`, {
         method: "POST",
         body: formData,
       });
@@ -210,8 +233,8 @@ export default function UploadPage() {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      const statusRes = await fetch(
-        backendUrl(`/api/v1/ontology/import/${encodeURIComponent(ontologyId)}/status`),
+      const statusRes = await apiFetch(
+        `/api/v1/ontology/import/${encodeURIComponent(ontologyId)}/status`,
       );
       if (!statusRes.ok) {
         if (statusRes.status === 404) continue;
@@ -261,7 +284,7 @@ export default function UploadPage() {
 
     while (Date.now() - start < maxWaitMs) {
       try {
-        const res = await fetch(backendUrl(`/api/v1/documents/${docId}`));
+        const res = await apiFetch(`/api/v1/documents/${docId}`);
         if (res.ok) {
           const doc = await res.json();
           const status = doc.status ?? doc.data?.status;
@@ -291,7 +314,7 @@ export default function UploadPage() {
     setExtractionRunId(null);
 
     try {
-      const res = await fetch(backendUrl("/api/v1/documents/ingest-from-volume"), {
+      const res = await apiFetch("/api/v1/documents/ingest-from-volume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
@@ -341,7 +364,7 @@ export default function UploadPage() {
     formData.append("file", file);
 
     try {
-      const res = await fetch(backendUrl("/api/v1/documents/upload"), {
+      const res = await apiFetch("/api/v1/documents/upload", {
         method: "POST",
         body: formData,
       });
@@ -564,14 +587,22 @@ export default function UploadPage() {
           </p>
         </div>
 
-        {/* Built-in corpora on UC volume (not available via OS file picker) */}
+        {/* Built-in sample domains on UC volume (not available via OS file picker) */}
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <h2 className="text-sm font-semibold text-gray-700 mb-1">
             Built-in sample documents
           </h2>
           <p className="text-xs text-gray-400 mb-4">
-            Seeded under Unity Catalog workflow-data/builtin (from repo datasets/).
-            Choose a file here instead of browsing your laptop.
+            Seeded from repo{" "}
+            <code className="text-gray-500">datasets/</code> into one folder per domain under
+            Unity Catalog{" "}
+            <code className="text-gray-500 break-all">
+              {volumeBuiltinPath ||
+                "/Volumes/workspace/default/arango_workflow_volume/workflow-data/builtin/"}
+            </code>
+            {" "}(e.g. <code className="text-gray-500">…/builtin/financial/</code>, not{" "}
+            <code className="text-gray-500">…/builtin/corpora/</code>). Choose a file here instead
+            of browsing your laptop.
           </p>
           {!builtinLoaded ? (
             <p className="text-sm text-gray-400">Loading volume catalog…</p>
@@ -635,8 +666,16 @@ export default function UploadPage() {
             Drop a file here or click to browse
           </p>
           <p className="mt-1 text-sm text-gray-400">
-            Supported formats: PDF, DOCX, PPTX, Markdown. Files are stored on the UC volume
-            under workflow-data/uploads, then ingested.
+            Supported formats: PDF, DOCX, PPTX, Markdown. Your file is copied to the UC volume
+            {volumeUploadsHint ? (
+              <>
+                {" "}
+                at <code className="text-gray-500 break-all">{volumeUploadsHint}</code>
+              </>
+            ) : (
+              <> under workflow-data/uploads/</>
+            )}{" "}
+            by the API, then ingested into Arango.
           </p>
         </div>
 

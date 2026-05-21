@@ -28,6 +28,26 @@ describe("backendUrl", () => {
   });
 });
 
+describe("getApiBaseUrl on hosted origins", () => {
+  const prevLocation = window.location;
+
+  afterEach(() => {
+    Object.defineProperty(window, "location", {
+      value: prevLocation,
+      writable: true,
+    });
+  });
+
+  it("uses same-origin relative API on Databricks Apps hostnames", () => {
+    Object.defineProperty(window, "location", {
+      value: new URL("https://arango-workflow-app-123.aws.databricksapps.com/upload"),
+      writable: true,
+    });
+    expect(getApiBaseUrl()).toBe("");
+    expect(backendUrl("/api/v1/documents/upload")).toBe("/api/v1/documents/upload");
+  });
+});
+
 describe("getApiOrigin", () => {
   const prevApiUrl = process.env.NEXT_PUBLIC_API_URL;
 

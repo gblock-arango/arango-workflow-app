@@ -83,7 +83,10 @@ def _validate_mime(file: UploadFile) -> str:
 class IngestFromVolumeBody(BaseModel):
     """Ingest a file already stored under UC workflow-data (e.g. builtin corpora)."""
 
-    path: str = Field(..., description="Path relative to workflow-data root, e.g. builtin/corpora/financial/foo.md")
+    path: str = Field(
+        ...,
+        description="Path relative to workflow-data root, e.g. builtin/financial/foo.md",
+    )
 
 
 def _resolve_duplicate_hash(file_hash: str) -> None:

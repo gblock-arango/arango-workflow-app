@@ -52,6 +52,16 @@ def workflow_data_root() -> Path:
     return Path(f"/Volumes/{catalog}/{schema}/{vol}") / _workflow_data_dir_name()
 
 
+def workflow_data_builtin_root() -> Path:
+    """``…/workflow-data/builtin`` — one subdirectory per repo ``datasets/<domain>/``."""
+    return workflow_data_root() / BUILTIN_SUBDIR
+
+
+def workflow_data_builtin_uc_path() -> str:
+    """Human-readable UC path for UI (e.g. ``/Volumes/workspace/default/…/builtin``)."""
+    return str(workflow_data_builtin_root())
+
+
 def repo_datasets_dir() -> Path:
     """Bundled ``datasets/`` in the deployed app tree (synced with the repo)."""
     here = Path(__file__).resolve()
@@ -112,7 +122,7 @@ def read_bytes(relative_path: str) -> bytes:
 
 def list_files(*, prefix: str = "", max_entries: int = 500) -> list[dict[str, Any]]:
     """
-    List ingestible files under ``prefix`` (e.g. ``builtin`` or ``builtin/corpora/financial``).
+    List ingestible files under ``prefix`` (e.g. ``builtin`` or ``builtin/financial``).
 
     Returns dicts: path (relative to workflow-data), name, size, category (builtin|upload).
     """
@@ -157,21 +167,26 @@ def save_upload(*, doc_id: str, filename: str, content: bytes) -> str:
     return write_bytes(relative_path=rel, content=content)
 
 
+def _builtin_seed_skip_dirs() -> frozenset[str]:
+    """Domain folders under ``datasets/`` not copied to UC builtin (large graphs / gitignored)."""
+    return frozenset({"cyber", "external", "__pycache__"})
+
+
 def seed_builtin_datasets_from_bundle(*, force: bool = False) -> dict[str, Any]:
     """
-    Copy repo ``datasets/{domain}/*.{md,...}`` into ``workflow-data/builtin/corpora/``.
+    Copy repo ``datasets/<domain>/*.{md,...}`` into ``workflow-data/builtin/<domain>/``.
 
-    Skips ``datasets/cyber`` and ``datasets/external`` (large / gitignored). Idempotent via manifest.
+    Skips ``datasets/cyber`` and ``datasets/external``. Idempotent via ``.seed_manifest.json``.
     """
     root = ensure_workflow_data_dirs()
-    dest_root = root / BUILTIN_SUBDIR / "corpora"
-    manifest_path = root / BUILTIN_SUBDIR / SEED_MANIFEST_NAME
+    dest_root = workflow_data_builtin_root()
+    manifest_path = dest_root / SEED_MANIFEST_NAME
     src = repo_datasets_dir()
 
     if manifest_path.is_file() and not force:
         try:
             existing = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if existing.get("ok"):
+            if existing.get("ok") and existing.get("layout_version") == 2:
                 return {"ok": True, "skipped": True, "reason": "already_seeded", **existing}
         except (OSError, json.JSONDecodeError):
             pass
@@ -180,25 +195,33 @@ def seed_builtin_datasets_from_bundle(*, force: bool = False) -> dict[str, Any]:
         return {"ok": False, "error": f"datasets dir not found: {src}"}
 
     copied = 0
-    skip_dirs = frozenset({"cyber", "external", "__pycache__"})
+    domains: list[str] = []
+    skip_dirs = _builtin_seed_skip_dirs()
     for domain_dir in sorted(src.iterdir()):
         if not domain_dir.is_dir() or domain_dir.name in skip_dirs or domain_dir.name.startswith("."):
             continue
         out_domain = dest_root / domain_dir.name
         out_domain.mkdir(parents=True, exist_ok=True)
+        domain_files = 0
         for f in sorted(domain_dir.iterdir()):
             if not f.is_file() or not is_allowed_document_file(f.name):
                 continue
             target = out_domain / f.name
             shutil.copy2(f, target)
             copied += 1
+            domain_files += 1
+        if domain_files:
+            domains.append(domain_dir.name)
 
     payload = {
         "ok": True,
         "skipped": False,
+        "layout_version": 2,
         "files_copied": copied,
+        "domains": domains,
         "source": str(src),
         "destination": str(dest_root),
+        "note": "One UC folder per repo datasets/<domain>/ (no builtin/corpora/).",
     }
     try:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)

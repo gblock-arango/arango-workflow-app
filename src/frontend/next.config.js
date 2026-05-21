@@ -31,6 +31,10 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_BASE_PATH: pathPrefix,
   },
+  // Static export is served by FastAPI StaticFiles — no Next image optimizer route.
+  images: {
+    unoptimized: true,
+  },
   ...(staticExport
     ? {
         output: "export",

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Seed repo ``datasets/`` into UC ``workflow-data/builtin`` (deploy-time, from laptop/CI).
+"""Seed repo ``datasets/`` into UC ``workflow-data/builtin/<domain>/`` (deploy-time, from laptop/CI).
 
 Uses the Databricks Files API (requires ``databricks auth login`` or profile).
 App startup also seeds when ``WORKFLOW_DATA_SEED_ON_STARTUP=true`` and ``/Volumes`` is mounted.
+
+Layout (layout_version 2): no ``builtin/corpora/`` — each repo domain folder maps to
+``/Volumes/<catalog>/<schema>/<volume>/workflow-data/builtin/<domain>/``.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ def _upload_via_sdk(
     volume: str,
     datasets_dir: Path,
     profile: str | None,
+    force: bool,
 ) -> dict:
     from databricks.sdk import WorkspaceClient
 
@@ -34,13 +38,15 @@ def _upload_via_sdk(
     w = WorkspaceClient(**kwargs)
 
     subdir = vol._workflow_data_dir_name()
-    dest_prefix = f"/Volumes/{catalog}/{schema}/{volume}/{subdir}/{vol.BUILTIN_SUBDIR}/corpora"
-    skip_dirs = frozenset({"cyber", "external", "__pycache__"})
+    dest_prefix = f"/Volumes/{catalog}/{schema}/{volume}/{subdir}/{vol.BUILTIN_SUBDIR}"
+    skip_dirs = vol._builtin_seed_skip_dirs()
     copied = 0
+    domains: list[str] = []
 
     for domain_dir in sorted(datasets_dir.iterdir()):
         if not domain_dir.is_dir() or domain_dir.name in skip_dirs or domain_dir.name.startswith("."):
             continue
+        domain_files = 0
         for f in sorted(domain_dir.iterdir()):
             if not f.is_file() or not vol.is_allowed_document_file(f.name):
                 continue
@@ -48,18 +54,22 @@ def _upload_via_sdk(
             with f.open("rb") as stream:
                 w.files.upload(remote, stream, overwrite=True)
             copied += 1
+            domain_files += 1
+        if domain_files:
+            domains.append(domain_dir.name)
 
-    manifest_remote = (
-        f"/Volumes/{catalog}/{schema}/{volume}/{subdir}/"
-        f"{vol.BUILTIN_SUBDIR}/{vol.SEED_MANIFEST_NAME}"
-    )
+    manifest_remote = f"{dest_prefix}/{vol.SEED_MANIFEST_NAME}"
     payload = {
         "ok": True,
         "skipped": False,
+        "layout_version": 2,
         "files_copied": copied,
+        "domains": domains,
         "source": str(datasets_dir),
         "destination": dest_prefix,
         "via": "databricks-sdk",
+        "force": force,
+        "note": "One UC folder per repo datasets/<domain>/ (no builtin/corpora/).",
     }
     import tempfile
 
@@ -81,6 +91,11 @@ def main() -> int:
     parser.add_argument("--volume", default="arango_workflow_volume")
     parser.add_argument("--datasets-dir", type=Path, default=REPO_ROOT / "datasets")
     parser.add_argument("--profile", default="")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Upload all files even if .seed_manifest.json already exists on the volume",
+    )
     args = parser.parse_args()
 
     if not args.datasets_dir.is_dir():
@@ -94,6 +109,7 @@ def main() -> int:
         volume=args.volume,
         datasets_dir=args.datasets_dir,
         profile=profile,
+        force=args.force,
     )
     print(json.dumps(result, indent=2))
     return 0

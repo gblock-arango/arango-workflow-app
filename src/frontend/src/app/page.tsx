@@ -9,6 +9,7 @@ import { useActivePipelineAgents } from "@/lib/useActivePipelineAgents";
 interface HealthStatus {
   status: string;
   database?: string;
+  gateway?: string;
 }
 
 interface LibraryStats {
@@ -46,14 +47,11 @@ export default function Home() {
       .then((data: HealthStatus) => {
         if (data.status === "ready") {
           setHealth("connected");
-          setHealthDetail(data.database ?? "connected");
+          const parts = [data.gateway, data.database].filter(Boolean);
+          setHealthDetail(parts.join(" · ") || "connected");
         } else {
           setHealth("error");
-          setHealthDetail(
-            data.database
-              ? `Database not ready: ${data.database}`
-              : "Database not ready",
-          );
+          setHealthDetail(data.database || data.gateway || "Database not ready");
         }
       })
       .catch((err) => {
@@ -284,8 +282,18 @@ function HeroConnectionStatus({
   health: ConnectionState;
   healthDetail: string;
 }) {
+  const statusLabel =
+    health === "loading"
+      ? "Checking…"
+      : health === "connected"
+        ? "Connected"
+        : "Unavailable";
+
   return (
     <div className="text-center lg:text-right -translate-x-[5px]">
+      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">
+        Connection to Arango
+      </p>
       <div className="flex items-center justify-center lg:justify-end gap-2">
         <span
           className={`inline-block h-2 w-2 rounded-full shrink-0 ${
@@ -297,19 +305,21 @@ function HeroConnectionStatus({
           }`}
         />
         <span
-          className={`text-sm font-medium capitalize ${
+          className={`text-sm font-medium ${
             health === "connected" ? "text-emerald-600" : "text-gray-600"
           }`}
         >
-          {health === "loading"
-            ? "Checking…"
-            : health === "connected"
-              ? "Connected"
-              : "Unavailable"}
+          {statusLabel}
         </span>
       </div>
-      {health === "error" && healthDetail && (
-        <p className="mt-1 text-xs text-red-600 max-w-[200px] line-clamp-2">{healthDetail}</p>
+      {healthDetail && (
+        <p
+          className={`mt-1 text-xs max-w-[220px] line-clamp-2 ${
+            health === "error" ? "text-red-600" : "text-gray-500"
+          }`}
+        >
+          {healthDetail}
+        </p>
       )}
     </div>
   );

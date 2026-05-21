@@ -152,16 +152,29 @@ else
   echo "NOTE: no src/frontend — skipping Next build." >&2
 fi
 
+FRONTEND_OUT_DIR="${SCRIPT_DIR}/src/frontend/out"
+FRONTEND_OUT_REMOTE="${SOURCE_CODE_PATH}/src/frontend/out"
+
 echo "Syncing local project to '${SOURCE_CODE_PATH}'..."
 _databricks sync . "${SOURCE_CODE_PATH}"
 
-if [[ -d "${SCRIPT_DIR}/src/frontend/out" ]]; then
-  echo "Syncing frontend static export (gitignored; explicit sync)…"
-  _databricks sync "${SCRIPT_DIR}/src/frontend/out" "${SOURCE_CODE_PATH}/src/frontend/out"
+echo ""
+if [[ ! -f "${FRONTEND_OUT_DIR}/dashboard.html" ]]; then
+  echo "ERROR: ${FRONTEND_OUT_DIR}/dashboard.html is missing after the frontend build." >&2
+  echo "       /dashboard on the deployed app will 404 until this exists. See ${FRONTEND_BUILD_LOG}" >&2
+  if [[ "${WORKFLOW_FRONTEND_BUILD_FAIL_DEPLOY:-}" == "1" ]]; then
+    exit 1
+  fi
 else
-  echo "WARNING: ${SCRIPT_DIR}/src/frontend/out missing — Databricks App will start without OntoExtract UI." >&2
-  echo "         Run deploy again after AOE_STATIC_EXPORT=1 npm run build in src/frontend succeeds." >&2
+  _html_count="$(find "${FRONTEND_OUT_DIR}" -maxdepth 1 -name '*.html' 2>/dev/null | wc -l | tr -d ' ')"
+  echo "=== Syncing OntoExtract UI (src/frontend/out) to workspace ==="
+  echo "  Local:  ${FRONTEND_OUT_DIR} (${_html_count} top-level .html files, incl. dashboard.html)"
+  echo "  Remote: ${FRONTEND_OUT_REMOTE}"
+  echo "  (explicit --full sync; required because databricks sync . often skips build output)"
+  _databricks sync --full "${FRONTEND_OUT_DIR}" "${FRONTEND_OUT_REMOTE}"
+  echo "=== Frontend static export sync complete ==="
 fi
+echo ""
 
 if ! _databricks apps get "${APP_NAME}" &>/dev/null; then
   echo "Creating Databricks App '${APP_NAME}'…"
@@ -250,7 +263,7 @@ run_sql_statement "GRANT READ VOLUME, WRITE VOLUME ON VOLUME ${REGISTRY_CATALOG}
 if [[ "${WORKFLOW_DATA_SEED_AT_DEPLOY:-1}" != "0" ]]; then
   SEED_SCRIPT="${SCRIPT_DIR}/scripts/seed_workflow_volume_datasets.py"
   if [[ -f "${SEED_SCRIPT}" ]]; then
-    echo "Seeding builtin datasets/ → UC workflow-data/builtin (deploy host via Files API)…"
+    echo "Seeding datasets/<domain>/ → UC workflow-data/builtin/<domain>/ (Files API)…"
     _seed_args=(--catalog "${REGISTRY_CATALOG}" --schema "${REGISTRY_SCHEMA}" --volume "${UC_GRAPH_VOLUME_NAME}")
     if [[ -n "${PROFILE}" ]]; then
       _seed_args+=(--profile "${PROFILE}")
