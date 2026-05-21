@@ -39,7 +39,7 @@ function buildInitialSteps(): Map<string, StepStatus> {
  *
  * Uses ``getApiOrigin()`` (origin only — see api-client) so we always get a real
  * ``ws://``/``wss://`` host even when ``NEXT_PUBLIC_API_URL`` is a relative path
- * like ``/api/v1`` (unified Docker image). Includes ``NEXT_PUBLIC_BASE_PATH`` so
+ * like ``/api/v1`` (static export / same-origin deploy). Includes ``NEXT_PUBLIC_BASE_PATH`` so
  * deployments behind ``SERVICE_URL_PATH_PREFIX`` (Container Manager) reach the
  * backend's ``StripServicePrefixMiddleware``.
  */

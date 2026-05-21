@@ -1,4 +1,4 @@
-"""In-process dispatch from public ``/api/workflow/ontoextract/v1/*`` BFF to JWT-protected ``/api/v1/*``."""
+"""In-process dispatch from public ``/api/workflow/ontoextract/v1/*`` BFF to ``/api/v1/*``."""
 
 from __future__ import annotations
 

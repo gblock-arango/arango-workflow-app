@@ -12,8 +12,8 @@
 # Usage:
 #   ./scripts/set_user_api_scopes.sh [APP_NAME] [PROFILE]
 #
-# Override scopes (comma-separated OAuth scope strings):
-#   USER_API_SCOPES="apps,sql,genie,unity-catalog" ./scripts/set_user_api_scopes.sh
+# Override scopes (comma-separated OAuth scope strings for Apps user tokens):
+#   USER_API_SCOPES="apps,sql,dashboards.genie,catalog.catalogs:read" ./scripts/set_user_api_scopes.sh
 #
 # After a scope change, Databricks may require an app restart before headers appear;
 # if /debug still shows x_forwarded_access_token_present false, try:
@@ -31,9 +31,10 @@ else
   PROFILE_ARGS=()
 fi
 
-# Default: enough for UC/SQL, Genie, and Apps workspace APIs (tune per least-privilege).
+# Default: UC SQL + Genie + peer Apps (tune per least-privilege).
+# Apps user tokens use granular scopes (``unity-catalog`` umbrella is rejected by apps update).
 # Scope names: https://docs.databricks.com/api/workspace/api/scopes
-RAW_SCOPES="${USER_API_SCOPES:-apps,sql,genie,unity-catalog}"
+RAW_SCOPES="${USER_API_SCOPES:-apps,sql,dashboards.genie,catalog.catalogs:read,catalog.schemas:read,catalog.tables:read}"
 
 JSON_BODY="$(USER_API_SCOPES="${RAW_SCOPES}" python3 << 'PY'
 import json, os
@@ -46,10 +47,19 @@ PY
 )"
 
 echo "Updating app ${APP_NAME} with user_api_scopes from USER_API_SCOPES (or default)…" >&2
-databricks apps update "${APP_NAME}" --json "${JSON_BODY}" "${PROFILE_ARGS[@]}" >/dev/null
+if [[ ${#PROFILE_ARGS[@]} -gt 0 ]]; then
+  databricks "${PROFILE_ARGS[@]}" apps update "${APP_NAME}" --json "${JSON_BODY}" >/dev/null
+else
+  databricks apps update "${APP_NAME}" --json "${JSON_BODY}" >/dev/null
+fi
 echo "OK: apps update returned success. Fetching effective scopes…" >&2
-databricks apps get "${APP_NAME}" --output json "${PROFILE_ARGS[@]}" \
-  | python3 -c 'import json,sys; d=json.load(sys.stdin); print("user_api_scopes:", d.get("user_api_scopes")); print("effective_user_api_scopes:", d.get("effective_user_api_scopes"))'
+if [[ ${#PROFILE_ARGS[@]} -gt 0 ]]; then
+  databricks "${PROFILE_ARGS[@]}" apps get "${APP_NAME}" --output json \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print("user_api_scopes:", d.get("user_api_scopes")); print("effective_user_api_scopes:", d.get("effective_user_api_scopes"))'
+else
+  databricks apps get "${APP_NAME}" --output json \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print("user_api_scopes:", d.get("user_api_scopes")); print("effective_user_api_scopes:", d.get("effective_user_api_scopes"))'
+fi
 
 echo >&2
 echo "Next: open /debug on the app; expect dashboard_proxy_auth.x_forwarded_access_token_present true after you load the UI and consent (if prompted). If still false, restart the app (stop/start) and reload." >&2

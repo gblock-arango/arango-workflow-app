@@ -1,72 +1,34 @@
-.PHONY: help setup dev infra infra-down infra-reset backend frontend ui migrate test lint format type-check clean
+.PHONY: help test lint format type-check build-static clean
 
-# Optional repo-root .env (BACKEND_PORT, etc.). Safe if missing.
--include .env
+# Databricks deployment: ./deploy_app.sh (config in app.yaml; frontend built by deploy script).
+# This Makefile is optional — mainly for unit tests and local static export smoke checks.
 
-# Default 8010 (matches src/frontend/.env.development). Override: make backend BACKEND_PORT=8000
-BACKEND_PORT ?= 8010
-BACKEND_PROXY_URL ?= http://127.0.0.1:$(BACKEND_PORT)
 export PYTHONPATH := src
-export BACKEND_PROXY_URL
-export BACKEND_PORT
 
-help: ## Show this help
+help: ## Show targets
+	@echo "Primary:  ./deploy_app.sh          # sync, build UI, deploy, UC grants (reads app.yaml)"
+	@echo "Optional: make test | lint | build-static"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-setup: ## First-time setup (venv + npm + .env template)
-	@test -f .env || cp .env.example .env && echo "==> Created .env from .env.example"
-	@$(MAKE) ensure-deps
-	@echo "==> Done. Run 'make infra' to start ArangoDB + Redis."
+build-static: ## Next.js static export (same as deploy_app.sh pre-step)
+	cd src/frontend && AOE_STATIC_EXPORT=1 npm run build
 
-.PHONY: ensure-deps
-ensure-deps:
-	@echo "==> Ensuring Python venv + dev deps..."
-	@bash scripts/ensure-backend-deps.sh
-	@echo "==> Ensuring frontend deps..."
-	cd src/frontend && npm install
+test: ## Unit tests (no Databricks / Arango required for most tests)
+	@test -x .venv/bin/pytest || (echo "run: bash scripts/ensure-backend-deps.sh" >&2; exit 1)
+	.venv/bin/pytest tests/unit -v
 
-dev: ## API + Next in one terminal (Ctrl+C stops both). Uses BACKEND_PORT (default 8010).
-	@BACKEND_PORT=$(BACKEND_PORT) bash scripts/dev-local.sh
-
-infra: ## Start ArangoDB + Redis (docker compose)
-	docker compose up -d
-
-infra-down: ## Stop infrastructure
-	docker compose down
-
-infra-reset: ## Stop infrastructure and delete volumes
-	docker compose down -v
-
-backend: ## Run FastAPI dev server (port BACKEND_PORT, default 8010)
-	@echo "==> API http://127.0.0.1:$(BACKEND_PORT)  (frontend proxy: BACKEND_PROXY_URL in .env)"
-	.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port $(BACKEND_PORT)
-
-frontend: ui ## Run Next.js dev server (hot reload on save)
-
-ui: ## Live UI dev — edit src/frontend, browser updates via Fast Refresh
-	@echo "==> UI   http://localhost:3000  (save files → instant refresh)"
-	@echo "==> API  proxied to $(BACKEND_PROXY_URL)"
-	@echo "==> Edit: src/frontend/src/app/  src/frontend/src/components/"
-	cd src/frontend && npm run dev
-
-migrate: ## Apply pending database migrations
-	.venv/bin/python -m migrations.runner
-
-test: ## Run backend tests
-	.venv/bin/pytest tests/ -v
-
-lint: ## Lint backend code
+lint: ## Lint backend
+	@test -x .venv/bin/ruff || (echo "run: bash scripts/ensure-backend-deps.sh" >&2; exit 1)
 	.venv/bin/ruff check src/app src/migrations tests/
 	.venv/bin/mypy src/app/ --ignore-missing-imports
 
-format: ## Format backend code
+format: ## Format backend
 	.venv/bin/ruff format src/app src/migrations tests/
 
-type-check: ## Type-check backend + frontend
-	.venv/bin/mypy src/app/ --ignore-missing-imports
+type-check: lint ## Alias for lint + frontend types
 	cd src/frontend && npm run type-check
 
-clean: ## Remove caches and build artifacts
+clean: ## Remove caches
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
-	rm -rf src/frontend/.next
+	rm -rf src/frontend/.next src/frontend/out

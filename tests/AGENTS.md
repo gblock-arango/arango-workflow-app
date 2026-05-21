@@ -15,7 +15,7 @@ tests/
 │   ├── sample_documents/# Test PDFs, DOCX, Markdown files
 │   └── embeddings/      # Pre-computed vector embeddings
 ├── unit/                # Fast, isolated, mocked dependencies
-├── integration/         # Real ArangoDB + Redis via Docker
+├── integration/         # Real ArangoDB at ARANGO_TEST_HOST (optional external instance)
 └── e2e/                 # Full workflow tests (upload → extract → curate → promote)
 ```
 
@@ -25,7 +25,7 @@ tests/
 
 ## Boundaries
 - Unit tests mock all external dependencies (ArangoDB, Redis, LLM providers)
-- Integration tests use a real ArangoDB instance via Docker (auto-created, auto-dropped per session)
+- Integration tests require a reachable ArangoDB at ``ARANGO_TEST_HOST`` (no Docker bundled in this repo)
 - E2E tests run against the full FastAPI app via `httpx.AsyncClient`
 - LLM responses are always mocked with recorded fixtures — never call real LLM APIs in tests
 

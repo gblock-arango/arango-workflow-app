@@ -60,6 +60,15 @@ class AppConfig:
     UC_GRAPH_SNAPSHOT_BASE: str = field(
         default_factory=_uc_graph_snapshot_base
     )
+    UC_WORKFLOW_DATA_SUBDIR: str = field(
+        default_factory=lambda: (
+            (os.environ.get("UC_WORKFLOW_DATA_SUBDIR", "") or "").strip()
+            or "workflow-data"
+        )
+    )
+    WORKFLOW_DATA_SEED_ON_STARTUP: str = field(
+        default_factory=lambda: (os.environ.get("WORKFLOW_DATA_SEED_ON_STARTUP", "true") or "true")
+    )
     DEBUG_STARTUP_CHECKS: bool = field(
         default_factory=lambda: os.environ.get("DEBUG_STARTUP_CHECKS", "false").lower()
         == "true"

@@ -35,7 +35,7 @@ describe("getApiOrigin", () => {
     process.env.NEXT_PUBLIC_API_URL = prevApiUrl;
   });
 
-  it("returns window.location.origin when NEXT_PUBLIC_API_URL is a relative path (unified Docker image)", () => {
+  it("returns window.location.origin when NEXT_PUBLIC_API_URL is a relative path (static export)", () => {
     process.env.NEXT_PUBLIC_API_URL = "/api/v1";
     // jsdom's default location is http://localhost
     expect(getApiOrigin()).toBe(window.location.origin);

@@ -66,6 +66,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     )
 
     publish_self_workflow_url_to_uc_if_configured(workflow_config_dict())
+
+    from app.services.workflow_data import seed_builtin_if_configured
+
+    try:
+        seed_result = seed_builtin_if_configured()
+        log.info("workflow_data_seed", **seed_result)
+    except Exception as exc:
+        log.warning("workflow_data_seed_failed", error=str(exc))
+
     yield
     close_db()
     log.info("shutdown_complete")
@@ -143,7 +152,6 @@ else:
         checked_explicit=settings.frontend_static_root or None,
         checked_src_layout="<repo>/src/frontend/out",
         checked_legacy_monorepo="<repo>/frontend/out",
-        docker_fallback="/app/static",
     )
 
     @app.get("/login")

@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Query, UploadFile
+from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_or_404
 from app.api.errors import ConflictError, ValidationError
@@ -21,6 +22,12 @@ from app.db.utils import run_aql
 from app.models.common import PaginatedResponse
 from app.models.documents import DocumentStatus
 from app.services.ingestion import compute_file_hash
+from app.services.workflow_data import (
+    browse_volume,
+    ingest_file_from_volume,
+    persist_upload,
+    workflow_data_status,
+)
 from app.tasks import process_document
 
 log = logging.getLogger(__name__)
@@ -73,6 +80,63 @@ def _validate_mime(file: UploadFile) -> str:
     )
 
 
+class IngestFromVolumeBody(BaseModel):
+    """Ingest a file already stored under UC workflow-data (e.g. builtin corpora)."""
+
+    path: str = Field(..., description="Path relative to workflow-data root, e.g. builtin/corpora/financial/foo.md")
+
+
+def _resolve_duplicate_hash(file_hash: str) -> None:
+    """Allow re-upload when the only existing record is FAILED; else raise ConflictError."""
+    existing = documents_repo.find_document_by_hash(file_hash)
+    if not existing:
+        return
+    prior_status = existing.get("status")
+    if prior_status == DocumentStatus.FAILED:
+        prior_id = existing["_key"]
+        chunks_removed = documents_repo.delete_chunks_for_document(prior_id)
+        documents_repo.hard_delete_document(prior_id)
+        log.info(
+            "discarded prior FAILED document %s (chunks_removed=%d) "
+            "to allow re-upload of identical content (hash=%s)",
+            prior_id,
+            chunks_removed,
+            file_hash,
+        )
+        return
+    raise ConflictError(
+        "Duplicate document — a file with identical content already exists",
+        details={
+            "existing_doc_id": existing["_key"],
+            "existing_status": prior_status,
+            "file_hash": file_hash,
+        },
+    )
+
+
+def _persist_upload_metadata(doc_id: str, filename: str, content: bytes) -> dict[str, Any]:
+    """Write bytes to UC volume; return metadata dict (may be empty if volume unavailable)."""
+    try:
+        rel = persist_upload(doc_id=doc_id, filename=filename, content=content)
+        return {"volume_relative_path": rel, "volume_source": "upload"}
+    except OSError as exc:
+        log.warning("Could not persist upload to UC volume for %s: %s", doc_id, exc)
+        return {}
+    except ValueError as exc:
+        log.warning("Invalid volume path for upload %s: %s", doc_id, exc)
+        return {}
+
+
+def _queue_processing(
+    doc_id: str,
+    content: bytes,
+    mime: str,
+) -> None:
+    task = asyncio.create_task(process_document(doc_id, content, mime))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
 def _to_doc_response(doc: dict[str, Any]) -> dict[str, Any]:
     """Ensure the dict has the fields DocumentResponse expects."""
     return {
@@ -99,53 +163,85 @@ async def upload_document(
     mime = _validate_mime(file)
 
     file_hash = compute_file_hash(content)
-    existing = documents_repo.find_document_by_hash(file_hash)
-    if existing:
-        # A FAILED record is a leftover from a previous failed ingestion
-        # attempt at any pipeline stage (parse / chunk / embed / index).
-        # The user's natural recovery is to retry the same file, so we
-        # treat re-upload of identical content as an explicit retry: hard
-        # delete the prior record + its chunks, then proceed with a fresh
-        # ingestion. Any non-FAILED status (uploading / parsing / chunking
-        # / embedding / ready / deleted) is still rejected -- those are
-        # legitimate duplicates the user shouldn't accidentally clobber.
-        prior_status = existing.get("status")
-        if prior_status == DocumentStatus.FAILED:
-            prior_id = existing["_key"]
-            chunks_removed = documents_repo.delete_chunks_for_document(prior_id)
-            documents_repo.hard_delete_document(prior_id)
-            log.info(
-                "discarded prior FAILED document %s (chunks_removed=%d) "
-                "to allow re-upload of identical content (hash=%s)",
-                prior_id,
-                chunks_removed,
-                file_hash,
-            )
-        else:
-            raise ConflictError(
-                "Duplicate document — a file with identical content already exists",
-                details={
-                    "existing_doc_id": existing["_key"],
-                    "existing_status": prior_status,
-                    "file_hash": file_hash,
-                },
-            )
+    _resolve_duplicate_hash(file_hash)
 
+    filename = file.filename or "untitled"
     doc = documents_repo.create_document(
-        filename=file.filename or "untitled",
+        filename=filename,
         mime_type=mime,
         file_hash=file_hash,
         org_id=org_id,
     )
+    doc_id = doc["_key"]
+    volume_meta = _persist_upload_metadata(doc_id=doc_id, filename=filename, content=content)
+    if volume_meta:
+        documents_repo.update_document_metadata(doc_id, metadata=volume_meta)
 
-    task = asyncio.create_task(process_document(doc["_key"], content, mime))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    _queue_processing(doc_id, content, mime)
+
+    out: dict[str, Any] = {
+        "doc_id": doc_id,
+        "filename": doc["filename"],
+        "status": doc["status"],
+    }
+    if volume_meta.get("volume_relative_path"):
+        out["volume_path"] = volume_meta["volume_relative_path"]
+    return out
+
+
+@router.get("/volume/status")
+async def volume_status() -> dict[str, Any]:
+    """UC workflow-data mount status (for UI and ops)."""
+    return workflow_data_status()
+
+
+@router.get("/volume/browse")
+async def volume_browse(
+    prefix: str = Query(default="builtin", description="Subpath under workflow-data"),
+    limit: int = Query(default=500, ge=1, le=2000),
+) -> dict[str, Any]:
+    """List ingestible files on the UC volume (built-in corpora and prior uploads)."""
+    try:
+        files = browse_volume(prefix=prefix, limit=limit)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    return {"prefix": prefix, "files": files, **workflow_data_status()}
+
+
+@router.post("/ingest-from-volume")
+async def ingest_from_volume(
+    body: IngestFromVolumeBody,
+    org_id: str | None = Query(default=None),
+) -> dict[str, Any]:
+    """Ingest a document from UC workflow-data (no local file picker)."""
+    try:
+        content, filename, mime = ingest_file_from_volume(relative_path=body.path)
+    except FileNotFoundError as exc:
+        raise ValidationError(f"Volume file not found: {body.path}") from exc
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+
+    file_hash = compute_file_hash(content)
+    _resolve_duplicate_hash(file_hash)
+
+    rel = body.path.strip().lstrip("/")
+    source = "builtin" if rel.startswith("builtin/") else "upload"
+
+    doc = documents_repo.create_document(
+        filename=filename,
+        mime_type=mime,
+        file_hash=file_hash,
+        org_id=org_id,
+        metadata={"volume_relative_path": rel, "volume_source": source},
+    )
+    _queue_processing(doc["_key"], content, mime)
 
     return {
         "doc_id": doc["_key"],
         "filename": doc["filename"],
         "status": doc["status"],
+        "volume_path": rel,
+        "volume_source": source,
     }
 
 
@@ -214,18 +310,19 @@ async def update_document(
 
     documents_repo.delete_chunks_for_document(doc_id)
 
+    filename = file.filename or doc.get("filename", "untitled")
+    volume_meta = _persist_upload_metadata(doc_id=doc_id, filename=filename, content=content)
     documents_repo.update_document_metadata(
         doc_id,
-        filename=file.filename or doc.get("filename", "untitled"),
+        filename=filename,
         mime_type=mime,
         file_hash=file_hash,
         chunk_count=0,
+        metadata=volume_meta or None,
     )
     documents_repo.update_document_status(doc_id, DocumentStatus.UPLOADING)
 
-    task = asyncio.create_task(process_document(doc_id, content, mime))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    _queue_processing(doc_id, content, mime)
 
     updated = documents_repo.get_document(doc_id)
     return _to_doc_response(updated or {"_key": doc_id})

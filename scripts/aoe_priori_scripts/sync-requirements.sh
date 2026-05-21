@@ -6,7 +6,7 @@
 # list in `backend/pyproject.toml`.
 #
 # Why this exists:
-#   - Production builds (Dockerfile, Container Manager packaging, CI) install
+#   - Production builds (Databricks App / Container Manager packaging, CI) install
 #     from `backend/pyproject.toml` + `backend/uv.lock`.
 #   - The BYOC build hook `scripts/prepareproject.sh` runs `pip install -r
 #     requirements.txt`. Until BYOC can read pyproject.toml directly, we keep
@@ -49,7 +49,7 @@ header = (
     "# Source of truth: backend/pyproject.toml ([project].dependencies)\n"
     "#\n"
     "# Consumed by scripts/prepareproject.sh (BYOC build hook). Production\n"
-    "# builds (Dockerfile, Container Manager) install from backend/pyproject.toml\n"
+    "# builds install from pyproject.toml / requirements.txt\n"
     "# directly; this file exists only to keep BYOC working until that flow can\n"
     "# read pyproject.toml.\n"
 )

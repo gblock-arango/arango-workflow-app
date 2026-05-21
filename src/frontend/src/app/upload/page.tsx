@@ -14,6 +14,15 @@ interface UploadResult {
   doc_id: string;
   filename: string;
   status: string;
+  volume_path?: string;
+}
+
+interface VolumeFileEntry {
+  path: string;
+  name: string;
+  size_bytes: number;
+  category: string;
+  mime_type?: string;
 }
 
 interface DocumentEntry {
@@ -65,6 +74,9 @@ export default function UploadPage() {
   const [importResult, setImportResult] = useState<ImportResultData | null>(null);
   const [importError, setImportError] = useState("");
   const importFileRef = useRef<HTMLInputElement>(null);
+  const [builtinFiles, setBuiltinFiles] = useState<VolumeFileEntry[]>([]);
+  const [builtinLoaded, setBuiltinLoaded] = useState(false);
+  const [builtinIngesting, setBuiltinIngesting] = useState<string | null>(null);
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -103,10 +115,24 @@ export default function UploadPage() {
     }
   }, []);
 
+  const loadBuiltinFiles = useCallback(async () => {
+    try {
+      const res = await api.get<{ files: VolumeFileEntry[] }>(
+        "/api/v1/documents/volume/browse?prefix=builtin",
+      );
+      setBuiltinFiles(res.files ?? []);
+    } catch {
+      setBuiltinFiles([]);
+    } finally {
+      setBuiltinLoaded(true);
+    }
+  }, []);
+
   useEffect(() => {
     loadDocuments();
     loadOntologies();
-  }, [loadDocuments, loadOntologies]);
+    loadBuiltinFiles();
+  }, [loadDocuments, loadOntologies, loadBuiltinFiles]);
 
   const triggerExtraction = async (
     docId: string,
@@ -256,6 +282,45 @@ export default function UploadPage() {
   };
 
   const isJsonImportFile = (file: File) => isOntologyImportFilename(file.name);
+
+  const ingestFromVolume = async (path: string, displayName: string) => {
+    setBuiltinIngesting(path);
+    setUploadState("uploading");
+    setErrorMsg("");
+    setResult(null);
+    setExtractionRunId(null);
+
+    try {
+      const res = await fetch(backendUrl("/api/v1/documents/ingest-from-volume"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(
+          err.detail ?? err.error?.message ?? `Ingest failed (${res.status})`,
+        );
+      }
+      const data: UploadResult = await res.json();
+      setResult({ ...data, filename: data.filename || displayName });
+      loadDocuments();
+      await waitForDocumentReady(data.doc_id);
+      loadDocuments();
+      setUploadState("extracting");
+      const runId = await triggerExtraction(
+        data.doc_id,
+        targetOntologyId || undefined,
+      );
+      setExtractionRunId(runId);
+      setUploadState("success");
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setUploadState("error");
+    } finally {
+      setBuiltinIngesting(null);
+    }
+  };
 
   const uploadFile = async (file: File) => {
     if (isJsonImportFile(file)) {
@@ -499,7 +564,47 @@ export default function UploadPage() {
           </p>
         </div>
 
-        {/* Drop zone */}
+        {/* Built-in corpora on UC volume (not available via OS file picker) */}
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">
+            Built-in sample documents
+          </h2>
+          <p className="text-xs text-gray-400 mb-4">
+            Seeded under Unity Catalog workflow-data/builtin (from repo datasets/).
+            Choose a file here instead of browsing your laptop.
+          </p>
+          {!builtinLoaded ? (
+            <p className="text-sm text-gray-400">Loading volume catalog…</p>
+          ) : builtinFiles.length === 0 ? (
+            <p className="text-sm text-gray-400">
+              No built-in files found yet. Redeploy the app or wait for startup seeding.
+            </p>
+          ) : (
+            <ul className="divide-y divide-gray-100 border border-gray-100 rounded-lg max-h-64 overflow-y-auto">
+              {builtinFiles.map((f) => (
+                <li
+                  key={f.path}
+                  className="flex items-center justify-between px-4 py-2.5 text-sm hover:bg-gray-50"
+                >
+                  <div className="min-w-0 pr-3">
+                    <p className="font-medium text-gray-800 truncate">{f.name}</p>
+                    <p className="text-xs text-gray-400 truncate">{f.path}</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={builtinIngesting !== null || uploadState === "uploading"}
+                    onClick={() => ingestFromVolume(f.path, f.name)}
+                    className="shrink-0 text-xs px-3 py-1.5 bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 transition-colors font-medium"
+                  >
+                    {builtinIngesting === f.path ? "Starting…" : "Use this file"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* Drop zone — local upload is copied to UC workflow-data/uploads by the API */}
         <div
           onDragOver={(e) => {
             e.preventDefault();
@@ -530,7 +635,8 @@ export default function UploadPage() {
             Drop a file here or click to browse
           </p>
           <p className="mt-1 text-sm text-gray-400">
-            Supported formats: PDF, DOCX, PPTX, Markdown, JSON, JSON-LD (graph or ontology)
+            Supported formats: PDF, DOCX, PPTX, Markdown. Files are stored on the UC volume
+            under workflow-data/uploads, then ingested.
           </p>
         </div>
 

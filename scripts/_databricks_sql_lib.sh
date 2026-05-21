@@ -1,6 +1,18 @@
 # Shared SQL Statement Execution helpers for deploy / UC registry scripts.
 # Source from other scripts:  source "$(dirname "$0")/_databricks_sql_lib.sh"
 
+_databricks_cli() {
+  # Global flags (e.g. --profile) must follow ``databricks``, not trail ``api post PATH``.
+  local -a cmd=(databricks)
+  if [[ -n "${PROFILE:-}" ]]; then
+    cmd+=(--profile "${PROFILE}")
+  elif [[ -n "${PROFILE_ARGS+set}" && ${#PROFILE_ARGS[@]} -gt 0 ]]; then
+    cmd+=("${PROFILE_ARGS[@]}")
+  fi
+  cmd+=("$@")
+  "${cmd[@]}"
+}
+
 run_sql_statement() {
   local statement="$1"
   local payload
@@ -10,7 +22,7 @@ run_sql_statement() {
   )"
 
   local response statement_id status
-  response="$(databricks api post /api/2.0/sql/statements --json "${payload}" "${PROFILE_ARGS[@]:-}")"
+  response="$(_databricks_cli api post /api/2.0/sql/statements --json "${payload}")"
   statement_id="$("${PYTHON_BIN:-python3}" -c 'import json,sys; print(json.load(sys.stdin).get("statement_id",""))' <<< "${response}")"
   status="$("${PYTHON_BIN:-python3}" -c 'import json,sys; print((json.load(sys.stdin).get("status") or {}).get("state",""))' <<< "${response}")"
 
@@ -26,11 +38,11 @@ run_sql_statement() {
     fi
     if [[ "${status}" == "FAILED" || "${status}" == "CANCELED" || "${status}" == "CLOSED" ]]; then
       echo "ERROR: SQL statement ${statement_id} status=${status}" >&2
-      databricks api get "/api/2.0/sql/statements/${statement_id}" "${PROFILE_ARGS[@]:-}" >&2 || true
+      _databricks_cli api get "/api/2.0/sql/statements/${statement_id}" >&2 || true
       return 1
     fi
     sleep 1
-    response="$(databricks api get "/api/2.0/sql/statements/${statement_id}" "${PROFILE_ARGS[@]:-}")"
+    response="$(_databricks_cli api get "/api/2.0/sql/statements/${statement_id}")"
     status="$("${PYTHON_BIN:-python3}" -c 'import json,sys; print((json.load(sys.stdin).get("status") or {}).get("state",""))' <<< "${response}")"
   done
 
@@ -47,7 +59,7 @@ run_sql_query() {
       "${WAREHOUSE_ID}" "${statement}"
   )"
   local response statement_id status
-  response="$(databricks api post /api/2.0/sql/statements --json "${payload}" "${PROFILE_ARGS[@]:-}")"
+  response="$(_databricks_cli api post /api/2.0/sql/statements --json "${payload}")"
   statement_id="$("${PYTHON_BIN:-python3}" -c 'import json,sys; print(json.load(sys.stdin).get("statement_id",""))' <<< "${response}")"
   status="$("${PYTHON_BIN:-python3}" -c 'import json,sys; print((json.load(sys.stdin).get("status") or {}).get("state",""))' <<< "${response}")"
   if [[ -z "${statement_id}" ]]; then
@@ -70,7 +82,7 @@ print(json.dumps(data))
       return 1
     fi
     sleep 1
-    response="$(databricks api get "/api/2.0/sql/statements/${statement_id}" "${PROFILE_ARGS[@]:-}")"
+    response="$(_databricks_cli api get "/api/2.0/sql/statements/${statement_id}")"
     status="$("${PYTHON_BIN:-python3}" -c 'import json,sys; print((json.load(sys.stdin).get("status") or {}).get("state",""))' <<< "${response}")"
   done
   echo "[]"

@@ -71,7 +71,7 @@ def resolve_frontend_out_dir(
     1. **Explicit** — ``override`` (env ``AOE_FRONTEND_OUT_DIR`` / ``FRONTEND_STATIC_ROOT``)
     2. **Databricks App layout**: ``<repo>/src/app/main.py`` → ``<repo>/src/frontend/out``
     3. **Legacy monorepo**: ``<repo>/backend/app/main.py`` → ``<repo>/frontend/out``
-    4. **Unified Docker image**: ``/app/static``
+    4. **Databricks App bundle**: ``/app/static`` (when present)
 
     When ``service_url_path_prefix`` matches Next ``basePath``, files live under
     ``frontend/out/<prefix>/``; that nested path is preferred over ``frontend/out/``.

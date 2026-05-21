@@ -30,7 +30,7 @@ def _resolved_env_files() -> tuple[str, ...]:
 
 
 class DeploymentMode(StrEnum):
-    LOCAL_DOCKER = "local_docker"
+    LOCAL_DEV = "local_dev"
     SELF_MANAGED_PLATFORM = "self_managed_platform"
     MANAGED_PLATFORM = "managed_platform"
 
@@ -45,13 +45,16 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_log_level: str = "INFO"
     app_secret_key: str = "change-this"
+    #: When false (Databricks default), ``/api/v1`` uses a service mock user — no HS256 JWT or APP_SECRET_KEY.
+    #: Peer BFF under ``/api/workflow`` is always public. Set true only if you enable scaffold login/JWT.
+    jwt_auth_enabled: bool = False
 
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
     backend_workers: int = 1
 
     # -- Deployment Mode ---------------------------------------------------
-    test_deployment_mode: DeploymentMode = DeploymentMode.LOCAL_DOCKER
+    test_deployment_mode: DeploymentMode = DeploymentMode.LOCAL_DEV
 
     # -- ArangoDB (common) -------------------------------------------------
     arango_host: str = "http://localhost:8530"
@@ -183,15 +186,19 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_secret_key(cls, v: str, info: Any) -> str:
         env = info.data.get("app_env", "development")
-        if env == "production" and v in ("change-this", ""):
-            raise ValueError("APP_SECRET_KEY must be set to a strong random value in production")
+        jwt_on = bool(info.data.get("jwt_auth_enabled", False))
+        if jwt_on and env == "production" and v in ("change-this", ""):
+            raise ValueError("APP_SECRET_KEY must be set when JWT_AUTH_ENABLED=true and APP_ENV=production")
         return v
 
     @field_validator("test_deployment_mode", mode="before")
     @classmethod
     def _normalize_deployment_mode(cls, v: str) -> str:
         if isinstance(v, str):
-            return v.strip().lower()
+            s = v.strip().lower()
+            if s == "local_docker":
+                return DeploymentMode.LOCAL_DEV.value
+            return s
         return v
 
     @field_validator("service_url_path_prefix", mode="after")
@@ -207,7 +214,7 @@ class Settings(BaseSettings):
 
     @property
     def is_local(self) -> bool:
-        return self.test_deployment_mode == DeploymentMode.LOCAL_DOCKER
+        return self.test_deployment_mode == DeploymentMode.LOCAL_DEV
 
     @property
     def is_cluster(self) -> bool:
@@ -224,7 +231,7 @@ class Settings(BaseSettings):
     def effective_arango_host(self) -> str:
         """Resolve the ArangoDB endpoint based on deployment mode.
 
-        - local_docker: uses ARANGO_HOST (http://localhost:PORT)
+        - local_dev: uses ARANGO_HOST when not using gateway (legacy; prefer gateway)
         - self_managed_platform / managed_platform: uses ARANGO_ENDPOINT
         """
         if self.is_local:

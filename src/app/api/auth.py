@@ -121,9 +121,12 @@ def get_user_from_request(request: Request) -> AuthenticatedUser | None:
 async def authenticate_websocket(websocket: WebSocket) -> AuthenticatedUser | None:
     """Authenticate a WebSocket connection via query param ``token``.
 
-    Returns the authenticated user on success, or ``None`` if the token is
-    missing/invalid.  In dev mode, falls back to the mock admin user.
+    When ``JWT_AUTH_ENABLED`` is false (Databricks deploy), accepts without a token.
+    When JWT is on: valid ``?token=`` JWT, or mock user if ``APP_ENV`` is not production.
     """
+    if not settings.jwt_auth_enabled:
+        return _MOCK_USER
+
     token = websocket.query_params.get("token")
     if token:
         try:
@@ -155,6 +158,10 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if request.scope.get("type") == "websocket":
+            return await call_next(request)
+
+        if not settings.jwt_auth_enabled:
+            request.state.__dict__[_USER_CONTEXT_KEY] = _MOCK_USER
             return await call_next(request)
 
         if bff_internal_dispatch_active():

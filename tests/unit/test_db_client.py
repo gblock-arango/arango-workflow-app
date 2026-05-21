@@ -21,7 +21,7 @@ def _make_settings(
         arango_user=user,
         arango_password=password,
         arango_verify_ssl=True,
-        test_deployment_mode=DeploymentMode.LOCAL_DOCKER,
+        test_deployment_mode=DeploymentMode.LOCAL_DEV,
         is_cluster=False,
         has_gae=False,
         can_create_databases=True,

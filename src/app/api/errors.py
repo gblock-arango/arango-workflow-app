@@ -93,7 +93,12 @@ def install_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(404)
-    async def _not_found_handler(_request: Request, _exc: Exception) -> JSONResponse:
+    async def _not_found_handler(request: Request, exc: Exception) -> JSONResponse:
+        # SPA/HTML routes are served by NextStaticExportApp at "/". Only REST under /api/*
+        # should use the AOE JSON error envelope (otherwise /dashboard 404 looks like an API bug).
+        path = request.url.path
+        if not path.startswith("/api/"):
+            raise exc
         return JSONResponse(
             status_code=404,
             content=_error_body("ENTITY_NOT_FOUND", "Resource not found"),

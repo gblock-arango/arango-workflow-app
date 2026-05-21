@@ -234,7 +234,7 @@ export function backendUrl(path: string): string {
  * so the Next.js rewrite handles CORS.
  *
  * If the configured ``NEXT_PUBLIC_API_URL`` is a relative path (e.g. ``/api/v1``
- * in the unified Docker image), the URL parser cannot extract an origin; we
+ * in a static-export deploy), the URL parser cannot extract an origin; we
  * fall back to ``window.location.origin`` so callers building ``ws://``/``wss://``
  * URLs still get a valid host. SSR returns ``""`` (callers handle that).
  */

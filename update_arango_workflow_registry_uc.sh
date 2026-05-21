@@ -45,6 +45,17 @@ safe_sql_literal() {
   printf "%s" "$1" | sed "s/'/''/g"
 }
 
+_databricks_cli() {
+  local -a cmd=(databricks)
+  if [[ -n "${PROFILE}" ]]; then
+    cmd+=(--profile "${PROFILE}")
+  elif [[ ${#PROFILE_ARGS[@]} -gt 0 ]]; then
+    cmd+=("${PROFILE_ARGS[@]}")
+  fi
+  cmd+=("$@")
+  "${cmd[@]}"
+}
+
 run_sql() {
   local statement="$1"
   local payload
@@ -54,7 +65,7 @@ run_sql() {
   )"
 
   local response
-  response="$(databricks api post /api/2.0/sql/statements --json "${payload}" "${PROFILE_ARGS[@]}")"
+  response="$(_databricks_cli api post /api/2.0/sql/statements --json "${payload}")"
 
   local status statement_id
   status="$(python3 -c 'import json,sys; print((json.load(sys.stdin).get("status") or {}).get("state",""))' <<< "${response}")"
@@ -72,11 +83,11 @@ run_sql() {
     fi
     if [[ "${status}" == "FAILED" || "${status}" == "CANCELED" || "${status}" == "CLOSED" ]]; then
       echo "ERROR: SQL statement ${statement_id} status=${status}" >&2
-      databricks api get "/api/2.0/sql/statements/${statement_id}" "${PROFILE_ARGS[@]}" >&2 || true
+      _databricks_cli api get "/api/2.0/sql/statements/${statement_id}" >&2 || true
       return 1
     fi
     sleep 1
-    response="$(databricks api get "/api/2.0/sql/statements/${statement_id}" "${PROFILE_ARGS[@]}")"
+    response="$(_databricks_cli api get "/api/2.0/sql/statements/${statement_id}")"
     status="$(python3 -c 'import json,sys; print((json.load(sys.stdin).get("status") or {}).get("state",""))' <<< "${response}")"
   done
 

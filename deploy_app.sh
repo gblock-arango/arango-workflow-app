@@ -12,12 +12,12 @@ set -euo pipefail
 # Optional positional overrides: app-name, workspace source path, profile, then placeholders
 #   $4–$7 kept for compatibility with arango-dashboard-app/deploy_app.sh.
 #
-# Set DATABRICKS_SQL_WAREHOUSE_ID (or pass warehouse as $7). Genie/MCP chat is proxied to
-# mcp-arango-agent via /api/workflow/genie/chat. Arango data paths use arango-gateway-app only
-# (no python-arango in this app).
+# Runtime config lives in ``app.yaml`` (injected by Databricks Apps). This script reads the same
+# file for deploy-time values (warehouse id, UC table names). Shell env / $7 still override.
 #
 # After deploy: ./scripts/set_user_api_scopes.sh (User authorization / OBO for peer App calls).
 # Inspect UC: ./scripts/read_uc_peer_registry.sh
+# Next.js build output: logs/frontend-build.log (set WORKFLOW_FRONTEND_BUILD_FAIL_DEPLOY=1 to abort deploy on failure).
 
 APP_NAME="${1:-arango-workflow-app}"
 PROFILE="${3:-}"
@@ -43,12 +43,25 @@ else
 fi
 
 WAREHOUSE_ID="${DATABRICKS_SQL_WAREHOUSE_ID:-${7:-}}"
-ARANGO_GATEWAY_REGISTRY_TABLE="${ARANGO_GATEWAY_REGISTRY_TABLE:-workspace.default.arango_gateway_registry}"
-ARANGO_AGENT_REGISTRY_TABLE="${ARANGO_AGENT_REGISTRY_TABLE:-workspace.default.arango_agent_registry}"
-ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE="${ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE:-workspace.default.arango_bronze_simulated_injector_registry}"
-ARANGO_WORKFLOW_REGISTRY_TABLE="${ARANGO_WORKFLOW_REGISTRY_TABLE:-workspace.default.arango_workflow_registry}"
-REGISTRY_TABLE="${6:-workspace.default.arango_connection_registry}"
+ARANGO_GATEWAY_REGISTRY_TABLE="${ARANGO_GATEWAY_REGISTRY_TABLE:-}"
+ARANGO_AGENT_REGISTRY_TABLE="${ARANGO_AGENT_REGISTRY_TABLE:-}"
+ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE="${ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE:-}"
+ARANGO_WORKFLOW_REGISTRY_TABLE="${ARANGO_WORKFLOW_REGISTRY_TABLE:-}"
+REGISTRY_TABLE="${6:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=scripts/_app_yaml_env.sh
+source "${SCRIPT_DIR}/scripts/_app_yaml_env.sh"
+load_deploy_config_from_app_yaml
+
+echo "Deploy config (app.yaml + env overrides):"
+echo "  DATABRICKS_SQL_WAREHOUSE_ID=${WAREHOUSE_ID:-<unset>}"
+echo "  ARANGO_GATEWAY_REGISTRY_TABLE=${ARANGO_GATEWAY_REGISTRY_TABLE}"
+echo "  ARANGO_AGENT_REGISTRY_TABLE=${ARANGO_AGENT_REGISTRY_TABLE}"
+echo "  ARANGO_WORKFLOW_REGISTRY_TABLE=${ARANGO_WORKFLOW_REGISTRY_TABLE}"
+echo "  ARANGO_REGISTRY_TABLE=${REGISTRY_TABLE}"
+echo "  SERVICE_URL_PATH_PREFIX=${SERVICE_URL_PATH_PREFIX:-<empty>}"
+echo
 
 if [[ -x "${SCRIPT_DIR}/.venv/bin/python3" ]]; then
   PYTHON_BIN="${SCRIPT_DIR}/.venv/bin/python3"
@@ -64,16 +77,25 @@ if [[ -n "${PROFILE}" ]]; then
 else
   PROFILE_ARGS=()
 fi
-export PROFILE_ARGS
+export PROFILE PROFILE_ARGS
 
 # shellcheck source=scripts/_databricks_sql_lib.sh
 source "${SCRIPT_DIR}/scripts/_databricks_sql_lib.sh"
 
-echo "NOTE: Arango cluster credentials live on arango-gateway-app; this app uses gateway HTTP + UC URL registries."
+_databricks() {
+  if [[ ${#PROFILE_ARGS[@]} -gt 0 ]]; then
+    databricks "${PROFILE_ARGS[@]}" "$@"
+  else
+    databricks "$@"
+  fi
+}
+
+# shellcheck source=scripts/_deploy_app_print_urls.sh
+source "${SCRIPT_DIR}/scripts/_deploy_app_print_urls.sh"
 
 ensure_app_running_before_deploy() {
   local json app_state compute_state
-  if ! json="$(databricks apps get "${APP_NAME}" --output json "${PROFILE_ARGS[@]}" 2>/dev/null)"; then
+  if ! json="$(_databricks apps get "${APP_NAME}" --output json 2>/dev/null)"; then
     return 0
   fi
   app_state="$(
@@ -92,36 +114,75 @@ ensure_app_running_before_deploy() {
     echo "SKIP_APPS_START_BEFORE_DEPLOY=1: skipping databricks apps start; deploy may fail." >&2
     return 0
   fi
-  databricks apps start "${APP_NAME}" "${PROFILE_ARGS[@]}"
+  _databricks apps start "${APP_NAME}"
 }
 
+echo "NOTE: Arango cluster credentials live on arango-gateway-app; this app uses gateway HTTP + UC URL registries."
+
+DEPLOY_LOG_DIR="${SCRIPT_DIR}/logs"
+FRONTEND_BUILD_LOG="${DEPLOY_LOG_DIR}/frontend-build.log"
+mkdir -p "${DEPLOY_LOG_DIR}"
+
 echo "Building Next static export (AOE_STATIC_EXPORT=1)…"
+echo "Frontend build log: ${FRONTEND_BUILD_LOG}"
 if [[ -d "${SCRIPT_DIR}/src/frontend" ]]; then
-  (cd "${SCRIPT_DIR}/src/frontend" && AOE_STATIC_EXPORT=1 npm run build) || {
-    echo "WARNING: frontend build failed; deploy without static UI or fix npm install." >&2
-  }
+  {
+    echo "=== frontend build $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+    echo "host: $(hostname 2>/dev/null || echo unknown)"
+    echo "cwd: ${SCRIPT_DIR}/src/frontend"
+    echo "node: $(command -v node 2>/dev/null || echo missing) $(node -v 2>/dev/null || true)"
+    echo "npm: $(command -v npm 2>/dev/null || echo missing) $(npm -v 2>/dev/null || true)"
+    echo "command: AOE_STATIC_EXPORT=1 npm run build"
+    echo "---"
+  } >"${FRONTEND_BUILD_LOG}"
+  set +e
+  (cd "${SCRIPT_DIR}/src/frontend" && AOE_STATIC_EXPORT=1 npm run build) 2>&1 | tee -a "${FRONTEND_BUILD_LOG}"
+  _frontend_build_rc=${PIPESTATUS[0]}
+  set -e
+  if [[ "${_frontend_build_rc}" -ne 0 ]]; then
+    echo "ERROR: frontend build failed (exit ${_frontend_build_rc}). Trace: ${FRONTEND_BUILD_LOG}" >&2
+    echo "WARNING: continuing deploy without a fresh static UI (fix build, then re-run ./deploy_app.sh)." >&2
+    if [[ "${WORKFLOW_FRONTEND_BUILD_FAIL_DEPLOY:-}" == "1" ]]; then
+      exit "${_frontend_build_rc}"
+    fi
+  else
+    echo "Frontend build OK."
+  fi
+else
+  echo "NOTE: no src/frontend — skipping Next build." >&2
 fi
 
 echo "Syncing local project to '${SOURCE_CODE_PATH}'..."
-databricks sync . "${SOURCE_CODE_PATH}" "${PROFILE_ARGS[@]}"
+_databricks sync . "${SOURCE_CODE_PATH}"
 
-if ! databricks apps get "${APP_NAME}" "${PROFILE_ARGS[@]}" &>/dev/null; then
+if [[ -d "${SCRIPT_DIR}/src/frontend/out" ]]; then
+  echo "Syncing frontend static export (gitignored; explicit sync)…"
+  _databricks sync "${SCRIPT_DIR}/src/frontend/out" "${SOURCE_CODE_PATH}/src/frontend/out"
+else
+  echo "WARNING: ${SCRIPT_DIR}/src/frontend/out missing — Databricks App will start without OntoExtract UI." >&2
+  echo "         Run deploy again after AOE_STATIC_EXPORT=1 npm run build in src/frontend succeeds." >&2
+fi
+
+if ! _databricks apps get "${APP_NAME}" &>/dev/null; then
   echo "Creating Databricks App '${APP_NAME}'…"
-  databricks apps create "${APP_NAME}" \
-    --description "Arango workflow — OntoExtract UI; BFF to gateway + mcp-arango-agent" \
-    "${PROFILE_ARGS[@]}"
+  _databricks apps create "${APP_NAME}" \
+    --description "Arango workflow — OntoExtract UI; BFF to gateway + mcp-arango-agent"
 fi
 
 ensure_app_running_before_deploy
 
 echo "Deploying app '${APP_NAME}' from '${SOURCE_CODE_PATH}'..."
-databricks apps deploy "${APP_NAME}" \
-  --source-code-path "${SOURCE_CODE_PATH}" \
-  "${PROFILE_ARGS[@]}"
+_databricks apps deploy "${APP_NAME}" \
+  --source-code-path "${SOURCE_CODE_PATH}"
 
-APP_JSON="$(databricks apps get "${APP_NAME}" --output json "${PROFILE_ARGS[@]}")"
+echo "Fetching app metadata..."
+APP_JSON="$(_databricks apps get "${APP_NAME}" --output json)"
 APP_URL="$(
   "${PYTHON_BIN}" -c 'import json,sys; print(json.load(sys.stdin).get("url",""))' <<< "${APP_JSON}"
+)"
+APP_URL_NUMERIC_SUFFIX="$(_parse_app_url_numeric_suffix "${APP_JSON}")"
+APP_RESOURCE_ID="$(
+  "${PYTHON_BIN}" -c 'import json,sys; j=json.load(sys.stdin); print(j.get("id") or j.get("app_id") or "")' <<< "${APP_JSON}"
 )"
 APP_SERVICE_PRINCIPAL_CLIENT_ID="$(
   "${PYTHON_BIN}" -c 'import json,sys; print(json.load(sys.stdin).get("service_principal_client_id",""))' <<< "${APP_JSON}"
@@ -136,6 +197,9 @@ if [[ -z "${APP_SERVICE_PRINCIPAL_CLIENT_ID}" ]]; then
   exit 1
 fi
 
+echo "App deployed - open in browser:"
+print_deployed_app_urls
+
 SET_USER_SCOPES_SCRIPT="${SCRIPT_DIR}/scripts/set_user_api_scopes.sh"
 if [[ -x "${SET_USER_SCOPES_SCRIPT}" ]]; then
   echo "Setting user_api_scopes on '${APP_NAME}' (User authorization / OBO)…"
@@ -147,7 +211,11 @@ else
 fi
 
 if [[ -z "${WAREHOUSE_ID// }" ]]; then
-  echo "ERROR: DATABRICKS_SQL_WAREHOUSE_ID is not set (export it, set in app.yaml, use arango-platform-bundle, or pass as 7th positional arg)." >&2
+  echo "ERROR: DATABRICKS_SQL_WAREHOUSE_ID is not set. Set value in app.yaml or export / pass as deploy_app.sh arg 7." >&2
+  exit 1
+fi
+if [[ -z "${ARANGO_GATEWAY_REGISTRY_TABLE// }" || -z "${ARANGO_AGENT_REGISTRY_TABLE// }" || -z "${REGISTRY_TABLE// }" ]]; then
+  echo "ERROR: UC registry table names missing from app.yaml." >&2
   exit 1
 fi
 export WAREHOUSE_ID
@@ -172,19 +240,40 @@ if ! run_sql_statement "GRANT SELECT ON TABLE ${ARANGO_BRONZE_SIMULATED_INJECTOR
   echo "NOTE: GRANT on ${ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE} failed (optional peer)." >&2
 fi
 
+REGISTRY_CATALOG="$(echo "${REGISTRY_TABLE}" | cut -d. -f1)"
+REGISTRY_SCHEMA="$(echo "${REGISTRY_TABLE}" | cut -d. -f2)"
+UC_GRAPH_VOLUME_NAME="${UC_GRAPH_VOLUME_NAME:-arango_workflow_volume}"
+echo "Ensuring UC workflow-data volume ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_GRAPH_VOLUME_NAME}…"
+run_sql_statement "CREATE VOLUME IF NOT EXISTS ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_GRAPH_VOLUME_NAME}"
+run_sql_statement "GRANT READ VOLUME, WRITE VOLUME ON VOLUME ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_GRAPH_VOLUME_NAME} TO \`${APP_SERVICE_PRINCIPAL_CLIENT_ID}\`"
+
+if [[ "${WORKFLOW_DATA_SEED_AT_DEPLOY:-1}" != "0" ]]; then
+  SEED_SCRIPT="${SCRIPT_DIR}/scripts/seed_workflow_volume_datasets.py"
+  if [[ -f "${SEED_SCRIPT}" ]]; then
+    echo "Seeding builtin datasets/ → UC workflow-data/builtin (deploy host via Files API)…"
+    _seed_args=(--catalog "${REGISTRY_CATALOG}" --schema "${REGISTRY_SCHEMA}" --volume "${UC_GRAPH_VOLUME_NAME}")
+    if [[ -n "${PROFILE}" ]]; then
+      _seed_args+=(--profile "${PROFILE}")
+    fi
+    if ! "${PYTHON_BIN}" "${SEED_SCRIPT}" "${_seed_args[@]}"; then
+      echo "NOTE: deploy-time volume seed failed (app startup also seeds when WORKFLOW_DATA_SEED_ON_STARTUP=true)." >&2
+    fi
+  fi
+else
+  echo "WORKFLOW_DATA_SEED_AT_DEPLOY=0: skipping deploy-time dataset seed."
+fi
+
 echo "Publishing workflow app URL to UC (${ARANGO_WORKFLOW_REGISTRY_TABLE})…"
-if ( "${SCRIPT_DIR}/update_arango_workflow_registry_uc.sh" \
+if "${SCRIPT_DIR}/update_arango_workflow_registry_uc.sh" \
   "${APP_URL}" "${APP_NAME}" "${ARANGO_WORKFLOW_REGISTRY_TABLE}" "${WAREHOUSE_ID}" "${PROFILE}" \
-  "${APP_SERVICE_PRINCIPAL_CLIENT_ID}" ); then
+  "${APP_SERVICE_PRINCIPAL_CLIENT_ID}"; then
   :
 else
   echo "NOTE: Workflow URL UC publish failed. Restart arango-workflow-app once or run update_arango_workflow_registry_uc.sh manually." >&2
 fi
 
-echo
-echo "DATABRICKS_APP_URL=${APP_URL}"
-printf '  \033]8;;%s\033\\%s\033]8;;\033\\\n' "${APP_URL}" "→ Open arango-workflow-app"
-echo
+echo "Deploy complete."
+print_deployed_app_urls
 echo "Peer URL resolution (after gateway + mcp-arango-agent are deployed):"
 echo "  Gateway: UC ${ARANGO_GATEWAY_REGISTRY_TABLE} unless ARANGO_GATEWAY_BASE_URL is set on the app."
 echo "  MCP agent: UC ${ARANGO_AGENT_REGISTRY_TABLE} unless ARANGO_AGENT_BASE_URL is set."
@@ -192,6 +281,14 @@ echo "  This app's URL: UC ${ARANGO_WORKFLOW_REGISTRY_TABLE} (for mcp-arango-age
 echo "  Arango connection row (for gateway upstream): ${REGISTRY_TABLE}"
 echo "  Inspect locally: ./scripts/read_uc_peer_registry.sh ${PROFILE}"
 echo
-echo "To export in your shell:"
+echo "To export in your current shell:"
 echo "export DATABRICKS_APP_URL=\"${APP_URL}\""
+echo "export DATABRICKS_APP_HOME_URL=\"${APP_HOME_URL}\""
+echo "export DATABRICKS_APP_DASHBOARD_URL=\"${APP_DASHBOARD_URL}\""
 echo "export DATABRICKS_SQL_WAREHOUSE_ID=\"${WAREHOUSE_ID}\""
+if [[ -n "${APP_URL_NUMERIC_SUFFIX:-}" ]]; then
+  echo "export DATABRICKS_APP_URL_NUMERIC_SUFFIX=\"${APP_URL_NUMERIC_SUFFIX}\""
+fi
+echo
+echo "registry table (read): ${REGISTRY_TABLE}"
+echo "warehouse id: ${WAREHOUSE_ID}"

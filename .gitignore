@@ -1,8 +1,8 @@
 .env
 .env.local
+logs/
 node_modules/
 src/frontend/.next/
-src/frontend/out/
 .venv/
 __pycache__/
 *.pyc

@@ -5,14 +5,39 @@ command:
 
 # arango-workflow-app — OntoExtract UI + /api/v1; BFF proxies Genie to mcp-arango-agent.
 # Arango I/O: arango-gateway-app only (UC ARANGO_GATEWAY_REGISTRY_TABLE). No python-arango.
-# Deploy order: gateway → mcp-arango-agent → this app. See arango-dashboard-app/README_Agent.md.
+# Deploy order: gateway → mcp-arango-agent → this app. Config source of truth: this file (not .env).
+#
+# Secrets (set in Databricks App UI / workspace secrets — do not commit real values):
+#   OPENAI_API_KEY (until model endpoint migration)
 
 env:
+  # ---------------------------------------------------------------------------
+  # REQUIRED — confirm for your workspace
+  # ---------------------------------------------------------------------------
   - name: DATABRICKS_SQL_WAREHOUSE_ID
     description: >-
-      (Required) SQL warehouse id for UC reads — gateway and mcp-agent URLs from registry tables.
+      (Required) SQL warehouse id for UC reads — gateway, mcp-agent, and workflow URL registries.
     value: "473d40703241ee4c"
 
+  # LLM (OPENAI_API_KEY empty here — set in App secrets; future: Databricks model endpoint)
+  - name: OPENAI_API_KEY
+    description: "OpenAI API key for extraction until serving-endpoint migration. Set in Databricks secrets."
+    value: ""
+  - name: OPENAI_BASE_URL
+    description: "Optional OpenAI-compatible API base URL"
+    value: ""
+  - name: ANTHROPIC_API_KEY
+    description: "Anthropic API key (optional if using OpenAI models only). Set in Databricks secrets."
+    value: ""
+  - name: LLM_EXTRACTION_MODEL
+    description: "Primary extraction model (from your .env: gpt-4o-mini)"
+    value: "gpt-4o-mini"
+  - name: EMBEDDING_MODEL
+    value: "text-embedding-3-small"
+
+  # ---------------------------------------------------------------------------
+  # Peer apps (UC registries; optional URL overrides)
+  # ---------------------------------------------------------------------------
   - name: ARANGO_GATEWAY_BASE_URL
     description: "Optional override for gateway public URL. When empty, resolved from ARANGO_GATEWAY_REGISTRY_TABLE"
     value: ""
@@ -31,11 +56,6 @@ env:
   - name: ARANGO_REGISTRY_TABLE
     description: "Arango connection registry (read-only here; gateway owns upstream cluster row)"
     value: "workspace.default.arango_connection_registry"
-  - name: UC_GRAPH_VOLUME_NAME
-    value: "arango_agent_volume"
-  - name: UC_GRAPH_SNAPSHOT_BASE
-    value: ""
-
   - name: ARANGO_AGENT_BASE_URL
     description: "Optional override for mcp-arango-agent URL. When empty, resolved from ARANGO_AGENT_REGISTRY_TABLE"
     value: ""
@@ -46,21 +66,81 @@ env:
     value: ""
   - name: ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE
     value: "workspace.default.arango_bronze_simulated_injector_registry"
-
-  - name: DEBUG_STARTUP_CHECKS
-    value: "true"
-
-  # OntoExtract / local Arango (gateway mode in Databricks — set via registry)
-  - name: APP_ENV
-    value: "production"
-  - name: APP_LOG_LEVEL
-    value: "INFO"
   - name: ARANGO_WORKFLOW_REGISTRY_TABLE
     description: "UC table where this app publishes its public base_url for mcp-arango-agent /mcp/aoe"
     value: "workspace.default.arango_workflow_registry"
   - name: ARANGO_WORKFLOW_REGISTRY_AUTO_CREATE
     description: "When true, upsert this app's public URL into ARANGO_WORKFLOW_REGISTRY_TABLE at startup"
     value: "true"
+
+  - name: UC_GRAPH_VOLUME_NAME
+    value: "arango_workflow_volume"
+  - name: UC_GRAPH_SNAPSHOT_BASE
+    value: ""
+  - name: UC_WORKFLOW_DATA_SUBDIR
+    description: "Subdirectory on UC_GRAPH_VOLUME_NAME for document uploads and builtin corpora"
+    value: "workflow-data"
+  - name: WORKFLOW_DATA_SEED_ON_STARTUP
+    description: "When true, copy repo datasets/ into workflow-data/builtin on app startup (requires /Volumes mount)"
+    value: "true"
+
+  # ---------------------------------------------------------------------------
+  # Runtime (Databricks)
+  # ---------------------------------------------------------------------------
+  - name: ARANGO_DB
+    description: "Default Arango database name (via gateway)"
+    value: "OntoExtract"
+  - name: APP_ENV
+    description: "production vs development — only affects JWT/WS when JWT_AUTH_ENABLED=true; safe to leave production on Databricks"
+    value: "production"
+  - name: JWT_AUTH_ENABLED
+    description: "false = no APP_SECRET_KEY or Bearer JWT on /api/v1 (Databricks Apps auth boundary). Same as dashboard-app."
+    value: "false"
+  - name: APP_LOG_LEVEL
+    value: "INFO"
+  - name: TEST_DEPLOYMENT_MODE
+    description: "Gateway-backed deploy; not local_docker (from .env local_docker is ignored here)"
+    value: "self_managed_platform"
+  - name: SERVICE_URL_PATH_PREFIX
+    description: "Optional public path prefix for FastAPI + static UI (empty for default App root)"
+    value: ""
+  - name: CORS_ORIGINS
+    description: "Comma-separated origins; empty when UI is same-origin static export"
+    value: ""
+
+  # Redis — not required on Databricks if RATE_LIMIT_ENABLED=false (see README / deploy notes)
+  - name: RATE_LIMIT_ENABLED
+    description: "false = no Redis needed; rate limiter and notification pub/sub degrade gracefully"
+    value: "false"
+  - name: REDIS_URL
+    description: "Only if RATE_LIMIT_ENABLED=true and you attach a Redis service"
+    value: ""
+
+  # Extraction / ER (from your .env)
+  - name: EXTRACTION_PASSES
+    value: "1"
+  - name: EXTRACTION_CONSISTENCY_THRESHOLD
+    value: "2"
+  - name: EXTRACTION_CONFIDENCE_MIN
+    value: "0.6"
+  - name: LLM_EXTRACTION_MAX_CONCURRENCY
+    value: "5"
+  - name: ER_VECTOR_SIMILARITY_THRESHOLD
+    value: "0.85"
+  - name: ER_VECTOR_WEIGHT
+    value: "0.6"
+  - name: ER_TOPO_WEIGHT
+    value: "0.4"
+
+  - name: ALLOW_SYSTEM_RESET
+    description: "Enable /api/v1/admin/reset (dev/demo only)"
+    value: "false"
+
+  - name: DEBUG_STARTUP_CHECKS
+    value: "true"
+  - name: DEBUG_WEBHOOK_URL
+    description: "Optional POST target for startup debug payload"
+    value: ""
 
 resources:
   - name: sql-warehouse

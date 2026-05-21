@@ -127,6 +127,7 @@ def update_document_metadata(
     mime_type: str | None = None,
     file_hash: str | None = None,
     chunk_count: int | None = None,
+    metadata: dict[str, Any] | None = None,
     db: StandardDatabase | None = None,
 ) -> dict[str, Any] | None:
     """Merge-update editable metadata fields on a document."""
@@ -141,6 +142,10 @@ def update_document_metadata(
         updates["file_hash"] = file_hash
     if chunk_count is not None:
         updates["chunk_count"] = chunk_count
+    if metadata is not None:
+        existing = get_document(doc_id, db=db) or {}
+        merged = {**(existing.get("metadata") or {}), **metadata}
+        updates["metadata"] = merged
     if not updates:
         return doc_get(col, doc_id)
     result = cast("dict[str, Any]", col.update({"_key": doc_id, **updates}, return_new=True))

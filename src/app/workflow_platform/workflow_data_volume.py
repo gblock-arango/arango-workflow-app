@@ -1,0 +1,209 @@
+"""Unity Catalog workflow document storage under ``/Volumes/.../<volume>/workflow-data``."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import shutil
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+def _workflow_data_dir_name() -> str:
+    return (
+        (os.environ.get("UC_WORKFLOW_DATA_SUBDIR") or "workflow-data").strip()
+        or "workflow-data"
+    )
+BUILTIN_SUBDIR = "builtin"
+UPLOADS_SUBDIR = "uploads"
+SEED_MANIFEST_NAME = ".seed_manifest.json"
+
+# Extensions we ingest from volume (aligned with documents API).
+ALLOWED_SUFFIXES = frozenset({".md", ".pdf", ".docx", ".pptx", ".doc"})
+
+_SUFFIX_TO_MIME: dict[str, str] = {
+    ".md": "text/markdown",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".doc": "application/msword",
+}
+
+
+def _registry_catalog_schema() -> tuple[str, str]:
+    table = (os.environ.get("ARANGO_REGISTRY_TABLE") or "workspace.default.arango_connection_registry").strip()
+    parts = table.split(".")
+    if len(parts) >= 3:
+        return parts[0], parts[1]
+    return "workspace", "default"
+
+
+def uc_graph_volume_name() -> str:
+    return (os.environ.get("UC_GRAPH_VOLUME_NAME") or "arango_workflow_volume").strip() or "arango_workflow_volume"
+
+
+def workflow_data_root() -> Path:
+    """Absolute UC path: ``/Volumes/<catalog>/<schema>/<volume>/workflow-data``."""
+    catalog, schema = _registry_catalog_schema()
+    vol = uc_graph_volume_name()
+    return Path(f"/Volumes/{catalog}/{schema}/{vol}") / _workflow_data_dir_name()
+
+
+def repo_datasets_dir() -> Path:
+    """Bundled ``datasets/`` in the deployed app tree (synced with the repo)."""
+    here = Path(__file__).resolve()
+    # src/app/workflow_platform/this_file.py -> repo root is parents[3]
+    root = here.parents[3]
+    return root / "datasets"
+
+
+def safe_relative_path(relative: str) -> str:
+    """Normalize and reject path traversal."""
+    rel = (relative or "").strip().replace("\\", "/").lstrip("/")
+    if not rel or ".." in rel.split("/"):
+        raise ValueError("Invalid volume path")
+    return rel
+
+
+def resolve_under_workflow_data(relative: str) -> Path:
+    rel = safe_relative_path(relative)
+    root = workflow_data_root().resolve()
+    full = (root / rel).resolve()
+    if not str(full).startswith(str(root)):
+        raise ValueError("Path escapes workflow-data root")
+    return full
+
+
+def ensure_workflow_data_dirs() -> Path:
+    root = workflow_data_root()
+    (root / BUILTIN_SUBDIR).mkdir(parents=True, exist_ok=True)
+    (root / UPLOADS_SUBDIR).mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def mime_for_filename(filename: str) -> str | None:
+    lower = (filename or "").lower()
+    for suffix, mime in _SUFFIX_TO_MIME.items():
+        if lower.endswith(suffix):
+            return mime
+    return None
+
+
+def is_allowed_document_file(name: str) -> bool:
+    lower = (name or "").lower()
+    return any(lower.endswith(s) for s in ALLOWED_SUFFIXES)
+
+
+def write_bytes(*, relative_path: str, content: bytes) -> str:
+    """Write file under workflow-data; returns normalized relative path."""
+    dest = resolve_under_workflow_data(relative_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(content)
+    root = workflow_data_root().resolve()
+    return str(dest.resolve().relative_to(root)).replace("\\", "/")
+
+
+def read_bytes(relative_path: str) -> bytes:
+    return resolve_under_workflow_data(relative_path).read_bytes()
+
+
+def list_files(*, prefix: str = "", max_entries: int = 500) -> list[dict[str, Any]]:
+    """
+    List ingestible files under ``prefix`` (e.g. ``builtin`` or ``builtin/corpora/financial``).
+
+    Returns dicts: path (relative to workflow-data), name, size, category (builtin|upload).
+    """
+    root = workflow_data_root()
+    if not root.is_dir():
+        return []
+
+    base = resolve_under_workflow_data(prefix) if prefix else root
+    if not base.is_dir():
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames.sort()
+        for fn in sorted(filenames):
+            if len(entries) >= max_entries:
+                return entries
+            if not is_allowed_document_file(fn):
+                continue
+            full = Path(dirpath) / fn
+            try:
+                rel = str(full.resolve().relative_to(root.resolve())).replace("\\", "/")
+            except ValueError:
+                continue
+            category = UPLOADS_SUBDIR if rel.startswith(f"{UPLOADS_SUBDIR}/") else BUILTIN_SUBDIR
+            st = full.stat()
+            entries.append(
+                {
+                    "path": rel,
+                    "name": fn,
+                    "size_bytes": st.st_size,
+                    "category": category,
+                    "mime_type": mime_for_filename(fn),
+                }
+            )
+    return entries
+
+
+def save_upload(*, doc_id: str, filename: str, content: bytes) -> str:
+    safe_name = re.sub(r"[^\w.\-]+", "_", filename or "untitled").strip("._") or "untitled"
+    rel = f"{UPLOADS_SUBDIR}/{doc_id}/{safe_name}"
+    return write_bytes(relative_path=rel, content=content)
+
+
+def seed_builtin_datasets_from_bundle(*, force: bool = False) -> dict[str, Any]:
+    """
+    Copy repo ``datasets/{domain}/*.{md,...}`` into ``workflow-data/builtin/corpora/``.
+
+    Skips ``datasets/cyber`` and ``datasets/external`` (large / gitignored). Idempotent via manifest.
+    """
+    root = ensure_workflow_data_dirs()
+    dest_root = root / BUILTIN_SUBDIR / "corpora"
+    manifest_path = root / BUILTIN_SUBDIR / SEED_MANIFEST_NAME
+    src = repo_datasets_dir()
+
+    if manifest_path.is_file() and not force:
+        try:
+            existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if existing.get("ok"):
+                return {"ok": True, "skipped": True, "reason": "already_seeded", **existing}
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    if not src.is_dir():
+        return {"ok": False, "error": f"datasets dir not found: {src}"}
+
+    copied = 0
+    skip_dirs = frozenset({"cyber", "external", "__pycache__"})
+    for domain_dir in sorted(src.iterdir()):
+        if not domain_dir.is_dir() or domain_dir.name in skip_dirs or domain_dir.name.startswith("."):
+            continue
+        out_domain = dest_root / domain_dir.name
+        out_domain.mkdir(parents=True, exist_ok=True)
+        for f in sorted(domain_dir.iterdir()):
+            if not f.is_file() or not is_allowed_document_file(f.name):
+                continue
+            target = out_domain / f.name
+            shutil.copy2(f, target)
+            copied += 1
+
+    payload = {
+        "ok": True,
+        "skipped": False,
+        "files_copied": copied,
+        "source": str(src),
+        "destination": str(dest_root),
+    }
+    try:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Could not write seed manifest: %s", exc)
+    logger.info("Seeded %d builtin corpus files to %s", copied, dest_root)
+    return payload

@@ -199,42 +199,41 @@ def _stub_extract_schema(config: SchemaExtractionConfig) -> str:
     from rdflib import OWL, RDF, RDFS, Graph, Literal, Namespace, URIRef
 
     target_db = _gateway_db_for_schema_config(config)
-    try:
 
-        ns_str = f"http://aoe.example.org/schema/{config.target_db}#"
-        ns = Namespace(ns_str)
-        g = Graph()
-        g.bind("owl", OWL)
-        g.bind("rdfs", RDFS)
-        g.bind("rdf", RDF)
-        g.bind("schema", ns)
+    ns_str = f"http://aoe.example.org/schema/{config.target_db}#"
+    ns = Namespace(ns_str)
+    g = Graph()
+    g.bind("owl", OWL)
+    g.bind("rdfs", RDFS)
+    g.bind("rdf", RDF)
+    g.bind("schema", ns)
 
-        ont_uri = URIRef(ns_str.rstrip("#"))
-        g.add((ont_uri, RDF.type, OWL.Ontology))
-        g.add((ont_uri, RDFS.label, Literal(f"Schema of {config.target_db}")))
+    ont_uri = URIRef(ns_str.rstrip("#"))
+    g.add((ont_uri, RDF.type, OWL.Ontology))
+    g.add((ont_uri, RDFS.label, Literal(f"Schema of {config.target_db}")))
 
-        collections = cast("list[dict[str, Any]]", target_db.collections())
-        for col_info in collections:
-            if col_info["system"]:
-                continue
-            col_name = col_info["name"]
-            col_uri = ns[col_name]
+    collections = cast("list[dict[str, Any]]", target_db.collections())
+    for col_info in collections:
+        if col_info["system"]:
+            continue
+        col_name = col_info["name"]
+        col_uri = ns[col_name]
 
-            if col_info.get("type") == 3:
-                g.add((col_uri, RDF.type, OWL.ObjectProperty))
-                g.add((col_uri, RDFS.label, Literal(col_name)))
-                g.add((col_uri, RDFS.comment, Literal(f"Edge collection: {col_name}")))
-            else:
-                g.add((col_uri, RDF.type, OWL.Class))
-                g.add((col_uri, RDFS.label, Literal(col_name)))
-                g.add((col_uri, RDFS.comment, Literal(f"Document collection: {col_name}")))
+        if col_info.get("type") == 3:
+            g.add((col_uri, RDF.type, OWL.ObjectProperty))
+            g.add((col_uri, RDFS.label, Literal(col_name)))
+            g.add((col_uri, RDFS.comment, Literal(f"Edge collection: {col_name}")))
+        else:
+            g.add((col_uri, RDF.type, OWL.Class))
+            g.add((col_uri, RDFS.label, Literal(col_name)))
+            g.add((col_uri, RDFS.comment, Literal(f"Document collection: {col_name}")))
 
-        ttl = g.serialize(format="turtle")
-        log.info(
-            "stub schema extraction complete",
-            extra={"target_db": config.target_db, "triples": len(g)},
-        )
-        return ttl
+    ttl = g.serialize(format="turtle")
+    log.info(
+        "stub schema extraction complete",
+        extra={"target_db": config.target_db, "triples": len(g)},
+    )
+    return ttl
 
 
 # ---------------------------------------------------------------------------
