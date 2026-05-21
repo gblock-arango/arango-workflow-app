@@ -1,4 +1,4 @@
-"""Runtime config for the Arango dashboard Databricks App."""
+"""Runtime config for the arango-workflow-app Databricks App (UC peer URLs + BFF)."""
 
 import os
 from dataclasses import dataclass, field
@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 _DEFAULT_ARANGO_REGISTRY_TABLE = "workspace.default.arango_connection_registry"
 _DEFAULT_ARANGO_GATEWAY_REGISTRY_TABLE = "workspace.default.arango_gateway_registry"
 _DEFAULT_ARANGO_AGENT_REGISTRY_TABLE = "workspace.default.arango_agent_registry"
+_DEFAULT_ARANGO_WORKFLOW_REGISTRY_TABLE = "workspace.default.arango_workflow_registry"
 _DEFAULT_ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE = (
     "workspace.default.arango_bronze_simulated_injector_registry"
 )
@@ -33,7 +34,7 @@ def _uc_graph_snapshot_base() -> str:
 
 @dataclass
 class AppConfig:
-    """Dashboard settings (UI + gateway); Genie is proxied to arango-mcp-app."""
+    """Workflow shell: OntoExtract UI/API + BFF; Arango via gateway UC; Genie proxied to mcp-arango-agent."""
 
     DATABRICKS_SQL_WAREHOUSE_ID: str = field(
         default_factory=lambda: (os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID", "") or "").strip()
@@ -74,6 +75,20 @@ class AppConfig:
             (os.environ.get("ARANGO_AGENT_REGISTRY_TABLE", "") or "").strip()
             or _DEFAULT_ARANGO_AGENT_REGISTRY_TABLE
         )
+    )
+    ARANGO_WORKFLOW_APP_BASE_URL: str = field(
+        default_factory=lambda: (
+            (os.environ.get("ARANGO_WORKFLOW_APP_BASE_URL", "") or "").strip().rstrip("/")
+        )
+    )
+    ARANGO_WORKFLOW_REGISTRY_TABLE: str = field(
+        default_factory=lambda: (
+            (os.environ.get("ARANGO_WORKFLOW_REGISTRY_TABLE", "") or "").strip()
+            or _DEFAULT_ARANGO_WORKFLOW_REGISTRY_TABLE
+        )
+    )
+    ARANGO_WORKFLOW_REGISTRY_AUTO_CREATE: str = field(
+        default_factory=lambda: (os.environ.get("ARANGO_WORKFLOW_REGISTRY_AUTO_CREATE", "true") or "true")
     )
     BRONZE_INJECTOR_BASE_URL: str = field(
         default_factory=lambda: (os.environ.get("BRONZE_INJECTOR_BASE_URL", "") or "").strip().rstrip(

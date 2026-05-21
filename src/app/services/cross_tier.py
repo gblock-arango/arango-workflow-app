@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from app.compat import StrEnum
 from typing import Any
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.db.client import get_db
 from app.db.ontology_repo import create_edge

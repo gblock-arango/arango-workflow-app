@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 log = logging.getLogger(__name__)
 

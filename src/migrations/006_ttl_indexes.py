@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import logging
 
-from arango.database import StandardDatabase
-from arango.exceptions import IndexCreateError
+from app.db.types import StandardDatabase
+from app.db.types import GatewayAPIError
 
 log = logging.getLogger(__name__)
 
@@ -47,5 +47,5 @@ def up(db: StandardDatabase) -> None:
                     in_background=True,
                 )
                 log.info("created TTL index %s on %s", idx_name, name)
-            except IndexCreateError:
+            except GatewayAPIError:
                 log.debug("TTL index %s already exists on %s (race)", idx_name, name)

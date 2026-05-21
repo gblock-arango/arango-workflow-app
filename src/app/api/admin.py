@@ -7,7 +7,7 @@ import time
 from collections import Counter
 from typing import Any
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 from fastapi import APIRouter, HTTPException, Query
 
 from app.config import settings

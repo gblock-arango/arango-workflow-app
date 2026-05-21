@@ -37,8 +37,8 @@ from __future__ import annotations
 
 import logging
 
-from arango.database import StandardDatabase
-from arango.exceptions import IndexCreateError
+from app.db.types import StandardDatabase
+from app.db.types import GatewayAPIError
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ def up(db: StandardDatabase) -> None:
         try:
             col.add_persistent_index(fields=fields, name=name, sparse=sparse)
             log.info("created index %s on %s", name, _COLLECTION)
-        except IndexCreateError:
+        except GatewayAPIError:
             log.warning(
                 "could not create index %s on %s",
                 name,

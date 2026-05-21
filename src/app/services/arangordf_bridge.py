@@ -13,7 +13,7 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 import httpx
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 from rdflib import OWL, RDF, RDFS, URIRef
 from rdflib import Graph as RDFGraph
 

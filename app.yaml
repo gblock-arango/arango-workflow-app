@@ -3,27 +3,33 @@ command:
   - "-lc"
   - "export PYTHONPATH=src && bash scripts/start-databricks-app.sh"
 
-# Unified workflow dashboard: OntoExtract (FastAPI + Next) + platform shell BFF.
-# Peer apps: arango-gateway-app (iframe + databricks-graph), arango-mcp-app (Genie/MCP chat).
-# See README.md and arango-agent-autograph-job/README.md.
+# arango-workflow-app — OntoExtract UI + /api/v1; BFF proxies Genie to mcp-arango-agent.
+# Arango I/O: arango-gateway-app only (UC ARANGO_GATEWAY_REGISTRY_TABLE). No python-arango.
+# Deploy order: gateway → mcp-arango-agent → this app. See arango-dashboard-app/README_Agent.md.
 
 env:
   - name: DATABRICKS_SQL_WAREHOUSE_ID
-    description: SQL warehouse for UC registry reads (gateway/agent URLs).
+    description: >-
+      (Required) SQL warehouse id for UC reads — gateway and mcp-agent URLs from registry tables.
     value: "473d40703241ee4c"
 
   - name: ARANGO_GATEWAY_BASE_URL
-    description: Optional gateway URL override; empty → UC ARANGO_GATEWAY_REGISTRY_TABLE
+    description: "Optional override for gateway public URL. When empty, resolved from ARANGO_GATEWAY_REGISTRY_TABLE"
     value: ""
   - name: ARANGO_GATEWAY_APP_NAME
+    description: "Gateway Databricks App name (iframe /apps/ path when ARANGO_GATEWAY_IFRAME_USE_WORKSPACE_APPS_URL=true)"
     value: "arango-gateway-app"
   - name: ARANGO_GATEWAY_IFRAME_USE_WORKSPACE_APPS_URL
+    description: "Default false — use UC *.databricksapps.com URL for Arango Web UI iframe"
     value: "false"
   - name: ARANGO_GATEWAY_IFRAME_BASE_URL
+    description: "Optional iframe-only gateway base URL"
     value: ""
   - name: ARANGO_GATEWAY_REGISTRY_TABLE
+    description: "UC table where arango-gateway-app publishes base_url (catalog.schema.table)"
     value: "workspace.default.arango_gateway_registry"
   - name: ARANGO_REGISTRY_TABLE
+    description: "Arango connection registry (read-only here; gateway owns upstream cluster row)"
     value: "workspace.default.arango_connection_registry"
   - name: UC_GRAPH_VOLUME_NAME
     value: "arango_agent_volume"
@@ -31,9 +37,10 @@ env:
     value: ""
 
   - name: ARANGO_AGENT_BASE_URL
-    description: Optional arango-mcp-app URL; empty → UC ARANGO_AGENT_REGISTRY_TABLE
+    description: "Optional override for mcp-arango-agent URL. When empty, resolved from ARANGO_AGENT_REGISTRY_TABLE"
     value: ""
   - name: ARANGO_AGENT_REGISTRY_TABLE
+    description: "UC table where mcp-arango-agent publishes base_url (catalog.schema.table)"
     value: "workspace.default.arango_agent_registry"
   - name: BRONZE_INJECTOR_BASE_URL
     value: ""
@@ -48,6 +55,12 @@ env:
     value: "production"
   - name: APP_LOG_LEVEL
     value: "INFO"
+  - name: ARANGO_WORKFLOW_REGISTRY_TABLE
+    description: "UC table where this app publishes its public base_url for mcp-arango-agent /mcp/aoe"
+    value: "workspace.default.arango_workflow_registry"
+  - name: ARANGO_WORKFLOW_REGISTRY_AUTO_CREATE
+    description: "When true, upsert this app's public URL into ARANGO_WORKFLOW_REGISTRY_TABLE at startup"
+    value: "true"
 
 resources:
   - name: sql-warehouse

@@ -60,6 +60,12 @@ log = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     log.info("starting", env=settings.app_env)
+    from app.workflow_platform.runtime import workflow_config_dict
+    from app.workflow_platform.services.workflow_url_registry import (
+        publish_self_workflow_url_to_uc_if_configured,
+    )
+
+    publish_self_workflow_url_to_uc_if_configured(workflow_config_dict())
     yield
     close_db()
     log.info("shutdown_complete")

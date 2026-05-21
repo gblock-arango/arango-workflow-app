@@ -13,7 +13,7 @@ Thin route handlers that validate input (via Pydantic), delegate to services, an
 ## What This Is NOT
 - Not where business logic lives — routes call `services/`, never implement logic directly
 - Not where database queries live — routes should call repositories under `db/` (or services), never raw AQL inline
-- Not the MCP server interface (that's a separate process under `app/mcp/`)
+- Not MCP / Genie tooling — chat is proxied to `arango-mcp-app` via `/api/workflow/*`; AOE ontology MCP sources live in `arango-mcp-app/src/aoe_ontoextract_mcp/` (staged, unwired)
 
 ## Boundaries
 - Every route function receives validated Pydantic models and returns Pydantic models or dicts

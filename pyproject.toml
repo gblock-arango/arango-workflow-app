@@ -7,7 +7,6 @@ requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
-    "python-arango>=8.1",
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
     "python-multipart>=0.0.18",
@@ -23,7 +22,6 @@ dependencies = [
     "tiktoken>=0.9",
     "openai>=1.60",
     "redis>=5.2",
-    "mcp>=1.0",
     "langgraph>=0.2",
     "rdflib>=7.0",
     "arango-entity-resolution>=0.1",

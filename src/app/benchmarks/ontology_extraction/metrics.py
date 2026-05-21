@@ -1,0 +1,327 @@
+"""Precision / recall / F1 over class and relation sets.
+
+The benchmark reduces ontology extraction to two set-comparison tasks:
+
+* **Classes** — the set of ``(label, type)`` pairs extracted from a document.
+* **Relations** — the set of ``(head, relation, tail)`` triples extracted
+  from a document.
+
+Exact set overlap is the default matcher. Labels are normalized (lower-cased,
+whitespace-collapsed) before comparison; downstream code can override
+:func:`normalize` to plug in lemmatization or alias-aware matching.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+
+_WS = re.compile(r"\s+")
+
+
+def normalize(text: str) -> str:
+    """Canonicalize a label for set-comparison matching.
+
+    Lower-cases, strips, and collapses internal whitespace. Intentionally
+    conservative — callers that need lemmatization or alias-aware matching
+    should wrap this function, not replace it.
+    """
+    if text is None:
+        raise TypeError("normalize(): text must not be None")
+    return _WS.sub(" ", text.strip()).lower()
+
+
+def expand_aliases(groups: dict[str, list[str] | str] | None) -> dict[str, str]:
+    """Expand canonical→aliases config into normalized alias→canonical mapping."""
+    if not groups:
+        return {}
+    alias_map: dict[str, str] = {}
+    for canonical, aliases in groups.items():
+        canonical_norm = normalize(canonical)
+        alias_map[canonical_norm] = canonical_norm
+        alias_values = [aliases] if isinstance(aliases, str) else aliases
+        for alias in alias_values:
+            alias_map[normalize(alias)] = canonical_norm
+    return alias_map
+
+
+def canonicalize(text: str, aliases: dict[str, str] | None = None) -> str:
+    """Normalize text and map known aliases to their canonical form."""
+    normalized = normalize(text)
+    if not aliases:
+        return normalized
+    return aliases.get(normalized, normalized)
+
+
+@dataclass(frozen=True)
+class Triple:
+    """A typed relation triple ``(head, relation, tail)`` with normalized fields."""
+
+    head: str
+    relation: str
+    tail: str
+
+    @classmethod
+    def of(cls, head: str, relation: str, tail: str) -> Triple:
+        return cls(normalize(head), normalize(relation), normalize(tail))
+
+    def canonicalized(
+        self,
+        *,
+        label_aliases: dict[str, str] | None = None,
+        relation_aliases: dict[str, str] | None = None,
+    ) -> Triple:
+        return Triple(
+            head=canonicalize(self.head, label_aliases),
+            relation=canonicalize(self.relation, relation_aliases),
+            tail=canonicalize(self.tail, label_aliases),
+        )
+
+
+@dataclass(frozen=True)
+class ClassMention:
+    """A typed class mention ``(label, type)`` with normalized fields."""
+
+    label: str
+    type_: str = ""
+
+    @classmethod
+    def of(cls, label: str, type_: str = "") -> ClassMention:
+        return cls(normalize(label), normalize(type_))
+
+    def canonicalized(
+        self,
+        *,
+        label_aliases: dict[str, str] | None = None,
+    ) -> ClassMention:
+        return ClassMention(
+            label=canonicalize(self.label, label_aliases),
+            type_=self.type_,
+        )
+
+
+@dataclass(frozen=True)
+class PRF:
+    """Precision / recall / F1 scores plus raw TP/FP/FN counts."""
+
+    precision: float
+    recall: float
+    f1: float
+    tp: int
+    fp: int
+    fn: int
+
+    def as_dict(self) -> dict[str, float | int]:
+        return {
+            "precision": self.precision,
+            "recall": self.recall,
+            "f1": self.f1,
+            "tp": self.tp,
+            "fp": self.fp,
+            "fn": self.fn,
+        }
+
+
+def _prf(tp: int, fp: int, fn: int) -> PRF:
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    f1 = (
+        (2 * precision * recall) / (precision + recall) if (precision + recall) else 0.0
+    )
+    return PRF(precision=precision, recall=recall, f1=f1, tp=tp, fp=fp, fn=fn)
+
+
+def _canonicalize_item(
+    item,
+    *,
+    label_aliases: dict[str, str] | None = None,
+    relation_aliases: dict[str, str] | None = None,
+):
+    if isinstance(item, ClassMention):
+        return item.canonicalized(label_aliases=label_aliases)
+    if isinstance(item, Triple):
+        return item.canonicalized(
+            label_aliases=label_aliases,
+            relation_aliases=relation_aliases,
+        )
+    if isinstance(item, str):
+        return canonicalize(item, label_aliases)
+    return item
+
+
+def score_sets(
+    predicted: Iterable,
+    gold: Iterable,
+    *,
+    label_aliases: dict[str, str] | None = None,
+    relation_aliases: dict[str, str] | None = None,
+) -> PRF:
+    """Compute set-overlap precision/recall/F1.
+
+    Both inputs are materialized to sets — duplicates collapse. Empty gold *and*
+    empty predicted yields a zero score (not 1.0) to avoid silently rewarding
+    empty-extraction baselines.
+    """
+    pred_set = {
+        _canonicalize_item(
+            item,
+            label_aliases=label_aliases,
+            relation_aliases=relation_aliases,
+        )
+        for item in predicted
+    }
+    gold_set = {
+        _canonicalize_item(
+            item,
+            label_aliases=label_aliases,
+            relation_aliases=relation_aliases,
+        )
+        for item in gold
+    }
+    tp = len(pred_set & gold_set)
+    fp = len(pred_set - gold_set)
+    fn = len(gold_set - pred_set)
+    return _prf(tp, fp, fn)
+
+
+@dataclass
+class DocumentScore:
+    """Per-document score, retained so we can compute macro averages."""
+
+    document_id: str
+    classes: PRF
+    relations: PRF
+    duration_ms: float = 0.0
+    metadata: dict = field(default_factory=dict)
+
+
+@dataclass
+class AggregateReport:
+    """Aggregate report across all scored documents.
+
+    * ``micro_*`` — sums TP/FP/FN across documents then computes PRF once.
+    * ``macro_*`` — averages per-document PRF; empty documents are skipped.
+    """
+
+    document_scores: list[DocumentScore] = field(default_factory=list)
+    micro_classes: PRF = field(default_factory=lambda: _prf(0, 0, 0))
+    micro_relations: PRF = field(default_factory=lambda: _prf(0, 0, 0))
+    macro_classes: PRF = field(default_factory=lambda: _prf(0, 0, 0))
+    macro_relations: PRF = field(default_factory=lambda: _prf(0, 0, 0))
+    total_duration_ms: float = 0.0
+    avg_duration_ms: float = 0.0
+    total_estimated_cost_usd: float = 0.0
+    total_tokens: int = 0
+    quality_per_dollar: float | None = None
+    quality_per_minute: float | None = None
+
+    def as_dict(self) -> dict:
+        return {
+            "documents": len(self.document_scores),
+            "runtime": {
+                "total_duration_ms": self.total_duration_ms,
+                "avg_duration_ms": self.avg_duration_ms,
+            },
+            "metadata": {
+                "total_estimated_cost_usd": self.total_estimated_cost_usd,
+                "total_tokens": self.total_tokens,
+            },
+            "efficiency": {
+                "quality_per_dollar": self.quality_per_dollar,
+                "quality_per_minute": self.quality_per_minute,
+            },
+            "micro": {
+                "classes": self.micro_classes.as_dict(),
+                "relations": self.micro_relations.as_dict(),
+            },
+            "macro": {
+                "classes": self.macro_classes.as_dict(),
+                "relations": self.macro_relations.as_dict(),
+            },
+            "per_document": [
+                {
+                    "document_id": ds.document_id,
+                    "duration_ms": ds.duration_ms,
+                    "metadata": ds.metadata,
+                    "classes": ds.classes.as_dict(),
+                    "relations": ds.relations.as_dict(),
+                }
+                for ds in self.document_scores
+            ],
+        }
+
+
+def aggregate(document_scores: list[DocumentScore]) -> AggregateReport:
+    """Compute micro and macro averages over a list of per-document scores."""
+
+    if not document_scores:
+        return AggregateReport()
+
+    micro_tp_c = sum(d.classes.tp for d in document_scores)
+    micro_fp_c = sum(d.classes.fp for d in document_scores)
+    micro_fn_c = sum(d.classes.fn for d in document_scores)
+    micro_tp_r = sum(d.relations.tp for d in document_scores)
+    micro_fp_r = sum(d.relations.fp for d in document_scores)
+    micro_fn_r = sum(d.relations.fn for d in document_scores)
+    total_duration_ms = sum(d.duration_ms for d in document_scores)
+    avg_duration_ms = total_duration_ms / len(document_scores)
+    total_estimated_cost_usd = sum(
+        _float_meta(d, "estimated_cost_usd") for d in document_scores
+    )
+    total_tokens = sum(_int_meta(d, "total_tokens") for d in document_scores)
+
+    def _macro(getter) -> PRF:
+        non_empty = [
+            getter(d)
+            for d in document_scores
+            if getter(d).tp + getter(d).fp + getter(d).fn
+        ]
+        if not non_empty:
+            return _prf(0, 0, 0)
+        precision = sum(p.precision for p in non_empty) / len(non_empty)
+        recall = sum(p.recall for p in non_empty) / len(non_empty)
+        f1 = (
+            (2 * precision * recall) / (precision + recall)
+            if (precision + recall)
+            else 0.0
+        )
+        # macro averages don't carry TP/FP/FN as meaningful integers; report sums for transparency
+        tp = sum(p.tp for p in non_empty)
+        fp = sum(p.fp for p in non_empty)
+        fn = sum(p.fn for p in non_empty)
+        return PRF(precision=precision, recall=recall, f1=f1, tp=tp, fp=fp, fn=fn)
+
+    micro_classes = _prf(micro_tp_c, micro_fp_c, micro_fn_c)
+    micro_relations = _prf(micro_tp_r, micro_fp_r, micro_fn_r)
+    quality_score = (micro_classes.f1 + micro_relations.f1) / 2
+    duration_minutes = total_duration_ms / 60000
+    return AggregateReport(
+        document_scores=document_scores,
+        micro_classes=micro_classes,
+        micro_relations=micro_relations,
+        macro_classes=_macro(lambda d: d.classes),
+        macro_relations=_macro(lambda d: d.relations),
+        total_duration_ms=total_duration_ms,
+        avg_duration_ms=avg_duration_ms,
+        total_estimated_cost_usd=total_estimated_cost_usd,
+        total_tokens=total_tokens,
+        quality_per_dollar=(
+            quality_score / total_estimated_cost_usd
+            if total_estimated_cost_usd
+            else None
+        ),
+        quality_per_minute=quality_score / duration_minutes
+        if duration_minutes
+        else None,
+    )
+
+
+def _float_meta(score: DocumentScore, key: str) -> float:
+    value = score.metadata.get(key)
+    return float(value) if isinstance(value, int | float) else 0.0
+
+
+def _int_meta(score: DocumentScore, key: str) -> int:
+    value = score.metadata.get(key)
+    return int(value) if isinstance(value, int | float) else 0

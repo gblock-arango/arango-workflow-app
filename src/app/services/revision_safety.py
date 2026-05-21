@@ -36,7 +36,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.config import settings
 from app.db import revision_meta_repo as rev_repo

@@ -20,7 +20,7 @@ import logging
 import time
 from pathlib import Path
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.db.utils import doc_get
 

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import logging
 
-from arango.database import StandardDatabase
-from arango.exceptions import IndexCreateError
+from app.db.types import StandardDatabase
+from app.db.types import GatewayAPIError
 
 log = logging.getLogger(__name__)
 
@@ -33,5 +33,5 @@ def up(db: StandardDatabase) -> None:
             unique=True,
             name=idx_name,
         )
-    except IndexCreateError:
+    except GatewayAPIError:
         log.warning("could not create unique index %s", idx_name, exc_info=True)

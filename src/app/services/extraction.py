@@ -13,8 +13,8 @@ import time
 import uuid
 from typing import Any, cast
 
-from arango.collection import StandardCollection
-from arango.database import StandardDatabase
+from typing import Any as StandardCollection  # gateway collection handle
+from app.db.types import StandardDatabase
 
 from app.api.errors import NotFoundError
 from app.config import settings

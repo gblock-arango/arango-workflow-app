@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, cast
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.db import quality_history_repo
 from app.db.temporal_constants import NEVER_EXPIRES

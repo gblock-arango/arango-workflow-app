@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import logging
 
-from arango.database import StandardDatabase
-from arango.exceptions import IndexCreateError
-from arango.request import Request
+from app.db.types import GatewayAPIError, StandardDatabase
 
 log = logging.getLogger(__name__)
 
@@ -70,20 +68,9 @@ def _create_mdi_index(db: StandardDatabase, collection_name: str) -> None:
         "name": idx_name,
     }
     try:
-        req = Request(
-            method="post",
-            endpoint=f"/_api/index?collection={collection_name}",
-            data=body,
-        )
-        resp = db._conn.send_request(req)
-        if resp.status_code in (200, 201):
-            log.info("created mdi-prefixed index %s on %s", idx_name, collection_name)
-            return
-        log.warning(
-            "mdi-prefixed index creation returned %s on %s — trying fallback",
-            resp.status_code,
-            collection_name,
-        )
+        col.add_index(body)
+        log.info("created mdi-prefixed index %s on %s", idx_name, collection_name)
+        return
     except Exception as exc:
         log.warning(
             "mdi-prefixed index creation failed on %s: %s — trying fallback",
@@ -101,7 +88,7 @@ def _create_mdi_index(db: StandardDatabase, collection_name: str) -> None:
             idx_name,
             collection_name,
         )
-    except IndexCreateError:
+    except GatewayAPIError:
         log.debug("index %s already exists on %s (via fallback)", idx_name, collection_name)
 
 

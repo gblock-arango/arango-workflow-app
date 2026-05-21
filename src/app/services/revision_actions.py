@@ -41,7 +41,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.db import revision_meta_repo as rev_repo
 from app.db import temporal_revisions_repo as supersede_repo

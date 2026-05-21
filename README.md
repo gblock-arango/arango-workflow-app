@@ -1,6 +1,6 @@
 # arango-workflow-app
 
-Unified **Databricks App** ([arango-agent-autograph-job/README.md](../arango-agent-autograph-job/README.md)): FastAPI BFF + Next.js UI with the **OntoExtract** frontend (same look and routes as [arango-ontoextract](../arango-ontoextract/)). Platform shell (dashboard-app layout) is backend-only for now — not exposed in the UI yet.
+Unified **Databricks App** ([arango-agent-autograph-job/README.md](../arango-agent-autograph-job/README.md)): FastAPI BFF + Next.js UI with the **OntoExtract** frontend (same look and routes as [arango-ontoextract](../arango-ontoextract/)). Genie/MCP chat is proxied to [arango-mcp-app](../arango-mcp-app/); ontology MCP tools are staged there under `src/aoe_ontoextract_mcp/` (not run from this app).
 
 ## Repository layout
 
@@ -33,7 +33,7 @@ arango-workflow-app/
 |------|-------------|
 | `/`, `/dashboard`, `/ontology-quality`, `/pipeline`, … | OntoExtract UI (graph canvas at `/dashboard`; quality at `/ontology-quality`) |
 | `/api/v1/*` | OntoExtract REST API |
-| `/api/workflow/*` | Control-plane BFF (reserved; no UI yet) |
+| `/api/workflow/*` | BFF proxies to gateway + arango-mcp-app (Genie chat, embed config) |
 
 ## Quick Start
 
@@ -44,7 +44,7 @@ cd arango-workflow-app
 cp .env.example .env          # Add your API keys (or reuse your ontoextract .env)
 make setup                     # Python .venv at repo root + npm install in src/frontend
 
-make infra                     # ArangoDB + Redis via Docker
+make infra                     # Redis via Docker; Arango via arango-gateway-app (not local python-arango)
 make backend                   # FastAPI on :8010 (default; same as ontoextract Makefile)
 ```
 
@@ -105,10 +105,18 @@ uvicorn app.main:app --port 8000
 
 ## Databricks deploy
 
+Deploy **gateway** and **mcp-arango-agent** first so UC registry tables exist, then this app:
+
 ```bash
+export DATABRICKS_SQL_WAREHOUSE_ID=<warehouse-hex>
+# ../arango-gateway-app/deploy_app.sh
+# ../arango-mcp-app/deploy_app.sh
 ./deploy_app.sh
 # optional: ./deploy_app.sh arango-workflow-app "" <profile>
+./scripts/read_uc_peer_registry.sh   # verify gateway + agent URLs from UC
 ```
+
+Interop pattern matches [arango-dashboard-app](../arango-dashboard-app/README_Agent.md): UC SQL reads in `src/app/workflow_platform/services/`, BFF proxies to mcp-app, Arango via gateway only.
 
 Or use `databricks apps deploy` after `databricks sync . /Workspace/Users/<you>/arango-workflow-app`.
 

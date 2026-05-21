@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 from rdflib import OWL, RDF, RDFS, URIRef
 from rdflib import Graph as RDFGraph
 from rdflib.term import Literal

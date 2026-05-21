@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.db.client import get_db
 from app.db.utils import run_aql

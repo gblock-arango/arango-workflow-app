@@ -10,7 +10,7 @@ import logging
 import time
 from typing import Any, cast
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.db.client import get_db
 from app.db.temporal_constants import NEVER_EXPIRES

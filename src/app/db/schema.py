@@ -12,7 +12,7 @@ import logging
 import sys
 from pathlib import Path
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 log = logging.getLogger(__name__)
 

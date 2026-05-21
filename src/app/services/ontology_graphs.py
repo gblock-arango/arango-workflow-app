@@ -17,7 +17,7 @@ import logging
 import re
 from typing import Any, cast
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.db.client import get_db
 from app.db.utils import doc_get

@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Any, TypeVar
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.db.utils import run_aql
 from app.models.common import PaginatedResponse

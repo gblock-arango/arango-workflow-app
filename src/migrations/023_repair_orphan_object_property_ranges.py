@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql

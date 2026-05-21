@@ -43,7 +43,7 @@ class SchemaExtractionConfig(BaseModel):
     target_password: str = Field(default="", description="ArangoDB password")
     verify_tls: bool = Field(
         default=True,
-        description="Verify TLS certificates when using HTTPS (python-arango verify_override).",
+        description="Reserved for future external-gateway targets; app DB uses arango-gateway-app.",
     )
     extraction_source: Literal["arango_graph_schema"] = Field(
         default="arango_graph_schema",
@@ -117,6 +117,19 @@ _SchemaAnalyzerComponents = tuple[
 # ---------------------------------------------------------------------------
 
 
+def _gateway_db_for_schema_config(config: SchemaExtractionConfig):
+    """Schema extraction uses the app gateway DB only (no direct Arango host)."""
+    import app.config as app_config
+
+    settings = app_config.settings
+    if config.target_db != settings.arango_db:
+        raise ValueError(
+            f"Schema extraction target_db must match app database {settings.arango_db!r} "
+            f"(gateway mode; got {config.target_db!r})."
+        )
+    return get_db()
+
+
 def _try_import_schema_mapper() -> _SchemaAnalyzerComponents | None:
     """Return (AgenticSchemaAnalyzer, export_owl, fingerprint_fn, snapshot_fn) or None."""
     try:
@@ -143,15 +156,8 @@ def _run_schema_mapper_extract(
     mapper: _SchemaAnalyzerComponents,
 ) -> tuple[str, dict[str, Any]]:
     analyzer_cls, export_owl, fingerprint_fn, snapshot_fn = mapper
-    from arango.client import ArangoClient
-
-    client = ArangoClient(hosts=config.target_host, verify_override=config.verify_tls)
+    db = _gateway_db_for_schema_config(config)
     try:
-        db = client.db(
-            config.target_db,
-            username=config.target_user,
-            password=config.target_password,
-        )
         snap = snapshot_fn(
             db,
             sample_limit_per_collection=config.sample_limit_per_collection,
@@ -181,7 +187,7 @@ def _run_schema_mapper_extract(
         }
         return ttl, provenance
     finally:
-        client.close()
+        pass
 
 
 def _stub_extract_schema(config: SchemaExtractionConfig) -> str:
@@ -190,15 +196,10 @@ def _stub_extract_schema(config: SchemaExtractionConfig) -> str:
     Connects to the target ArangoDB, lists collections and edges,
     and produces a basic OWL Turtle representation.
     """
-    from arango.client import ArangoClient
     from rdflib import OWL, RDF, RDFS, Graph, Literal, Namespace, URIRef
 
-    client = ArangoClient(hosts=config.target_host, verify_override=config.verify_tls)
+    target_db = _gateway_db_for_schema_config(config)
     try:
-        connect_kwargs: dict[str, Any] = {"username": config.target_user}
-        if config.target_password:
-            connect_kwargs["password"] = config.target_password
-        target_db = client.db(config.target_db, **connect_kwargs)
 
         ns_str = f"http://aoe.example.org/schema/{config.target_db}#"
         ns = Namespace(ns_str)
@@ -234,8 +235,6 @@ def _stub_extract_schema(config: SchemaExtractionConfig) -> str:
             extra={"target_db": config.target_db, "triples": len(g)},
         )
         return ttl
-    finally:
-        client.close()
 
 
 # ---------------------------------------------------------------------------

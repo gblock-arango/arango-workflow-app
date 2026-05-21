@@ -23,6 +23,7 @@ from starlette.responses import JSONResponse, Response
 
 from app.compat import UTC
 from app.config import settings
+from app.workflow_platform.peer_dispatch import bff_internal_dispatch_active
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +59,15 @@ _PUBLIC_API_PATHS_WITHOUT_AUTH = frozenset(
         "/api/v1/auth/login",
         "/api/v1/metrics",
     }
+)
+
+
+_SERVICE_PEER_USER = AuthenticatedUser(
+    user_id="peer-app",
+    org_id="service",
+    roles=["admin"],
+    email="",
+    display_name="Workflow BFF peer",
 )
 
 
@@ -145,6 +155,10 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if request.scope.get("type") == "websocket":
+            return await call_next(request)
+
+        if bff_internal_dispatch_active():
+            request.state.__dict__[_USER_CONTEXT_KEY] = _SERVICE_PEER_USER
             return await call_next(request)
 
         auth_header = request.headers.get(_AUTH_HEADER)

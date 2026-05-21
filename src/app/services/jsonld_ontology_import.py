@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.db.ontology_repo import create_class, create_edge, create_property
 from app.db.temporal_constants import NEVER_EXPIRES

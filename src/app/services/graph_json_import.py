@@ -18,7 +18,7 @@ import logging
 from pathlib import PurePosixPath
 from typing import Any
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 from app.db.client import get_db
 from app.db.ontology_repo import create_class, create_edge

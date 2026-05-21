@@ -8,10 +8,15 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
+from httpx import ASGITransport
 
 from app.workflow_platform.databricks_outbound_auth import (
     outbound_auth_diagnostics,
     outbound_databricks_auth_headers,
+)
+from app.workflow_platform.peer_dispatch import (
+    reset_bff_internal_dispatch,
+    set_bff_internal_dispatch,
 )
 from app.workflow_platform.runtime import workflow_config_dict
 from app.workflow_platform.services.agent_url_registry import (
@@ -199,6 +204,65 @@ async def genie_chat_proxy(request: Request) -> Response:
         timeout=660.0,
         label="arango-mcp-app",
     )
+
+
+_HOP_BY_HOP = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+        "host",
+        "content-length",
+    }
+)
+
+
+@router.api_route(
+    "/ontoextract/v1/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    response_model=None,
+)
+async def ontoextract_v1_peer_bff(request: Request, path: str) -> Response:
+    """
+    Peer-app OntoExtract API (mcp-arango-agent ``/mcp/aoe``).
+
+    Same auth model as ``/api/workflow/genie/chat``: public BFF prefix; in-process
+    dispatch to ``/api/v1/*`` with a service user (Databricks app OAuth at ingress).
+    """
+    inner_path = f"/api/v1/{path.lstrip('/')}"
+    if request.url.query:
+        inner_path = f"{inner_path}?{request.url.query}"
+
+    body = await request.body()
+    headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP
+    }
+
+    token = set_bff_internal_dispatch(True)
+    try:
+        transport = ASGITransport(app=request.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://workflow-internal",
+        ) as client:
+            r = await client.request(
+                request.method,
+                inner_path,
+                content=body if body else None,
+                headers=headers,
+            )
+    finally:
+        reset_bff_internal_dispatch(token)
+
+    ct = r.headers.get("Content-Type") or "application/json"
+    return Response(content=r.content, status_code=r.status_code, media_type=ct)
 
 
 @router.get("/debug/startup-status")

@@ -121,8 +121,6 @@ def _ensure_vector_index() -> None:
 
     import math
 
-    from arango.request import Request
-
     chunk_count = cast(int, col.count())
     n_lists = max(1, int(math.sqrt(chunk_count) * 15))
     # nLists cannot exceed the number of training points
@@ -148,48 +146,26 @@ def _ensure_vector_index() -> None:
             "trainingIterations": 25,
         },
     }
-    req = Request(
-        method="post",
-        endpoint="/_api/index",
-        params={"collection": "chunks"},
-        data=body,
-    )
-
-    # Vector index creation is synchronous on the cluster: the server runs
-    # ``trainingIterations`` of k-means over the existing
-    # ``_EMBEDDING_DIMENSION``-d vectors before responding. On a fresh DB the
-    # very first call can exceed the python-arango client's default read
-    # timeout (~60 s) -- the cluster keeps training and eventually persists
-    # the index, but the client has already raised. The downstream effect is
-    # the document gets marked FAILED even though chunks + embeddings are
-    # present and the index landed seconds later. We catch that specific
-    # failure mode and re-check; the index name is unique so this is safe.
-    from requests.exceptions import ConnectionError as RequestsConnectionError
-    from requests.exceptions import ReadTimeout as RequestsReadTimeout
-
+    # Vector index creation can take a long time on first training; gateway HTTP
+    # may time out while Arango still builds the index — re-check indexes afterward.
     try:
-        resp = db._conn.send_request(req)
-    except (RequestsReadTimeout, RequestsConnectionError) as exc:
+        col.add_index(body)
+        log.info("[ingest] created vector index %s on chunks.embedding", _VECTOR_INDEX_NAME)
+    except Exception as exc:
         log.warning(
-            "[ingest] vector index POST raised %s; re-checking the cluster "
-            "to see if the cluster completed the build anyway",
+            "[ingest] vector index POST raised %s; re-checking whether the index exists",
             exc.__class__.__name__,
         )
         for idx in cast("list[dict[str, Any]]", col.indexes()):
             if idx.get("name") == _VECTOR_INDEX_NAME:
                 log.info(
-                    "[ingest] vector index %s present after client timeout -- treating as success",
+                    "[ingest] vector index %s present after error -- treating as success",
                     _VECTOR_INDEX_NAME,
                 )
                 return
         raise RuntimeError(
-            f"Vector index creation timed out and the index is not present on the cluster: {exc}"
+            f"Vector index creation failed and index is not present on the cluster: {exc}"
         ) from exc
-
-    if resp.status_code in (200, 201):
-        log.info("[ingest] created vector index %s on chunks.embedding", _VECTOR_INDEX_NAME)
-    else:
-        raise RuntimeError(f"Vector index creation failed ({resp.status_code}): {resp.body}")
 
 
 async def _parse(file_bytes: bytes, mime_type: str) -> ParsedDocument:

@@ -7,8 +7,7 @@ from datetime import datetime
 from app.compat import UTC
 from typing import Any, cast
 
-from arango.cursor import Cursor
-from arango.database import StandardDatabase
+from app.db.types import Cursor, StandardDatabase
 
 from app.db.temporal_constants import NEVER_EXPIRES
 

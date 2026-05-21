@@ -5,7 +5,7 @@ import re
 import time
 from typing import Any, cast
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field

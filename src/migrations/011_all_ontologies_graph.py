@@ -6,7 +6,7 @@ The domain_ontology graph serves as the shared composite view.
 
 from __future__ import annotations
 
-from arango.database import StandardDatabase
+from app.db.types import StandardDatabase
 
 
 def up(db: StandardDatabase) -> None:

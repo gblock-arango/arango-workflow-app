@@ -1,27 +1,29 @@
-import logging
-from typing import Any, cast
+"""Arango access via ``arango-gateway-app`` only (no ``python-arango``)."""
 
-from arango.client import ArangoClient
-from arango.database import StandardDatabase
+from __future__ import annotations
+
+import logging
+from typing import Any
 
 import app.config as app_config
 from app.config import Settings
+from app.db.gateway_arango_client import GatewayArangoClient
+from app.db.gateway_config import effective_gateway_url, get_gateway_settings
+from app.db.gateway_database import GatewayDatabase
+from app.workflow_platform.runtime import workflow_config_dict
 
 log = logging.getLogger(__name__)
 
-_client: ArangoClient | None = None
-_db: StandardDatabase | None = None
+_gateway_client: GatewayArangoClient | None = None
+_dbs: dict[str, GatewayDatabase] = {}
 _config_signature: tuple[Any, ...] | None = None
 
 
 def _settings_signature() -> tuple[Any, ...]:
     settings = app_config.settings
     return (
-        settings.effective_arango_host,
+        effective_gateway_url(),
         settings.arango_db,
-        settings.arango_user,
-        settings.arango_password,
-        settings.arango_verify_ssl,
         settings.test_deployment_mode,
     )
 
@@ -36,70 +38,49 @@ def _get_settings() -> Settings:
     return settings
 
 
-def get_arango_client() -> ArangoClient:
-    global _client
-    settings = _get_settings()
-    if _client is None:
-        host = settings.effective_arango_host
-        kwargs: dict[str, Any] = {"hosts": host}
-
-        if settings.is_cluster and not settings.arango_verify_ssl:
-            kwargs["verify_override"] = False
-
+def _connect_gateway() -> GatewayArangoClient:
+    global _gateway_client
+    base = effective_gateway_url()
+    if not base:
+        raise RuntimeError(
+            "Arango gateway is not configured. Set ARANGO_GATEWAY_BASE_URL or publish an active row "
+            "to ARANGO_GATEWAY_REGISTRY_TABLE (and DATABRICKS_SQL_WAREHOUSE_ID for UC reads)."
+        )
+    if _gateway_client is None:
+        cfg = workflow_config_dict()
+        _gateway_client = GatewayArangoClient(
+            get_gateway_settings(),
+            effective_base_url=base,
+            auth_config=cfg,
+        )
+        _gateway_client.connect()
         log.info(
-            "connecting to ArangoDB",
-            extra={
-                "host": host,
-                "mode": settings.test_deployment_mode.value,
-                "is_cluster": settings.is_cluster,
-                "has_gae": settings.has_gae,
-            },
+            "connected to Arango via gateway",
+            extra={"gateway": base, "db": _get_settings().arango_db},
         )
-        _client = ArangoClient(**kwargs)
-    return _client
+    return _gateway_client
 
 
-def _ensure_database_exists(client: ArangoClient) -> None:
-    """Connect to _system and create the target database if it doesn't exist.
-
-    Skipped on managed platforms where _system access may be restricted.
-    """
+def get_db() -> GatewayDatabase:
+    global _dbs
     settings = _get_settings()
-    if not settings.can_create_databases:
-        log.info(
-            "skipping auto-create database on managed platform — database must be pre-provisioned",
-            extra={"db": settings.arango_db, "mode": settings.test_deployment_mode.value},
-        )
-        return
-
-    sys_db = client.db(
-        "_system",
-        username=settings.arango_user,
-        password=settings.arango_password,
-    )
-    if settings.arango_db not in cast(list[str], sys_db.databases()):
-        log.info("creating database", extra={"db": settings.arango_db})
-        sys_db.create_database(settings.arango_db)
+    client = _connect_gateway()
+    if settings.arango_db not in _dbs:
+        _dbs[settings.arango_db] = GatewayDatabase(client, settings.arango_db)
+    return _dbs[settings.arango_db]
 
 
-def get_db() -> StandardDatabase:
-    global _db
-    settings = _get_settings()
-    if _db is None:
-        client = get_arango_client()
-        _ensure_database_exists(client)
-        _db = client.db(
-            settings.arango_db,
-            username=settings.arango_user,
-            password=settings.arango_password,
-        )
-    return _db
+def get_system_db() -> GatewayDatabase:
+    client = _connect_gateway()
+    if "_system" not in _dbs:
+        _dbs["_system"] = GatewayDatabase(client, "_system")
+    return _dbs["_system"]
 
 
 def close_db() -> None:
-    global _client, _db, _config_signature
-    if _client is not None:
-        _client.close()
-    _client = None
-    _db = None
+    global _gateway_client, _dbs, _config_signature
+    if _gateway_client is not None:
+        _gateway_client.disconnect()
+    _gateway_client = None
+    _dbs = {}
     _config_signature = None
