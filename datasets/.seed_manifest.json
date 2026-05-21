@@ -1,7 +1,7 @@
 {
   "ok": true,
   "layout_version": 2,
-  "domains": ["financial", "healthcare", "legal", "supply-chain"],
+  "domains": ["cybe", "financial", "healthcare", "legal", "supply-chain"],
   "source": "datasets/",
   "destination": "/Volumes/workspace/default/arango_workflow_volume/workflow-data/builtin",
   "note": "Reference manifest. Deploy copies repo datasets/<domain>/*.md into builtin/<domain>/ on the UC volume (not builtin/corpora/). Cyber and external are skipped at seed time."

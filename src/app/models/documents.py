@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class DocumentStatus(StrEnum):
+    STAGED = "staged"
     UPLOADING = "uploading"
     PARSING = "parsing"
     CHUNKING = "chunking"

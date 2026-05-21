@@ -32,6 +32,7 @@ def create_document(
     file_hash: str,
     org_id: str | None = None,
     metadata: dict[str, Any] | None = None,
+    status: DocumentStatus = DocumentStatus.UPLOADING,
     db: StandardDatabase | None = None,
 ) -> dict[str, Any]:
     """Insert a new document record.  Returns the full stored document."""
@@ -42,7 +43,7 @@ def create_document(
         "mime_type": mime_type,
         "file_hash": file_hash,
         "org_id": org_id,
-        "status": DocumentStatus.UPLOADING,
+        "status": status,
         "upload_date": _now_iso(),
         "chunk_count": 0,
         "metadata": metadata or {},

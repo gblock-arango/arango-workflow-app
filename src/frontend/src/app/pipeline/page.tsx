@@ -26,7 +26,13 @@ type DetailTab = "metrics" | "errors" | "timeline";
 
 export default function PipelineMonitor() {
   return (
-    <Suspense>
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-500">
+          Loading pipeline…
+        </main>
+      }
+    >
       <PipelineMonitorInner />
     </Suspense>
   );

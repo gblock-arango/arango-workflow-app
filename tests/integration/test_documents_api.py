@@ -43,16 +43,20 @@ class TestUploadDocument:
         test_client,
     ):
         mock_repo.find_document_by_hash.return_value = None
-        mock_repo.create_document.return_value = _make_mock_doc(status="uploading")
+        mock_repo.create_document.return_value = _make_mock_doc(status="staged")
 
         pdf_content = b"%PDF-1.4 fake content"
         files = {"file": ("test.pdf", io.BytesIO(pdf_content), "application/pdf")}
-        response = test_client.post("/api/v1/documents/upload", files=files)
+        with patch(
+            "app.api.documents._persist_upload_metadata",
+            return_value={"volume_relative_path": "uploads/doc1/test.pdf", "volume_source": "upload"},
+        ):
+            response = test_client.post("/api/v1/documents/upload", files=files)
 
         assert response.status_code == 200
         data = response.json()
         assert data["doc_id"] == "doc1"
-        assert data["status"] == "uploading"
+        assert data["status"] == "staged"
         mock_repo.create_document.assert_called_once()
 
     @patch("app.api.documents.documents_repo")

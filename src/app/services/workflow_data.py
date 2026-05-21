@@ -10,19 +10,48 @@ from app.workflow_platform import workflow_data_volume as vol
 def workflow_data_status() -> dict[str, Any]:
     root = vol.workflow_data_root()
     builtin_root = vol.workflow_data_builtin_root()
+    local_mount = vol.local_mount_available()
+    builtin_manifest = (builtin_root / vol.SEED_MANIFEST_NAME).is_file()
+    access_mode = "local_mount" if local_mount else "files_api"
+    files_api_ok = False
+    if not local_mount:
+        try:
+            files_api_ok = len(vol.list_files(prefix=vol.BUILTIN_SUBDIR, max_entries=1)) > 0
+        except Exception:
+            files_api_ok = False
+    else:
+        files_api_ok = True
     return {
         "workflow_data_root": str(root),
         "builtin_root": str(builtin_root),
         "builtin_uc_path": vol.workflow_data_builtin_uc_path(),
         "uploads_subdir": vol.UPLOADS_SUBDIR,
         "volume_name": vol.uc_graph_volume_name(),
-        "exists": root.is_dir(),
-        "builtin_manifest": (builtin_root / vol.SEED_MANIFEST_NAME).is_file(),
+        "exists": local_mount or files_api_ok,
+        "local_mount": local_mount,
+        "access_mode": access_mode,
+        "files_api_reachable": files_api_ok,
+        "builtin_manifest": builtin_manifest,
     }
 
 
 def browse_volume(*, prefix: str = "builtin", limit: int = 500) -> list[dict[str, Any]]:
     return vol.list_files(prefix=prefix, max_entries=limit)
+
+
+def read_staged_document_bytes(doc: dict[str, Any]) -> tuple[bytes, str, str]:
+    """
+    Load document bytes from UC workflow-data for parse/chunk/embed.
+
+    Uses ``metadata.volume_relative_path`` (under ``uploads/<doc-id>/``).
+    """
+    meta = doc.get("metadata") or {}
+    rel = (meta.get("volume_relative_path") or "").strip()
+    if not rel:
+        raise ValueError(
+            "Document has no UC volume copy — re-upload the file or ingest from volume again."
+        )
+    return ingest_file_from_volume(relative_path=rel)
 
 
 def ingest_file_from_volume(*, relative_path: str) -> tuple[bytes, str, str]:

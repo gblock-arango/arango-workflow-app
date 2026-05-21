@@ -2,65 +2,30 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import { api, ApiError, backendUrl } from "@/lib/api-client";
+import { api } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import { useActivePipelineAgents } from "@/lib/useActivePipelineAgents";
-
-interface HealthStatus {
-  status: string;
-  database?: string;
-  gateway?: string;
-}
+import {
+  useArangoConnectionStatus,
+  type ArangoConnectionState,
+} from "@/lib/useArangoConnectionStatus";
 
 interface LibraryStats {
   total_count: number;
 }
 
-type ConnectionState = "loading" | "connected" | "error";
-
 const img = (path: string) => withBasePath(path);
 
 export default function Home() {
-  const [health, setHealth] = useState<ConnectionState>("loading");
-  const [healthDetail, setHealthDetail] = useState("");
+  const { health, healthDetail } = useArangoConnectionStatus();
   const [ontologyCount, setOntologyCount] = useState<number | null>(null);
   const [statsError, setStatsError] = useState(false);
 
   useEffect(() => {
-    fetch(backendUrl("/ready"))
-      .then(async (r) => {
-        const data = (await r.json().catch(() => ({}))) as HealthStatus & {
-          detail?: string;
-        };
-        if (!r.ok) {
-          const hint =
-            typeof data.detail === "string" ? data.detail : `HTTP ${r.status}`;
-          if (r.status === 500 && !data.detail) {
-            throw new Error(
-              "API unreachable. Start the backend (make backend) and ensure BACKEND_PROXY_URL matches.",
-            );
-          }
-          throw new Error(hint);
-        }
-        return data;
-      })
-      .then((data: HealthStatus) => {
-        if (data.status === "ready") {
-          setHealth("connected");
-          const parts = [data.gateway, data.database].filter(Boolean);
-          setHealthDetail(parts.join(" · ") || "connected");
-        } else {
-          setHealth("error");
-          setHealthDetail(data.database || data.gateway || "Database not ready");
-        }
-      })
-      .catch((err) => {
-        setHealth("error");
-        setHealthDetail(err instanceof ApiError ? err.body.message : String(err));
-      });
-
     api
-      .get<LibraryStats>("/api/v1/ontology/library?limit=1")
+      .get<LibraryStats>(
+        "/api/v1/ontology/library?limit=1&include_edge_counts=false",
+      )
       .then((data) => {
         setOntologyCount(data.total_count);
       })
@@ -279,7 +244,7 @@ function HeroConnectionStatus({
   health,
   healthDetail,
 }: {
-  health: ConnectionState;
+  health: ArangoConnectionState;
   healthDetail: string;
 }) {
   const statusLabel =

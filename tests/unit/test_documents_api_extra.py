@@ -15,6 +15,7 @@ from app.api.documents import (
     get_document,
     get_document_ontologies,
     list_documents,
+    prepare_document,
     update_document,
     upload_document,
 )
@@ -137,22 +138,50 @@ class TestUploadDocument:
             ) as mock_hard_delete,
             patch(
                 "app.api.documents.documents_repo.create_document",
-                return_value={"_key": "new_doc", "filename": "doc.pdf", "status": "uploading"},
+                return_value={"_key": "new_doc", "filename": "doc.pdf", "status": "staged"},
             ),
+            patch(
+                "app.api.documents._persist_upload_metadata",
+                return_value={"volume_relative_path": "uploads/new_doc/doc.pdf", "volume_source": "upload"},
+            ),
+            patch("app.api.documents.documents_repo.update_document_metadata"),
+            patch("app.api.documents.documents_repo.update_document_status"),
             patch("app.api.documents.asyncio.create_task", mock_create_task),
         ):
             result = await upload_document(file)
 
-        # The prior FAILED record + chunks were cleaned up before the new
-        # ingestion started -- so the user gets a fresh doc_id rather than
-        # silently inheriting a half-broken state.
         mock_delete_chunks.assert_called_once_with("old_doc")
         mock_hard_delete.assert_called_once_with("old_doc")
-        mock_create_task.assert_called_once()
-        assert result == {"doc_id": "new_doc", "filename": "doc.pdf", "status": "uploading"}
+        mock_create_task.assert_not_called()
+        assert result == {"doc_id": "new_doc", "filename": "doc.pdf", "status": "staged", "volume_path": "uploads/new_doc/doc.pdf"}
 
     @pytest.mark.asyncio
-    async def test_upload_document_creates_record_and_task(self):
+    async def test_upload_document_stages_without_processing_by_default(self):
+        file = _upload_file()
+        mock_create_task = MagicMock()
+
+        with (
+            patch("app.api.documents.compute_file_hash", return_value="hash"),
+            patch("app.api.documents.documents_repo.find_document_by_hash", return_value=None),
+            patch(
+                "app.api.documents.documents_repo.create_document",
+                return_value={"_key": "d1", "filename": "doc.pdf", "status": "staged"},
+            ),
+            patch(
+                "app.api.documents._persist_upload_metadata",
+                return_value={"volume_relative_path": "uploads/d1/doc.pdf", "volume_source": "upload"},
+            ),
+            patch("app.api.documents.documents_repo.update_document_metadata"),
+            patch("app.api.documents.documents_repo.update_document_status") as mock_status,
+            patch("app.api.documents.asyncio.create_task", mock_create_task),
+        ):
+            result = await upload_document(file, org_id="org1")
+
+        mock_create_task.assert_not_called()
+        mock_status.assert_called_once()
+        assert result == {"doc_id": "d1", "filename": "doc.pdf", "status": "staged", "volume_path": "uploads/d1/doc.pdf"}
+
+    async def test_upload_document_process_true_queues_task(self):
         file = _upload_file()
         task = MagicMock()
         mock_create_task = MagicMock(side_effect=lambda coro: (coro.close(), task)[1])
@@ -164,13 +193,52 @@ class TestUploadDocument:
                 "app.api.documents.documents_repo.create_document",
                 return_value={"_key": "d1", "filename": "doc.pdf", "status": "uploading"},
             ),
+            patch(
+                "app.api.documents._persist_upload_metadata",
+                return_value={"volume_relative_path": "uploads/d1/doc.pdf", "volume_source": "upload"},
+            ),
+            patch("app.api.documents.documents_repo.update_document_metadata"),
             patch("app.api.documents.asyncio.create_task", mock_create_task),
         ):
-            result = await upload_document(file, org_id="org1")
+            result = await upload_document(file, org_id="org1", process=True)
 
         mock_create_task.assert_called_once()
-        task.add_done_callback.assert_called_once()
-        assert result == {"doc_id": "d1", "filename": "doc.pdf", "status": "uploading"}
+        assert result == {"doc_id": "d1", "filename": "doc.pdf", "status": "uploading", "volume_path": "uploads/d1/doc.pdf"}
+
+
+class TestPrepareDocument:
+    @pytest.mark.asyncio
+    async def test_prepare_staged_document_queues_processing(self):
+        task = MagicMock()
+        mock_create_task = MagicMock(side_effect=lambda coro: (coro.close(), task)[1])
+
+        with (
+            patch(
+                "app.api.documents.documents_repo.get_document",
+                side_effect=[
+                    {
+                        "_key": "d1",
+                        "filename": "doc.pdf",
+                        "mime_type": "application/pdf",
+                        "status": "staged",
+                        "metadata": {"volume_relative_path": "uploads/d1/doc.pdf"},
+                    },
+                    {"_key": "d1", "status": "uploading", "metadata": {"volume_relative_path": "uploads/d1/doc.pdf"}},
+                ],
+            ),
+            patch(
+                "app.api.documents.read_staged_document_bytes",
+                return_value=(b"%PDF", "doc.pdf", "application/pdf"),
+            ),
+            patch("app.api.documents.documents_repo.delete_chunks_for_document"),
+            patch("app.api.documents.documents_repo.update_document_status"),
+            patch("app.api.documents.asyncio.create_task", mock_create_task),
+        ):
+            result = await prepare_document("d1")
+
+        mock_create_task.assert_called_once()
+        assert result["doc_id"] == "d1"
+        assert result["volume_path"] == "uploads/d1/doc.pdf"
 
 
 class TestDocumentRoutes:

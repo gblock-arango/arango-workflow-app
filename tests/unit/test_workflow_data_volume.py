@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -48,3 +49,32 @@ def test_seed_builtin_writes_domain_subdirs(monkeypatch, tmp_path):
     manifest = Path(result["destination"]) / ".seed_manifest.json"
     assert manifest.is_file()
     assert "cyber" not in result["domains"]
+
+
+def test_list_files_falls_back_to_files_api_when_unmounted(monkeypatch):
+    monkeypatch.setenv("ARANGO_REGISTRY_TABLE", "workspace.default.arango_connection_registry")
+    monkeypatch.setenv("UC_GRAPH_VOLUME_NAME", "arango_workflow_volume")
+    monkeypatch.setattr(vol, "local_mount_available", lambda: False)
+
+    entry = MagicMock()
+    entry.is_directory = False
+    entry.name = "sample.md"
+    entry.path = (
+        "/Volumes/workspace/default/arango_workflow_volume/workflow-data/builtin/financial/sample.md"
+    )
+    entry.file_size = 42
+
+    mock_files = MagicMock()
+    mock_files.list_directory_contents.return_value = [entry]
+    mock_client = MagicMock()
+    mock_client.files = mock_files
+
+    with patch(
+        "databricks.sdk.WorkspaceClient",
+        return_value=mock_client,
+    ):
+        files = vol.list_files(prefix="builtin", max_entries=10)
+
+    assert len(files) == 1
+    assert files[0]["path"] == "builtin/financial/sample.md"
+    assert files[0]["name"] == "sample.md"

@@ -147,6 +147,11 @@ resources:
     sql_warehouse:
       id: ${DATABRICKS_SQL_WAREHOUSE_ID}
       permission: CAN_USE
+  - name: workflow-volume
+    uc_securable:
+      securable_type: VOLUME
+      securable_full_name: workspace.default.arango_workflow_volume
+      permission: WRITE_VOLUME
   - name: mcp-arango-agent-invoke
     app:
       name: mcp-arango-agent

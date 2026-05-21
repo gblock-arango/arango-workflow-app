@@ -102,47 +102,69 @@ def _batch_edge_counts_for_ontology_ids(db: Any, ontology_ids: list[str]) -> dic
 # ---------------------------------------------------------------------------
 
 
+def _list_ontology_library_sync(
+    *,
+    cursor: str | None,
+    limit: int,
+    tag: str | None,
+    include_edge_counts: bool,
+) -> dict[str, Any]:
+    entries, next_cursor = registry_repo.list_registry_entries(cursor=cursor, limit=limit)
+    db = get_db()
+    has_col = db.has_collection("ontology_registry")
+    total_count = db.collection("ontology_registry").count() if has_col else 0
+
+    if tag:
+        entries = [e for e in entries if tag in (e.get("tags") or [])]
+
+    batch_counts: dict[str, int] = {}
+    if include_edge_counts:
+        oids = [str(e.get("_key", "")) for e in entries if e.get("_key")]
+        batch_counts = _batch_edge_counts_for_ontology_ids(db, oids)
+
+    for entry in entries:
+        entry.setdefault("tags", [])
+        oid = entry.get("_key", "")
+        entry.setdefault("edge_count", batch_counts.get(oid, 0) if oid else 0)
+        entry.setdefault("updated_at", entry.get("created_at"))
+        entry.setdefault("last_updated", entry.get("updated_at") or entry.get("created_at"))
+        if oid and include_edge_counts:
+            entry["edge_count"] = batch_counts.get(oid, 0)
+        # File imports historically stored only ``label``; UI and APIs expect ``name``.
+        raw_name = entry.get("name")
+        if raw_name is None or (isinstance(raw_name, str) and not raw_name.strip()):
+            fallback = entry.get("label") or oid or "Ontology"
+            entry["name"] = str(fallback).strip() or "Ontology"
+        if entry.get("tier") not in ("domain", "local"):
+            entry["tier"] = "local"
+
+    return {
+        "data": entries,
+        "cursor": next_cursor,
+        "has_more": next_cursor is not None,
+        "total_count": total_count,
+    }
+
+
 @router.get("/library")
 async def list_ontology_library(
     cursor: str | None = Query(None, description="Pagination cursor from previous response"),
     limit: int = Query(25, ge=1, le=100, description="Page size"),
     tag: str | None = Query(None, description="Filter by tag"),
+    include_edge_counts: bool = Query(
+        True,
+        description="When false, skip edge-count AQL (faster for home-page stats)",
+    ),
 ) -> dict[str, Any]:
     """List all ontologies in the registry with cursor-based pagination."""
     try:
-        entries, next_cursor = registry_repo.list_registry_entries(cursor=cursor, limit=limit)
-        db = get_db()
-        has_col = db.has_collection("ontology_registry")
-        total_count = db.collection("ontology_registry").count() if has_col else 0
-
-        if tag:
-            entries = [e for e in entries if tag in (e.get("tags") or [])]
-
-        oids = [str(e.get("_key", "")) for e in entries if e.get("_key")]
-        batch_counts = _batch_edge_counts_for_ontology_ids(db, oids)
-
-        for entry in entries:
-            entry.setdefault("tags", [])
-            oid = entry.get("_key", "")
-            entry.setdefault("edge_count", 0)
-            entry.setdefault("updated_at", entry.get("created_at"))
-            entry.setdefault("last_updated", entry.get("updated_at") or entry.get("created_at"))
-            if oid:
-                entry["edge_count"] = batch_counts.get(oid, 0)
-            # File imports historically stored only ``label``; UI and APIs expect ``name``.
-            raw_name = entry.get("name")
-            if raw_name is None or (isinstance(raw_name, str) and not raw_name.strip()):
-                fallback = entry.get("label") or oid or "Ontology"
-                entry["name"] = str(fallback).strip() or "Ontology"
-            if entry.get("tier") not in ("domain", "local"):
-                entry["tier"] = "local"
-
-        return {
-            "data": entries,
-            "cursor": next_cursor,
-            "has_more": next_cursor is not None,
-            "total_count": total_count,
-        }
+        return await asyncio.to_thread(
+            _list_ontology_library_sync,
+            cursor=cursor,
+            limit=limit,
+            tag=tag,
+            include_edge_counts=include_edge_counts,
+        )
     except Exception as exc:
         log.exception("Failed to list ontology library")
         raise HTTPException(status_code=500, detail="Internal server error") from exc

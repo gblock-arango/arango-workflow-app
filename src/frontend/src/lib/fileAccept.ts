@@ -10,10 +10,19 @@ export const ONTOLOGY_IMPORT_FILE_ACCEPT =
   ".jsonld,.json-ld,.json,.ttl,.turtle,.owl,.rdf,.n3,.nt,.xml,.skos," +
   "application/ld+json,application/json,text/turtle,application/rdf+xml";
 
-/** Document ingest tab — JSON/JSON-LD route to ontology import after pick. */
+/** Document ingest (PDF, Office, Markdown) — not ontology graph formats. */
 export const DOCUMENT_UPLOAD_FILE_ACCEPT =
-  ".pdf,.docx,.pptx,.md,.markdown,.json,.jsonld,.json-ld," +
-  "application/pdf,application/ld+json,application/json,text/markdown";
+  ".pdf,.docx,.pptx,.md,.markdown,application/pdf,text/markdown";
+
+/** Unified upload page: documents + ontology files (type chosen by extension). */
+export const UNIFIED_UPLOAD_FILE_ACCEPT =
+  `${DOCUMENT_UPLOAD_FILE_ACCEPT},${ONTOLOGY_IMPORT_FILE_ACCEPT}`;
+
+export type UploadFileKind = "ontology" | "document";
+
+export function getUploadFileKind(filename: string): UploadFileKind {
+  return isOntologyImportFilename(filename) ? "ontology" : "document";
+}
 
 export function isOntologyImportFilename(filename: string): boolean {
   const lower = filename.toLowerCase();

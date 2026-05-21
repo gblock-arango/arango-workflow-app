@@ -43,7 +43,7 @@ import type { StepStatus } from "@/types/pipeline";
 import type { AgentDAGApi } from "@/components/pipeline/AgentDAG";
 import { filterStepsByTimestamp } from "@/lib/filterStepsByTimestamp";
 import { buildStepTimelineEvents } from "@/lib/buildStepTimelineEvents";
-import { backendUrl } from "@/lib/api-client";
+import { apiFetch } from "@/lib/api-client";
 import type {
   OntologyRegistryEntry,
   OntologyClass,
@@ -125,7 +125,13 @@ const DEFAULT_RIGHT_DOCK_WIDTH = 380;
 
 export default function WorkspacePage() {
   return (
-    <Suspense>
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-500">
+          Loading dashboard…
+        </main>
+      }
+    >
       <WorkspacePageInner />
     </Suspense>
   );
@@ -261,7 +267,7 @@ function WorkspacePageInner() {
 
     async function load() {
       try {
-        const res = await fetch(backendUrl(`/api/v1/extraction/runs/${pipelineRunId}`));
+        const res = await apiFetch(`/api/v1/extraction/runs/${pipelineRunId}`);
         if (!res.ok || cancelled) return;
         const run = await res.json();
 

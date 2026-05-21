@@ -1,4 +1,4 @@
-import { isOntologyImportFilename } from "@/lib/fileAccept";
+import { getUploadFileKind, isOntologyImportFilename } from "@/lib/fileAccept";
 
 describe("isOntologyImportFilename", () => {
   it.each([
@@ -13,5 +13,14 @@ describe("isOntologyImportFilename", () => {
 
   it.each(["report.pdf", "notes.md", "data.csv"])("returns false for %s", (name) => {
     expect(isOntologyImportFilename(name)).toBe(false);
+  });
+});
+
+describe("getUploadFileKind", () => {
+  it("maps ontology extensions", () => {
+    expect(getUploadFileKind("schema.ttl")).toBe("ontology");
+  });
+  it("maps document extensions", () => {
+    expect(getUploadFileKind("report.pdf")).toBe("document");
   });
 });

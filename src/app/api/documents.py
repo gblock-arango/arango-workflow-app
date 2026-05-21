@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, UploadFile
 from pydantic import BaseModel, Field
@@ -26,6 +26,7 @@ from app.services.workflow_data import (
     browse_volume,
     ingest_file_from_volume,
     persist_upload,
+    read_staged_document_bytes,
     workflow_data_status,
 )
 from app.tasks import process_document
@@ -95,13 +96,14 @@ def _resolve_duplicate_hash(file_hash: str) -> None:
     if not existing:
         return
     prior_status = existing.get("status")
-    if prior_status == DocumentStatus.FAILED:
+    if prior_status in (DocumentStatus.FAILED, DocumentStatus.STAGED):
         prior_id = existing["_key"]
         chunks_removed = documents_repo.delete_chunks_for_document(prior_id)
         documents_repo.hard_delete_document(prior_id)
         log.info(
-            "discarded prior FAILED document %s (chunks_removed=%d) "
+            "discarded prior %s document %s (chunks_removed=%d) "
             "to allow re-upload of identical content (hash=%s)",
+            prior_status,
             prior_id,
             chunks_removed,
             file_hash,
@@ -117,16 +119,21 @@ def _resolve_duplicate_hash(file_hash: str) -> None:
     )
 
 
-def _persist_upload_metadata(doc_id: str, filename: str, content: bytes) -> dict[str, Any]:
-    """Write bytes to UC volume; return metadata dict (may be empty if volume unavailable)."""
+def _persist_upload_metadata(
+    doc_id: str,
+    filename: str,
+    content: bytes,
+    *,
+    required: bool = True,
+) -> dict[str, Any]:
+    """Write bytes to UC volume; return metadata dict with ``volume_relative_path``."""
     try:
         rel = persist_upload(doc_id=doc_id, filename=filename, content=content)
         return {"volume_relative_path": rel, "volume_source": "upload"}
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        if required:
+            raise ValidationError(f"Could not save file to UC volume: {exc}") from exc
         log.warning("Could not persist upload to UC volume for %s: %s", doc_id, exc)
-        return {}
-    except ValueError as exc:
-        log.warning("Invalid volume path for upload %s: %s", doc_id, exc)
         return {}
 
 
@@ -159,9 +166,18 @@ def _to_doc_response(doc: dict[str, Any]) -> dict[str, Any]:
 @router.post("/upload")
 async def upload_document(
     file: UploadFile,
-    org_id: str | None = Query(default=None),
+    org_id: Annotated[str | None, Query()] = None,
+    process: Annotated[
+        bool,
+        Query(
+            description=(
+                "When true, run parse/chunk/embed immediately after saving to the UC volume. "
+                "Default false: file is staged under workflow-data/uploads/ only."
+            ),
+        ),
+    ] = False,
 ) -> dict[str, Any]:
-    """Upload a document and start async processing pipeline."""
+    """Save upload to UC workflow-data; optionally start parse/chunk/embed."""
     content = await file.read()
     mime = _validate_mime(file)
 
@@ -169,23 +185,31 @@ async def upload_document(
     _resolve_duplicate_hash(file_hash)
 
     filename = file.filename or "untitled"
+    initial_status = DocumentStatus.UPLOADING if process else DocumentStatus.STAGED
     doc = documents_repo.create_document(
         filename=filename,
         mime_type=mime,
         file_hash=file_hash,
         org_id=org_id,
+        status=initial_status,
     )
     doc_id = doc["_key"]
-    volume_meta = _persist_upload_metadata(doc_id=doc_id, filename=filename, content=content)
-    if volume_meta:
-        documents_repo.update_document_metadata(doc_id, metadata=volume_meta)
+    try:
+        volume_meta = _persist_upload_metadata(doc_id=doc_id, filename=filename, content=content)
+    except ValidationError:
+        documents_repo.hard_delete_document(doc_id)
+        raise
+    documents_repo.update_document_metadata(doc_id, metadata=volume_meta)
 
-    _queue_processing(doc_id, content, mime)
+    if process:
+        _queue_processing(doc_id, content, mime)
+    else:
+        documents_repo.update_document_status(doc_id, DocumentStatus.STAGED)
 
     out: dict[str, Any] = {
         "doc_id": doc_id,
         "filename": doc["filename"],
-        "status": doc["status"],
+        "status": DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value,
     }
     if volume_meta.get("volume_relative_path"):
         out["volume_path"] = volume_meta["volume_relative_path"]
@@ -214,9 +238,15 @@ async def volume_browse(
 @router.post("/ingest-from-volume")
 async def ingest_from_volume(
     body: IngestFromVolumeBody,
-    org_id: str | None = Query(default=None),
+    org_id: Annotated[str | None, Query()] = None,
+    process: Annotated[
+        bool,
+        Query(
+            description="When true, run parse/chunk/embed after copying into workflow-data/uploads/."
+        ),
+    ] = False,
 ) -> dict[str, Any]:
-    """Ingest a document from UC workflow-data (no local file picker)."""
+    """Register a UC workflow-data file and copy it under uploads/<doc-id>/ (no local picker)."""
     try:
         content, filename, mime = ingest_file_from_volume(relative_path=body.path)
     except FileNotFoundError as exc:
@@ -229,23 +259,89 @@ async def ingest_from_volume(
 
     rel = body.path.strip().lstrip("/")
     source = "builtin" if rel.startswith("builtin/") else "upload"
+    initial_status = DocumentStatus.UPLOADING if process else DocumentStatus.STAGED
 
     doc = documents_repo.create_document(
         filename=filename,
         mime_type=mime,
         file_hash=file_hash,
         org_id=org_id,
-        metadata={"volume_relative_path": rel, "volume_source": source},
+        status=initial_status,
     )
-    _queue_processing(doc["_key"], content, mime)
-
-    return {
-        "doc_id": doc["_key"],
-        "filename": doc["filename"],
-        "status": doc["status"],
-        "volume_path": rel,
+    doc_id = doc["_key"]
+    try:
+        upload_rel = _persist_upload_metadata(doc_id=doc_id, filename=filename, content=content)
+    except ValidationError:
+        documents_repo.hard_delete_document(doc_id)
+        raise
+    volume_meta = {
+        **upload_rel,
+        "volume_source_path": rel,
         "volume_source": source,
     }
+    documents_repo.update_document_metadata(doc_id, metadata=volume_meta)
+
+    if process:
+        _queue_processing(doc_id, content, mime)
+    else:
+        documents_repo.update_document_status(doc_id, DocumentStatus.STAGED)
+
+    return {
+        "doc_id": doc_id,
+        "filename": doc["filename"],
+        "status": DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value,
+        "volume_path": upload_rel.get("volume_relative_path"),
+        "volume_source": source,
+        "volume_source_path": rel,
+    }
+
+
+_PREPARE_ALLOWED = frozenset(
+    {
+        DocumentStatus.STAGED,
+        DocumentStatus.FAILED,
+        DocumentStatus.UPLOADING,
+    }
+)
+
+
+@router.post("/{doc_id}/prepare")
+async def prepare_document(doc_id: str) -> dict[str, Any]:
+    """Parse, chunk, and embed a staged document (reads bytes from UC workflow-data/uploads/)."""
+    doc = get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
+    status = doc.get("status", "")
+    if status == DocumentStatus.READY:
+        raise ValidationError("Document is already prepared (status=ready)")
+    if status in (
+        DocumentStatus.PARSING,
+        DocumentStatus.CHUNKING,
+        DocumentStatus.EMBEDDING,
+    ):
+        raise ConflictError(f"Document is already processing (status={status})")
+    if status not in _PREPARE_ALLOWED:
+        raise ValidationError(f"Cannot prepare document with status={status}")
+
+    try:
+        content, filename, mime = read_staged_document_bytes(doc)
+    except FileNotFoundError as exc:
+        raise ValidationError(str(exc)) from exc
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+
+    documents_repo.delete_chunks_for_document(doc_id)
+    documents_repo.update_document_status(doc_id, DocumentStatus.UPLOADING)
+    _queue_processing(doc_id, content, mime)
+
+    updated = documents_repo.get_document(doc_id)
+    out: dict[str, Any] = {
+        "doc_id": doc_id,
+        "filename": filename,
+        "status": (updated or doc).get("status", DocumentStatus.UPLOADING.value),
+    }
+    meta = (updated or doc).get("metadata") or {}
+    if meta.get("volume_relative_path"):
+        out["volume_path"] = meta["volume_relative_path"]
+    return out
 
 
 @router.get("")
@@ -314,7 +410,9 @@ async def update_document(
     documents_repo.delete_chunks_for_document(doc_id)
 
     filename = file.filename or doc.get("filename", "untitled")
-    volume_meta = _persist_upload_metadata(doc_id=doc_id, filename=filename, content=content)
+    volume_meta = _persist_upload_metadata(
+        doc_id=doc_id, filename=filename, content=content, required=False
+    )
     documents_repo.update_document_metadata(
         doc_id,
         filename=filename,

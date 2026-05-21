@@ -58,6 +58,9 @@ export class ApiError extends Error {
  */
 export const DEFAULT_BACKEND_ORIGIN = "http://127.0.0.1:8010";
 
+/** Default client timeout so a stuck Arango/gateway call does not freeze the UI. */
+export const DEFAULT_API_TIMEOUT_MS = 45_000;
+
 /**
  * Use same-origin `/api/*` (Next.js rewrite → FastAPI) when local dev would
  * otherwise send traffic to port 8000 — commonly occupied by a non-AOE service.
@@ -124,9 +127,18 @@ export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
+  const timeoutSignal =
+    !init?.signal &&
+    typeof AbortSignal !== "undefined" &&
+    "timeout" in AbortSignal
+      ? AbortSignal.timeout(DEFAULT_API_TIMEOUT_MS)
+      : undefined;
+  const signal = init?.signal ?? timeoutSignal;
+
   return fetch(backendUrl(path), {
     ...init,
     headers,
+    signal,
     credentials: init?.credentials ?? "same-origin",
   });
 }
@@ -197,10 +209,19 @@ class ApiClient {
     signal?: AbortSignal,
   ): Promise<T> {
     const url = buildApiUrl(this.baseUrl, path);
+    const timeoutSignal =
+      !signal &&
+      typeof AbortSignal !== "undefined" &&
+      "timeout" in AbortSignal
+        ? AbortSignal.timeout(DEFAULT_API_TIMEOUT_MS)
+        : undefined;
+    const mergedSignal = signal ?? timeoutSignal;
+
     const init: RequestInit = {
       method,
       headers: this.getHeaders(),
-      signal,
+      signal: mergedSignal,
+      credentials: "same-origin",
     };
     if (body !== undefined) {
       init.body = JSON.stringify(body);

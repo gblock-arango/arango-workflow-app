@@ -109,27 +109,60 @@ def is_allowed_document_file(name: str) -> bool:
 
 def write_bytes(*, relative_path: str, content: bytes) -> str:
     """Write file under workflow-data; returns normalized relative path."""
-    dest = resolve_under_workflow_data(relative_path)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(content)
-    root = workflow_data_root().resolve()
-    return str(dest.resolve().relative_to(root)).replace("\\", "/")
+    rel = safe_relative_path(relative_path)
+    if local_mount_available():
+        dest = resolve_under_workflow_data(rel)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content)
+        root = workflow_data_root().resolve()
+        return str(dest.resolve().relative_to(root)).replace("\\", "/")
+
+    from io import BytesIO
+
+    from databricks.sdk import WorkspaceClient
+
+    abs_path = f"{workflow_data_root_uc_path()}/{rel}"
+    WorkspaceClient().files.upload(abs_path, BytesIO(content), overwrite=True)
+    return rel
 
 
 def read_bytes(relative_path: str) -> bytes:
-    return resolve_under_workflow_data(relative_path).read_bytes()
+    rel = safe_relative_path(relative_path)
+    if local_mount_available():
+        return resolve_under_workflow_data(rel).read_bytes()
+
+    from databricks.sdk import WorkspaceClient
+
+    abs_path = f"{workflow_data_root_uc_path()}/{rel}"
+    resp = WorkspaceClient().files.download(abs_path)
+    if not resp.contents:
+        raise FileNotFoundError(rel)
+    return resp.contents.read()
 
 
-def list_files(*, prefix: str = "", max_entries: int = 500) -> list[dict[str, Any]]:
-    """
-    List ingestible files under ``prefix`` (e.g. ``builtin`` or ``builtin/financial``).
+def local_mount_available() -> bool:
+    """True when ``/Volumes/.../workflow-data`` is mounted in the app runtime."""
+    return workflow_data_root().is_dir()
 
-    Returns dicts: path (relative to workflow-data), name, size, category (builtin|upload).
-    """
+
+def workflow_data_root_uc_path() -> str:
+    """Absolute UC path string for Files API calls (no trailing slash)."""
+    return str(workflow_data_root()).rstrip("/")
+
+
+def _rel_from_uc_absolute(abs_path: str) -> str | None:
+    root = workflow_data_root_uc_path()
+    normalized = (abs_path or "").replace("\\", "/").rstrip("/")
+    if normalized == root:
+        return ""
+    prefix = f"{root}/"
+    if not normalized.startswith(prefix):
+        return None
+    return normalized[len(prefix) :]
+
+
+def _list_files_local(*, prefix: str, max_entries: int) -> list[dict[str, Any]]:
     root = workflow_data_root()
-    if not root.is_dir():
-        return []
-
     base = resolve_under_workflow_data(prefix) if prefix else root
     if not base.is_dir():
         return []
@@ -159,6 +192,84 @@ def list_files(*, prefix: str = "", max_entries: int = 500) -> list[dict[str, An
                 }
             )
     return entries
+
+
+def _list_files_via_files_api(*, prefix: str, max_entries: int) -> list[dict[str, Any]]:
+    """List workflow-data files via Databricks Files API (works without /Volumes mount)."""
+    from databricks.sdk import WorkspaceClient
+    from databricks.sdk.errors import NotFound
+
+    root = workflow_data_root_uc_path()
+    base = f"{root}/{safe_relative_path(prefix)}" if prefix else root
+    client = WorkspaceClient()
+    entries: list[dict[str, Any]] = []
+    dirs: list[str] = [base]
+    seen: set[str] = set()
+
+    while dirs and len(entries) < max_entries:
+        current = dirs.pop(0)
+        if current in seen:
+            continue
+        seen.add(current)
+        try:
+            children = list(client.files.list_directory_contents(current))
+        except NotFound:
+            continue
+        except Exception as exc:
+            logger.warning("Files API list failed for %s: %s", current, exc)
+            continue
+
+        subdirs: list[str] = []
+        files: list[Any] = []
+        for child in children:
+            if child.is_directory:
+                subdirs.append(child.path or f"{current}/{child.name}")
+            else:
+                files.append(child)
+
+        for child in sorted(files, key=lambda c: (c.name or "")):
+            if len(entries) >= max_entries:
+                return entries
+            name = child.name or ""
+            if not is_allowed_document_file(name):
+                continue
+            abs_path = child.path or f"{current}/{name}"
+            rel = _rel_from_uc_absolute(abs_path)
+            if rel is None:
+                continue
+            category = UPLOADS_SUBDIR if rel.startswith(f"{UPLOADS_SUBDIR}/") else BUILTIN_SUBDIR
+            entries.append(
+                {
+                    "path": rel,
+                    "name": name,
+                    "size_bytes": child.file_size or 0,
+                    "category": category,
+                    "mime_type": mime_for_filename(name),
+                }
+            )
+
+        for sub in sorted(subdirs):
+            dirs.append(sub)
+
+    return entries
+
+
+def list_files(*, prefix: str = "", max_entries: int = 500) -> list[dict[str, Any]]:
+    """
+    List ingestible files under ``prefix`` (e.g. ``builtin`` or ``builtin/financial``).
+
+    Uses the local ``/Volumes`` mount when present; otherwise falls back to the Files API
+    (same path the deploy seed script uses).
+    """
+    if local_mount_available():
+        local_entries = _list_files_local(prefix=prefix, max_entries=max_entries)
+        if local_entries:
+            return local_entries
+    try:
+        return _list_files_via_files_api(prefix=prefix, max_entries=max_entries)
+    except Exception as exc:
+        logger.warning("Files API browse failed for prefix=%s: %s", prefix, exc)
+        return []
 
 
 def save_upload(*, doc_id: str, filename: str, content: bytes) -> str:

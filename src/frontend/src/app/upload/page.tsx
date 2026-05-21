@@ -5,10 +5,32 @@ import { api, apiFetch } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import AppHeader from "@/components/layout/AppHeader";
 import {
-  DOCUMENT_UPLOAD_FILE_ACCEPT,
+  getUploadFileKind,
   isOntologyImportFilename,
-  ONTOLOGY_IMPORT_FILE_ACCEPT,
+  type UploadFileKind,
+  UNIFIED_UPLOAD_FILE_ACCEPT,
 } from "@/lib/fileAccept";
+
+function UploadFileKindBadge({ kind }: { kind: UploadFileKind }) {
+  if (kind === "ontology") {
+    return (
+      <span
+        className="inline-flex shrink-0 items-center rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800"
+        title="Direct graph import (no parse/chunk step)"
+      >
+        Ontology
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-800"
+      title="Parse & chunk, then Extract when status is ready"
+    >
+      Document
+    </span>
+  );
+}
 
 interface UploadResult {
   doc_id: string;
@@ -51,34 +73,35 @@ interface ExtractionRunResponse {
   run_id?: string;
 }
 
-type UploadState = "idle" | "uploading" | "extracting" | "success" | "error";
+type UploadState = "idle" | "uploading" | "success" | "error";
 
 export default function UploadPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [result, setResult] = useState<UploadResult | null>(null);
-  const [extractionRunId, setExtractionRunId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [documents, setDocuments] = useState<DocumentEntry[]>([]);
   const [docsLoaded, setDocsLoaded] = useState(false);
   const [extractingDocs, setExtractingDocs] = useState<Set<string>>(new Set());
+  const [preparingDocs, setPreparingDocs] = useState<Set<string>>(new Set());
   const [ontologyOptions, setOntologyOptions] = useState<OntologyOption[]>([]);
   const [targetOntologyId, setTargetOntologyId] = useState<string>("");
   const [docOntologies, setDocOntologies] = useState<Record<string, { _key: string; name: string }[]>>({});
-  const [mode, setMode] = useState<"extract" | "import">("extract");
   const [importState, setImportState] = useState<
     "idle" | "uploading" | "processing" | "success" | "error"
   >("idle");
   const [importName, setImportName] = useState("");
   const [importResult, setImportResult] = useState<ImportResultData | null>(null);
   const [importError, setImportError] = useState("");
-  const importFileRef = useRef<HTMLInputElement>(null);
   const [builtinFiles, setBuiltinFiles] = useState<VolumeFileEntry[]>([]);
   const [builtinLoaded, setBuiltinLoaded] = useState(false);
   const [builtinIngesting, setBuiltinIngesting] = useState<string | null>(null);
   const [volumeBuiltinPath, setVolumeBuiltinPath] = useState("");
   const [volumeUploadsHint, setVolumeUploadsHint] = useState("");
+  const [volumeAccessMode, setVolumeAccessMode] = useState<string>("");
+  const [volumeReachable, setVolumeReachable] = useState<boolean | null>(null);
+  const [builtinLoadError, setBuiltinLoadError] = useState("");
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -123,6 +146,9 @@ export default function UploadPage() {
         builtin_uc_path?: string;
         workflow_data_root?: string;
         uploads_subdir?: string;
+        access_mode?: string;
+        exists?: boolean;
+        files_api_reachable?: boolean;
       }>("/api/v1/documents/volume/status");
       if (status.builtin_uc_path) {
         setVolumeBuiltinPath(status.builtin_uc_path);
@@ -132,19 +158,43 @@ export default function UploadPage() {
           `${status.workflow_data_root}/${status.uploads_subdir}/<doc-id>/`,
         );
       }
+      if (status.access_mode) {
+        setVolumeAccessMode(status.access_mode);
+      }
+      if (typeof status.exists === "boolean") {
+        setVolumeReachable(status.exists);
+      }
     } catch {
       /* non-critical */
     }
   }, []);
 
   const loadBuiltinFiles = useCallback(async () => {
+    setBuiltinLoadError("");
     try {
-      const res = await api.get<{ files: VolumeFileEntry[] }>(
-        "/api/v1/documents/volume/browse?prefix=builtin",
-      );
+      const res = await api.get<{
+        files: VolumeFileEntry[];
+        exists?: boolean;
+        access_mode?: string;
+        files_api_reachable?: boolean;
+      }>("/api/v1/documents/volume/browse?prefix=builtin");
       setBuiltinFiles(res.files ?? []);
-    } catch {
+      if (res.access_mode) {
+        setVolumeAccessMode(res.access_mode);
+      }
+      if (typeof res.exists === "boolean") {
+        setVolumeReachable(res.exists);
+      }
+      if ((res.files ?? []).length === 0 && res.exists === false) {
+        setBuiltinLoadError(
+          "Unity Catalog volume is not reachable from this app (check workflow-volume resource and READ/WRITE VOLUME grants).",
+        );
+      }
+    } catch (err) {
       setBuiltinFiles([]);
+      setBuiltinLoadError(
+        err instanceof Error ? err.message : "Failed to list built-in files from UC volume.",
+      );
     } finally {
       setBuiltinLoaded(true);
     }
@@ -259,6 +309,33 @@ export default function UploadPage() {
     throw new Error("Import timed out waiting for the server to finish");
   };
 
+  const prepareDocument = async (docId: string) => {
+    setPreparingDocs((prev) => new Set(prev).add(docId));
+    setErrorMsg("");
+    try {
+      const res = await apiFetch(`/api/v1/documents/${docId}/prepare`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(
+          err.detail ?? err.error?.message ?? `Prepare failed (${res.status})`,
+        );
+      }
+      await waitForDocumentReady(docId);
+      loadDocuments();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setUploadState("error");
+    } finally {
+      setPreparingDocs((prev) => {
+        const next = new Set(prev);
+        next.delete(docId);
+        return next;
+      });
+    }
+  };
+
   const extractDocument = async (docId: string) => {
     setExtractingDocs((prev) => new Set(prev).add(docId));
     const runId = await triggerExtraction(
@@ -304,15 +381,11 @@ export default function UploadPage() {
     throw new Error("Document processing timed out — please try extracting manually once it's ready.");
   };
 
-  const isJsonImportFile = (file: File) => isOntologyImportFilename(file.name);
-
   const ingestFromVolume = async (path: string, displayName: string) => {
     setBuiltinIngesting(path);
     setUploadState("uploading");
     setErrorMsg("");
     setResult(null);
-    setExtractionRunId(null);
-
     try {
       const res = await apiFetch("/api/v1/documents/ingest-from-volume", {
         method: "POST",
@@ -328,14 +401,6 @@ export default function UploadPage() {
       const data: UploadResult = await res.json();
       setResult({ ...data, filename: data.filename || displayName });
       loadDocuments();
-      await waitForDocumentReady(data.doc_id);
-      loadDocuments();
-      setUploadState("extracting");
-      const runId = await triggerExtraction(
-        data.doc_id,
-        targetOntologyId || undefined,
-      );
-      setExtractionRunId(runId);
       setUploadState("success");
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -346,20 +411,23 @@ export default function UploadPage() {
   };
 
   const uploadFile = async (file: File) => {
-    if (isJsonImportFile(file)) {
-      setMode("import");
+    if (isOntologyImportFilename(file.name)) {
       if (!importName.trim()) {
         setImportName(file.name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " "));
       }
+      setUploadState("idle");
+      setResult(null);
+      setErrorMsg("");
       await importOWLFile(file);
       return;
     }
 
+    setImportState("idle");
+    setImportResult(null);
+    setImportError("");
     setUploadState("uploading");
     setErrorMsg("");
     setResult(null);
-    setExtractionRunId(null);
-
     const formData = new FormData();
     formData.append("file", file);
 
@@ -379,17 +447,6 @@ export default function UploadPage() {
       const data: UploadResult = await res.json();
       setResult(data);
       loadDocuments();
-
-      // Wait for ingestion pipeline (parse → chunk → embed) to finish
-      await waitForDocumentReady(data.doc_id);
-      loadDocuments();
-
-      setUploadState("extracting");
-      const runId = await triggerExtraction(
-        data.doc_id,
-        targetOntologyId || undefined,
-      );
-      setExtractionRunId(runId);
       setUploadState("success");
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -412,154 +469,31 @@ export default function UploadPage() {
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">
       <AppHeader
-        title={mode === "extract" ? "Upload Document" : "Import Ontology"}
-        subtitle={
-          mode === "extract"
-            ? "Ingest documents for ontology extraction"
-            : "Import OWL, TTL, RDF, or graph/ontology JSON"
-        }
+        title="Upload Documents"
+        subtitle="Drop a file to auto-detect: documents (PDF, DOCX, PPTX, Markdown) are staged on the UC volume for parse/chunk and extract; ontology files (OWL, TTL, RDF, JSON-LD, …) import directly into the graph."
         contentClassName="max-w-4xl"
-        footer={
-          <div className="flex gap-4 pb-1">
-            <button
-              onClick={() => setMode("extract")}
-              className={`text-sm px-4 py-2 rounded-lg font-medium transition-colors ${mode === "extract" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
-            >
-              Extract from Document
-            </button>
-            <button
-              onClick={() => setMode("import")}
-              className={`text-sm px-4 py-2 rounded-lg font-medium transition-colors ${mode === "import" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
-            >
-              Import OWL / TTL / RDF / JSON
-            </button>
-          </div>
-        }
       />
 
       <div className="max-w-4xl mx-auto px-6 py-10 space-y-8">
 
-        {/* === IMPORT MODE === */}
-        {mode === "import" && (
-          <>
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-              <div>
-                <label htmlFor="import-name" className="block text-sm font-medium text-gray-700 mb-1">
-                  Ontology Name (optional)
-                </label>
-                <input
-                  id="import-name"
-                  type="text"
-                  value={importName}
-                  onChange={(e) => setImportName(e.target.value)}
-                  placeholder="e.g., FIBO Financial Instruments"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                />
-                <p className="mt-1 text-xs text-gray-400">
-                  If blank, the name will be derived from the file.
-                </p>
-              </div>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <label htmlFor="import-name" className="block text-sm font-medium text-gray-700 mb-1">
+            Ontology name (optional, RDF/OWL imports only)
+          </label>
+          <input
+            id="import-name"
+            type="text"
+            value={importName}
+            onChange={(e) => setImportName(e.target.value)}
+            placeholder="e.g., FIBO Financial Instruments"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-xs text-gray-400">
+            Used when you upload .ttl, .owl, .rdf, .jsonld, etc. Ignored for PDF and Office documents.
+          </p>
+        </div>
 
-              <div
-                onClick={() => importFileRef.current?.click()}
-                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.add("border-blue-500", "bg-blue-50"); }}
-                onDragLeave={(e) => { e.currentTarget.classList.remove("border-blue-500", "bg-blue-50"); }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.currentTarget.classList.remove("border-blue-500", "bg-blue-50");
-                  const file = e.dataTransfer.files?.[0];
-                  if (file) importOWLFile(file);
-                }}
-                className="border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors border-gray-300 bg-white hover:border-blue-400 hover:bg-blue-50"
-              >
-                <input
-                  ref={importFileRef}
-                  type="file"
-                  accept={ONTOLOGY_IMPORT_FILE_ACCEPT}
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) importOWLFile(file);
-                    e.target.value = "";
-                  }}
-                />
-                <div className="text-4xl text-gray-300 mb-3">🦉</div>
-                <p className="text-gray-600 font-medium">
-                  Drop an OWL, Turtle, RDF, SKOS, or JSON graph/ontology file here — or click to browse
-                </p>
-                <p className="text-sm text-gray-400 mt-1">
-                  Supported: .ttl, .owl, .rdf, .n3, .nt, .jsonld, .json, .xml, .skos
-                </p>
-              </div>
-            </div>
-
-            {importState === "uploading" && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
-                <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                <p className="text-blue-700 font-medium">Uploading file...</p>
-              </div>
-            )}
-
-            {importState === "processing" && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
-                <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                <p className="text-blue-700 font-medium">
-                  Importing ontology via ArangoRDF... this can take a few minutes for large files.
-                </p>
-              </div>
-            )}
-
-            {importState === "success" && importResult && (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <p className="text-green-700 font-medium">Import successful</p>
-                <div className="mt-2 text-sm text-green-600 space-y-1">
-                  {importResult.ontology_id && (
-                    <p><span className="font-mono">ontology_id:</span> {String(importResult.ontology_id)}</p>
-                  )}
-                  {importResult.name && (
-                    <p><span className="font-mono">name:</span> {String(importResult.name)}</p>
-                  )}
-                  {importResult.class_count != null && (
-                    <p><span className="font-mono">classes:</span> {String(importResult.class_count)}</p>
-                  )}
-                </div>
-                <div className="mt-3 flex gap-3">
-                  {importResult.ontology_id && (
-                    <a
-                      href={withBasePath(
-                        `/dashboard?ontologyId=${encodeURIComponent(String(importResult.ontology_id))}`,
-                      )}
-                      className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                    >
-                      Open in Dashboard
-                    </a>
-                  )}
-                  <a href={withBasePath("/library")} className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors">
-                    View in Library
-                  </a>
-                  {importResult.ontology_id && (
-                    <a href={withBasePath(`/ontology/edit?ontologyId=${importResult.ontology_id}`)} className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors">
-                      Edit Graph
-                    </a>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {importState === "error" && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <p className="text-red-700 font-medium">Import failed</p>
-                <p className="mt-1 text-sm text-red-600">{importError}</p>
-              </div>
-            )}
-          </>
-        )}
-
-        {/* === EXTRACT MODE === */}
-        {mode === "extract" && (
-        <>
-        {/* Target ontology selector */}
+        {/* Target ontology selector (document extraction) */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <label
             htmlFor="target-ontology"
@@ -607,9 +541,24 @@ export default function UploadPage() {
           {!builtinLoaded ? (
             <p className="text-sm text-gray-400">Loading volume catalog…</p>
           ) : builtinFiles.length === 0 ? (
-            <p className="text-sm text-gray-400">
-              No built-in files found yet. Redeploy the app or wait for startup seeding.
-            </p>
+            <div className="text-sm text-gray-400 space-y-1">
+              {builtinLoadError ? (
+                <p className="text-amber-700">{builtinLoadError}</p>
+              ) : (
+                <p>
+                  No built-in files found yet. Run{" "}
+                  <code className="text-gray-500">
+                    scripts/seed_workflow_volume_datasets.py --force
+                  </code>{" "}
+                  from deploy, or redeploy with startup seeding enabled.
+                </p>
+              )}
+              {volumeAccessMode === "files_api" && volumeReachable && (
+                <p className="text-xs">
+                  Listing via Databricks Files API (no local /Volumes mount).
+                </p>
+              )}
+            </div>
           ) : (
             <ul className="divide-y divide-gray-100 border border-gray-100 rounded-lg max-h-64 overflow-y-auto">
               {builtinFiles.map((f) => (
@@ -618,7 +567,10 @@ export default function UploadPage() {
                   className="flex items-center justify-between px-4 py-2.5 text-sm hover:bg-gray-50"
                 >
                   <div className="min-w-0 pr-3">
-                    <p className="font-medium text-gray-800 truncate">{f.name}</p>
+                    <p className="font-medium text-gray-800 truncate flex items-center gap-2">
+                      <span className="truncate">{f.name}</span>
+                      <UploadFileKindBadge kind={getUploadFileKind(f.name)} />
+                    </p>
                     <p className="text-xs text-gray-400 truncate">{f.path}</p>
                   </div>
                   <button
@@ -657,7 +609,7 @@ export default function UploadPage() {
           <input
             ref={fileRef}
             type="file"
-            accept={DOCUMENT_UPLOAD_FILE_ACCEPT}
+            accept={UNIFIED_UPLOAD_FILE_ACCEPT}
             onChange={handleFileSelect}
             className="hidden"
           />
@@ -666,7 +618,7 @@ export default function UploadPage() {
             Drop a file here or click to browse
           </p>
           <p className="mt-1 text-sm text-gray-400">
-            Supported formats: PDF, DOCX, PPTX, Markdown. Your file is copied to the UC volume
+            <strong>Documents:</strong> PDF, DOCX, PPTX, Markdown → saved to the UC volume
             {volumeUploadsHint ? (
               <>
                 {" "}
@@ -674,35 +626,98 @@ export default function UploadPage() {
               </>
             ) : (
               <> under workflow-data/uploads/</>
-            )}{" "}
-            by the API, then ingested into Arango.
+            )}
+            , then <strong>Parse &amp; chunk</strong> and <strong>Extract</strong>.
+            <br />
+            <strong>Ontology files:</strong> .ttl, .owl, .rdf, .n3, .nt, .jsonld, .json, .xml, .skos →
+            direct graph import (no chunking).
           </p>
         </div>
 
-        {/* Upload status */}
-        {uploadState === "uploading" && (
+        {importState === "uploading" && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
+            <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-blue-700 font-medium">Uploading ontology file…</p>
+          </div>
+        )}
+
+        {importState === "processing" && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
             <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
             <p className="text-blue-700 font-medium">
-              Uploading and processing document (parsing, chunking, embedding)…
+              Importing ontology via ArangoRDF… this can take a few minutes for large files.
             </p>
           </div>
         )}
 
-        {uploadState === "extracting" && (
-          <div className="bg-violet-50 border border-violet-200 rounded-lg p-4 flex items-center gap-3">
-            <div className="h-5 w-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-violet-700 font-medium">
-              Starting ontology extraction…
-            </p>
+        {importState === "success" && importResult && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <p className="text-green-700 font-medium">Ontology import successful</p>
+            <div className="mt-2 text-sm text-green-600 space-y-1">
+              {importResult.ontology_id && (
+                <p>
+                  <span className="font-mono">ontology_id:</span>{" "}
+                  {String(importResult.ontology_id)}
+                </p>
+              )}
+              {importResult.name && (
+                <p>
+                  <span className="font-mono">name:</span> {String(importResult.name)}
+                </p>
+              )}
+              {importResult.class_count != null && (
+                <p>
+                  <span className="font-mono">classes:</span> {String(importResult.class_count)}
+                </p>
+              )}
+            </div>
+            <div className="mt-3 flex gap-3">
+              {importResult.ontology_id && (
+                <a
+                  href={withBasePath(
+                    `/dashboard?ontologyId=${encodeURIComponent(String(importResult.ontology_id))}`,
+                  )}
+                  className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Open in Dashboard
+                </a>
+              )}
+              <a
+                href={withBasePath("/library")}
+                className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                View in Library
+              </a>
+              {importResult.ontology_id && (
+                <a
+                  href={withBasePath(`/ontology/edit?ontologyId=${importResult.ontology_id}`)}
+                  className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Edit Graph
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+
+        {importState === "error" && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-red-700 font-medium">Ontology import failed</p>
+            <p className="mt-1 text-sm text-red-600">{importError}</p>
+          </div>
+        )}
+
+        {/* Document upload status */}
+        {uploadState === "uploading" && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
+            <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-blue-700 font-medium">Saving file to UC volume…</p>
           </div>
         )}
 
         {uploadState === "success" && result && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <p className="text-green-700 font-medium">
-              Upload successful — extraction {extractionRunId ? "started" : "queued"}
-            </p>
+            <p className="text-green-700 font-medium">Saved to UC volume</p>
             <div className="mt-2 text-sm text-green-600 space-y-1">
               <p>
                 <span className="font-mono">doc_id:</span> {result.doc_id}
@@ -710,28 +725,16 @@ export default function UploadPage() {
               <p>
                 <span className="font-mono">filename:</span> {result.filename}
               </p>
-              {extractionRunId && (
+              {result.volume_path && (
                 <p>
-                  <span className="font-mono">run_id:</span> {extractionRunId}
+                  <span className="font-mono">volume_path:</span> {result.volume_path}
                 </p>
               )}
             </div>
-            <div className="mt-3 flex gap-3">
-              <a
-                href={withBasePath(
-                  extractionRunId ? `/pipeline?runId=${extractionRunId}` : "/pipeline",
-                )}
-                className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                View Extraction Pipeline →
-              </a>
-              <a
-                href={withBasePath("/library")}
-                className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Ontology Library
-              </a>
-            </div>
+            <p className="mt-2 text-sm text-green-700">
+              Use <strong>Parse &amp; chunk</strong> on the document below when ready, then{" "}
+              <strong>Extract</strong> after status is <code className="text-green-800">ready</code>.
+            </p>
           </div>
         )}
 
@@ -754,14 +757,18 @@ export default function UploadPage() {
               </p>
             ) : (
               <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100 shadow-sm">
-                {documents.map((doc) => (
+                {documents.map((doc) => {
+                  const fileKind = getUploadFileKind(doc.filename);
+                  const isDocument = fileKind === "document";
+                  return (
                   <div
                     key={doc._key}
                     className="px-5 py-4 flex items-center justify-between"
                   >
                     <div>
-                      <p className="font-medium text-gray-900">
-                        {doc.filename}
+                      <p className="font-medium text-gray-900 flex items-center gap-2">
+                        <span className="truncate">{doc.filename}</span>
+                        <UploadFileKindBadge kind={fileKind} />
                       </p>
                       <p className="text-xs text-gray-400 mt-0.5">
                         {doc.mime_type} · {doc.chunk_count} chunks ·{" "}
@@ -785,7 +792,27 @@ export default function UploadPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      {(doc.status === "ready" || doc.status === "processed") && (
+                      {isDocument &&
+                        (doc.status === "staged" ||
+                        doc.status === "failed" ||
+                        doc.status === "uploading") && (
+                        preparingDocs.has(doc._key) ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-amber-100 text-amber-800 rounded-lg font-medium">
+                            <span className="h-3 w-3 border-2 border-amber-600 border-t-transparent rounded-full animate-spin" />
+                            Parsing…
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => prepareDocument(doc._key)}
+                            className="text-xs px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors font-medium"
+                          >
+                            Parse &amp; chunk
+                          </button>
+                        )
+                      )}
+                      {isDocument &&
+                        (doc.status === "ready" || doc.status === "processed") && (
                         extractingDocs.has(doc._key) ? (
                           <span className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-violet-100 text-violet-700 rounded-lg font-medium">
                             <span className="h-3 w-3 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
@@ -793,6 +820,7 @@ export default function UploadPage() {
                           </span>
                         ) : (
                           <button
+                            type="button"
                             onClick={() => extractDocument(doc._key)}
                             className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
                           >
@@ -804,23 +832,27 @@ export default function UploadPage() {
                         className={`text-xs font-medium px-2.5 py-1 rounded-full ${
                           doc.status === "processed" || doc.status === "ready"
                             ? "bg-green-100 text-green-700"
-                            : doc.status === "processing"
-                              ? "bg-yellow-100 text-yellow-700"
-                              : doc.status === "error"
+                            : doc.status === "staged"
+                              ? "bg-sky-100 text-sky-800"
+                              : doc.status === "failed"
                                 ? "bg-red-100 text-red-700"
-                                : "bg-gray-100 text-gray-600"
+                                : doc.status === "parsing" ||
+                                    doc.status === "chunking" ||
+                                    doc.status === "embedding" ||
+                                    doc.status === "uploading"
+                                  ? "bg-yellow-100 text-yellow-700"
+                                  : "bg-gray-100 text-gray-600"
                         }`}
                       >
                         {doc.status}
                       </span>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>
-        )}
-        </>
         )}
       </div>
     </main>

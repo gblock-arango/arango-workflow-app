@@ -6,6 +6,7 @@ const mockFetch = jest.fn();
 beforeEach(() => {
   mockFetch.mockReset();
   globalThis.fetch = mockFetch;
+  sessionStorage.clear();
 });
 
 function stubHealthy() {
@@ -14,13 +15,19 @@ function stubHealthy() {
       return Promise.resolve({
         ok: true,
         status: 200,
-        json: () => Promise.resolve({ status: "ready", database: "connected" }),
+        json: () =>
+          Promise.resolve({
+            status: "ready",
+            database: "Arango 3.12.4",
+            gateway: "Gateway reachable",
+          }),
       });
     }
     return Promise.resolve({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({ data: [], total_count: 3, has_more: false, cursor: null }),
+      json: () =>
+        Promise.resolve({ data: [], total_count: 3, has_more: false, cursor: null }),
       headers: new Headers({ "content-type": "application/json" }),
     });
   });
@@ -30,13 +37,23 @@ function stubDown() {
   mockFetch.mockImplementation((url: string) => {
     if (typeof url === "string" && url.endsWith("/ready")) {
       return Promise.resolve({
-        ok: false,
-        status: 502,
+        ok: true,
+        status: 200,
         json: () =>
-          Promise.resolve({ status: "proxy_error", detail: "Cannot reach API" }),
+          Promise.resolve({
+            status: "not_ready",
+            database: "Gateway health HTTP 401",
+            gateway: "Gateway health HTTP 401",
+          }),
       });
     }
-    return Promise.reject(new TypeError("fetch failed"));
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({ data: [], total_count: 0, has_more: false, cursor: null }),
+      headers: new Headers({ "content-type": "application/json" }),
+    });
   });
 }
 
@@ -45,7 +62,7 @@ describe("Home page", () => {
     stubHealthy();
     render(<Home />);
     expect(
-      screen.getByRole("heading", { name: /arango-ontoextract/i }),
+      screen.getByRole("heading", { name: /Arango Graph-Accelerated Agents/i }),
     ).toBeInTheDocument();
   });
 
@@ -53,7 +70,7 @@ describe("Home page", () => {
     stubHealthy();
     render(<Home />);
     expect(
-      screen.getByText(/ontology extraction and curation platform/i),
+      screen.getByText(/RBAC-compliant graph knowledge/i),
     ).toBeInTheDocument();
   });
 
@@ -81,14 +98,16 @@ describe("Home page", () => {
     });
   });
 
-  it("calls /ready and library endpoints on mount", () => {
+  it("calls /ready and library endpoints on mount", async () => {
     stubHealthy();
     render(<Home />);
-    expect(
-      mockFetch.mock.calls.some(
-        ([u]) => typeof u === "string" && u.endsWith("/ready"),
-      ),
-    ).toBe(true);
+    await waitFor(() => {
+      expect(
+        mockFetch.mock.calls.some(
+          ([u]) => typeof u === "string" && u.endsWith("/ready"),
+        ),
+      ).toBe(true);
+    });
     const libraryCalls = mockFetch.mock.calls.filter(
       ([url]: [string]) =>
         typeof url === "string" && url.includes("/api/v1/ontology/library"),
