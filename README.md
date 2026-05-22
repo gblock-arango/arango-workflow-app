@@ -1,5 +1,7 @@
 # arango-workflow-app
 
+Credit: Arthur Keen - this dashboard UI is based on Arthur's onto-extractor repo.  I added components for Genie Chat integration and a framework for deploying on Databricks with the gateway and other apps.
+
 Unified **Databricks App**: FastAPI BFF + static Next.js UI (**OntoExtract**). Genie chat is proxied to [arango-mcp-app](../arango-mcp-app/); Arango data via [arango-gateway-app](../arango-gateway-app/) only.
 
 ## Deploy (primary path)
