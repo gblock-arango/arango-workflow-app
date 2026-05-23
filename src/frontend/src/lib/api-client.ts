@@ -49,6 +49,41 @@ export class ApiError extends Error {
   }
 }
 
+/** Parse AOE ``{ error: { message, details } }`` or FastAPI ``detail`` from a failed fetch. */
+export async function readApiErrorMessage(res: Response): Promise<string> {
+  try {
+    const json = (await res.json()) as {
+      error?: ApiErrorBody;
+      detail?: string | { msg?: string }[];
+    };
+    if (json.error?.message) {
+      const parts = [json.error.message];
+      const details = json.error.details;
+      if (details && typeof details === "object") {
+        const extra = Object.entries(details)
+          .filter(([, v]) => v != null && String(v).length > 0)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join("; ");
+        if (extra) parts.push(extra);
+      }
+      return parts.join(" — ");
+    }
+    if (typeof json.detail === "string") {
+      return json.detail;
+    }
+    if (Array.isArray(json.detail)) {
+      return json.detail.map((d) => d.msg ?? JSON.stringify(d)).join("; ");
+    }
+  } catch {
+    /* ignore */
+  }
+  const fallback = res.statusText?.trim();
+  if (fallback) {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+  return `Request failed with HTTP ${res.status}`;
+}
+
 // --- Client ---------------------------------------------------------------
 
 /**
@@ -60,6 +95,12 @@ export const DEFAULT_BACKEND_ORIGIN = "http://127.0.0.1:8010";
 
 /** Default client timeout so a stuck Arango/gateway call does not freeze the UI. */
 export const DEFAULT_API_TIMEOUT_MS = 45_000;
+
+/** UC volume ingest, file upload, and ontology import acceptance (server may still run longer). */
+export const LONG_RUNNING_API_TIMEOUT_MS = 300_000;
+
+/** UC volume browse on cold app start (Files API directory walk). */
+export const VOLUME_BROWSE_TIMEOUT_MS = 120_000;
 
 /**
  * Use same-origin `/api/*` (Next.js rewrite → FastAPI) when local dev would
@@ -121,7 +162,11 @@ function effectiveApiBaseUrl(): string {
  * Browser ``fetch`` to this app’s API (same-origin on Databricks Apps).
  * Adds auth token when present; does not set ``Content-Type`` (safe for ``FormData``).
  */
-export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+export function apiFetch(
+  path: string,
+  init?: RequestInit,
+  timeoutMs: number = DEFAULT_API_TIMEOUT_MS,
+): Promise<Response> {
   const headers = new Headers(init?.headers);
   const token = getToken();
   if (token && !headers.has("Authorization")) {
@@ -131,7 +176,7 @@ export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
     !init?.signal &&
     typeof AbortSignal !== "undefined" &&
     "timeout" in AbortSignal
-      ? AbortSignal.timeout(DEFAULT_API_TIMEOUT_MS)
+      ? AbortSignal.timeout(timeoutMs)
       : undefined;
   const signal = init?.signal ?? timeoutSignal;
 
@@ -141,6 +186,14 @@ export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
     signal,
     credentials: init?.credentials ?? "same-origin",
   });
+}
+
+/** Same as ``apiFetch`` with a 5-minute client timeout (volume / import acceptance). */
+export function apiFetchLongRunning(
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
+  return apiFetch(path, init, LONG_RUNNING_API_TIMEOUT_MS);
 }
 
 function resolveApiBaseUrl(baseUrl: string): string {
@@ -207,13 +260,14 @@ class ApiClient {
     path: string,
     body?: unknown,
     signal?: AbortSignal,
+    timeoutMs: number = DEFAULT_API_TIMEOUT_MS,
   ): Promise<T> {
     const url = buildApiUrl(this.baseUrl, path);
     const timeoutSignal =
       !signal &&
       typeof AbortSignal !== "undefined" &&
       "timeout" in AbortSignal
-        ? AbortSignal.timeout(DEFAULT_API_TIMEOUT_MS)
+        ? AbortSignal.timeout(timeoutMs)
         : undefined;
     const mergedSignal = signal ?? timeoutSignal;
 
@@ -246,12 +300,19 @@ class ApiClient {
     return res.json() as Promise<T>;
   }
 
-  async get<T>(path: string, opts?: { signal?: AbortSignal }): Promise<T> {
-    return this.request<T>("GET", path, undefined, opts?.signal);
+  async get<T>(
+    path: string,
+    opts?: { signal?: AbortSignal; timeoutMs?: number },
+  ): Promise<T> {
+    return this.request<T>("GET", path, undefined, opts?.signal, opts?.timeoutMs);
   }
 
-  async post<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }): Promise<T> {
-    return this.request<T>("POST", path, body, opts?.signal);
+  async post<T>(
+    path: string,
+    body?: unknown,
+    opts?: { signal?: AbortSignal; timeoutMs?: number },
+  ): Promise<T> {
+    return this.request<T>("POST", path, body, opts?.signal, opts?.timeoutMs);
   }
 
   async put<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }): Promise<T> {

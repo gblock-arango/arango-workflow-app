@@ -11,32 +11,36 @@ def workflow_data_status() -> dict[str, Any]:
     root = vol.workflow_data_root()
     builtin_root = vol.workflow_data_builtin_root()
     local_mount = vol.local_mount_available()
-    builtin_manifest = (builtin_root / vol.SEED_MANIFEST_NAME).is_file()
-    access_mode = "local_mount" if local_mount else "files_api"
+    files_api_io = vol.use_files_api_for_io()
+    manifest_path = vol.workflow_data_root() / vol.SEED_MANIFEST_REL
+    builtin_manifest = manifest_path.is_file() if local_mount and not files_api_io else False
+    access_mode = "files_api" if files_api_io else "local_mount"
     files_api_ok = False
-    if not local_mount:
-        try:
-            files_api_ok = len(vol.list_files(prefix=vol.BUILTIN_SUBDIR, max_entries=1)) > 0
-        except Exception:
-            files_api_ok = False
-    else:
-        files_api_ok = True
+    try:
+        files_api_ok = len(vol.list_files(prefix=vol.BUILTIN_SUBDIR, max_entries=1)) > 0
+    except Exception:
+        files_api_ok = False
+    if not files_api_io and local_mount:
+        builtin_manifest = manifest_path.is_file()
     return {
         "workflow_data_root": str(root),
         "builtin_root": str(builtin_root),
         "builtin_uc_path": vol.workflow_data_builtin_uc_path(),
         "uploads_subdir": vol.UPLOADS_SUBDIR,
         "volume_name": vol.uc_graph_volume_name(),
-        "exists": local_mount or files_api_ok,
+        "exists": files_api_ok or local_mount,
         "local_mount": local_mount,
         "access_mode": access_mode,
+        "io_mode": access_mode,
         "files_api_reachable": files_api_ok,
         "builtin_manifest": builtin_manifest,
     }
 
 
-def browse_volume(*, prefix: str = "builtin", limit: int = 500) -> list[dict[str, Any]]:
-    return vol.list_files(prefix=prefix, max_entries=limit)
+def browse_volume(
+    *, prefix: str = "builtin", limit: int = 500, file_kind: str = "all"
+) -> list[dict[str, Any]]:
+    return vol.list_files(prefix=prefix, max_entries=limit, file_kind=file_kind)
 
 
 def read_staged_document_bytes(doc: dict[str, Any]) -> tuple[bytes, str, str]:
@@ -58,18 +62,25 @@ def ingest_file_from_volume(*, relative_path: str) -> tuple[bytes, str, str]:
     """
     Read a file from workflow-data.
 
+    Uses the Databricks Files API when ``/Volumes`` is not mounted (same path
+    listing uses in ``list_files``), so browse + ingest stay consistent on Apps.
+
     Returns (content, filename, mime_type).
     """
     rel = vol.safe_relative_path(relative_path)
-    full = vol.resolve_under_workflow_data(rel)
-    if not full.is_file():
-        raise FileNotFoundError(rel)
-    if not vol.is_allowed_document_file(full.name):
-        raise ValueError(f"Unsupported file type: {full.name}")
-    mime = vol.mime_for_filename(full.name)
+    filename = rel.rsplit("/", 1)[-1]
+    if not vol.is_allowed_document_file(filename) and not vol.is_allowed_ontology_file(
+        filename
+    ):
+        raise ValueError(f"Unsupported file type: {filename}")
+    mime = vol.mime_for_filename(filename) or vol.mime_for_ontology_filename(filename)
     if not mime:
-        raise ValueError(f"Unsupported file type: {full.name}")
-    return full.read_bytes(), full.name, mime
+        raise ValueError(f"Unsupported file type: {filename}")
+    try:
+        content = vol.read_bytes(rel)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(rel) from exc
+    return content, filename, mime
 
 
 def persist_upload(*, doc_id: str, filename: str, content: bytes) -> str:

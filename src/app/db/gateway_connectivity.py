@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import ssl
 from typing import Any
 from urllib import error, request
@@ -37,7 +38,10 @@ def probe_gateway_health(base_url: str) -> tuple[bool, str]:
         ssl_ctx.verify_mode = ssl.CERT_NONE
 
     req = request.Request(url=url, method="GET", headers=headers)
-    open_kw: dict[str, Any] = {"timeout": min(float(settings.timeout_seconds), 30.0)}
+    health_timeout = float(os.environ.get("ARANGO_GATEWAY_HEALTH_TIMEOUT_SECONDS", "8"))
+    open_kw: dict[str, Any] = {
+        "timeout": min(float(settings.timeout_seconds), max(2.0, health_timeout)),
+    }
     if ssl_ctx is not None:
         open_kw["context"] = ssl_ctx
 

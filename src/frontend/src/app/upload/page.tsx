@@ -1,9 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiFetch } from "@/lib/api-client";
+import {
+  api,
+  apiFetch,
+  apiFetchLongRunning,
+  readApiErrorMessage,
+  VOLUME_BROWSE_TIMEOUT_MS,
+} from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
+import { formatOperationError } from "@/lib/upload-errors";
 import AppHeader from "@/components/layout/AppHeader";
+import OperationErrorPanel from "@/components/upload/OperationErrorPanel";
 import {
   getUploadFileKind,
   isOntologyImportFilename,
@@ -84,19 +92,20 @@ export default function UploadPage() {
   const [documents, setDocuments] = useState<DocumentEntry[]>([]);
   const [docsLoaded, setDocsLoaded] = useState(false);
   const [extractingDocs, setExtractingDocs] = useState<Set<string>>(new Set());
-  const [preparingDocs, setPreparingDocs] = useState<Set<string>>(new Set());
   const [ontologyOptions, setOntologyOptions] = useState<OntologyOption[]>([]);
   const [targetOntologyId, setTargetOntologyId] = useState<string>("");
   const [docOntologies, setDocOntologies] = useState<Record<string, { _key: string; name: string }[]>>({});
   const [importState, setImportState] = useState<
     "idle" | "uploading" | "processing" | "success" | "error"
   >("idle");
-  const [importName, setImportName] = useState("");
   const [importResult, setImportResult] = useState<ImportResultData | null>(null);
   const [importError, setImportError] = useState("");
   const [builtinFiles, setBuiltinFiles] = useState<VolumeFileEntry[]>([]);
   const [builtinLoaded, setBuiltinLoaded] = useState(false);
   const [builtinIngesting, setBuiltinIngesting] = useState<string | null>(null);
+  const [builtinOntologyFiles, setBuiltinOntologyFiles] = useState<VolumeFileEntry[]>([]);
+  const [builtinOntologyLoaded, setBuiltinOntologyLoaded] = useState(false);
+  const [builtinOntologyIngesting, setBuiltinOntologyIngesting] = useState<string | null>(null);
   const [volumeBuiltinPath, setVolumeBuiltinPath] = useState("");
   const [volumeUploadsHint, setVolumeUploadsHint] = useState("");
   const [volumeAccessMode, setVolumeAccessMode] = useState<string>("");
@@ -169,43 +178,87 @@ export default function UploadPage() {
     }
   }, []);
 
-  const loadBuiltinFiles = useCallback(async () => {
-    setBuiltinLoadError("");
-    try {
-      const res = await api.get<{
+  const fetchBuiltinBrowse = useCallback(
+    async (path: string) =>
+      api.get<{
         files: VolumeFileEntry[];
         exists?: boolean;
         access_mode?: string;
         files_api_reachable?: boolean;
-      }>("/api/v1/documents/volume/browse?prefix=builtin");
-      setBuiltinFiles(res.files ?? []);
-      if (res.access_mode) {
-        setVolumeAccessMode(res.access_mode);
+      }>(path, { timeoutMs: VOLUME_BROWSE_TIMEOUT_MS }),
+    [],
+  );
+
+  const loadBuiltinFiles = useCallback(async () => {
+    setBuiltinLoadError("");
+    const path = "/api/v1/documents/volume/browse?prefix=builtin&file_kind=document";
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await fetchBuiltinBrowse(path);
+          setBuiltinFiles(res.files ?? []);
+          if (res.access_mode) {
+            setVolumeAccessMode(res.access_mode);
+          }
+          if (typeof res.exists === "boolean") {
+            setVolumeReachable(res.exists);
+          }
+          if ((res.files ?? []).length === 0 && res.exists === false) {
+            setBuiltinLoadError(
+              "Unity Catalog volume is not reachable from this app (check workflow-volume resource and READ/WRITE VOLUME grants).",
+            );
+          }
+          return;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const timedOut = /timed out|AbortError|signal timed out/i.test(msg);
+          if (timedOut && attempt === 0) {
+            continue;
+          }
+          setBuiltinFiles([]);
+          setBuiltinLoadError(
+            timedOut
+              ? "Listing built-in documents from the UC volume timed out. The app may still be starting — refresh the page in a moment."
+              : msg || "Failed to list built-in files from UC volume.",
+          );
+          return;
+        }
       }
-      if (typeof res.exists === "boolean") {
-        setVolumeReachable(res.exists);
-      }
-      if ((res.files ?? []).length === 0 && res.exists === false) {
-        setBuiltinLoadError(
-          "Unity Catalog volume is not reachable from this app (check workflow-volume resource and READ/WRITE VOLUME grants).",
-        );
-      }
-    } catch (err) {
-      setBuiltinFiles([]);
-      setBuiltinLoadError(
-        err instanceof Error ? err.message : "Failed to list built-in files from UC volume.",
-      );
     } finally {
       setBuiltinLoaded(true);
     }
-  }, []);
+  }, [fetchBuiltinBrowse]);
+
+  const loadBuiltinOntologies = useCallback(async () => {
+    const path =
+      "/api/v1/documents/volume/browse?prefix=builtin/ontologies&file_kind=ontology";
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await fetchBuiltinBrowse(path);
+          setBuiltinOntologyFiles(res.files ?? []);
+          return;
+        } catch {
+          if (attempt === 1) {
+            setBuiltinOntologyFiles([]);
+          }
+        }
+      }
+    } finally {
+      setBuiltinOntologyLoaded(true);
+    }
+  }, [fetchBuiltinBrowse]);
 
   useEffect(() => {
     loadDocuments();
     loadOntologies();
     loadVolumeInfo();
-    loadBuiltinFiles();
-  }, [loadDocuments, loadOntologies, loadVolumeInfo, loadBuiltinFiles]);
+    const t = window.setTimeout(() => {
+      void loadBuiltinFiles();
+      void loadBuiltinOntologies();
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [loadDocuments, loadOntologies, loadVolumeInfo, loadBuiltinFiles, loadBuiltinOntologies]);
 
   const triggerExtraction = async (
     docId: string,
@@ -237,7 +290,7 @@ export default function UploadPage() {
     const formData = new FormData();
     formData.append("file", file);
 
-    const label = importName.trim() || file.name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
+    const label = file.name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
     const id = `import_${Date.now().toString(36)}`;
 
     try {
@@ -245,13 +298,12 @@ export default function UploadPage() {
         ontology_id: id,
         ontology_label: label,
       });
-      const res = await apiFetch(`/api/v1/ontology/import?${params}`, {
+      const res = await apiFetchLongRunning(`/api/v1/ontology/import?${params}`, {
         method: "POST",
         body: formData,
       });
       if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.detail || errBody.message || `Import failed (${res.status})`);
+        throw new Error(await readApiErrorMessage(res));
       }
 
       // New contract (202): backend runs the import asynchronously and we poll
@@ -268,7 +320,12 @@ export default function UploadPage() {
       loadDocuments();
       loadOntologies();
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : String(err));
+      setImportError(
+        formatOperationError(err, {
+          operation: "Ontology file upload (POST /api/v1/ontology/import)",
+          filename: file.name,
+        }),
+      );
       setImportState("error");
     }
   };
@@ -288,10 +345,7 @@ export default function UploadPage() {
       );
       if (!statusRes.ok) {
         if (statusRes.status === 404) continue;
-        const errBody = await statusRes.json().catch(() => ({}));
-        throw new Error(
-          errBody.detail || errBody.message || `Status check failed (${statusRes.status})`,
-        );
+        throw new Error(await readApiErrorMessage(statusRes));
       }
       const job = await statusRes.json();
       if (job.status === "completed") {
@@ -303,37 +357,17 @@ export default function UploadPage() {
         };
       }
       if (job.status === "failed") {
-        throw new Error(job.error || "Import failed on the server");
+        const parts = [
+          job.error || "Import failed on the server",
+          job.error_kind ? `error_kind: ${job.error_kind}` : null,
+          job.volume_path ? `volume_path: ${job.volume_path}` : null,
+          job.filename ? `filename: ${job.filename}` : null,
+          job.ontology_id ? `ontology_id: ${job.ontology_id}` : null,
+        ].filter(Boolean);
+        throw new Error(parts.join("\n"));
       }
     }
     throw new Error("Import timed out waiting for the server to finish");
-  };
-
-  const prepareDocument = async (docId: string) => {
-    setPreparingDocs((prev) => new Set(prev).add(docId));
-    setErrorMsg("");
-    try {
-      const res = await apiFetch(`/api/v1/documents/${docId}/prepare`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(
-          err.detail ?? err.error?.message ?? `Prepare failed (${res.status})`,
-        );
-      }
-      await waitForDocumentReady(docId);
-      loadDocuments();
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-      setUploadState("error");
-    } finally {
-      setPreparingDocs((prev) => {
-        const next = new Set(prev);
-        next.delete(docId);
-        return next;
-      });
-    }
   };
 
   const extractDocument = async (docId: string) => {
@@ -352,33 +386,46 @@ export default function UploadPage() {
     }
   };
 
-  const waitForDocumentReady = async (
-    docId: string,
-    maxWaitMs = 120_000,
-  ): Promise<void> => {
-    const start = Date.now();
-    const pollInterval = 1500;
-
-    while (Date.now() - start < maxWaitMs) {
-      try {
-        const res = await apiFetch(`/api/v1/documents/${docId}`);
-        if (res.ok) {
-          const doc = await res.json();
-          const status = doc.status ?? doc.data?.status;
-          if (status === "ready") return;
-          if (status === "failed") {
-            const errMsg = doc.error_message ?? doc.data?.error_message ?? "Ingestion failed";
-            throw new Error(`Document processing failed: ${errMsg}`);
-          }
-        }
-      } catch (err) {
-        if (err instanceof Error && err.message.startsWith("Document processing failed")) {
-          throw err;
-        }
+  const importOntologyFromVolume = async (path: string, displayName: string) => {
+    setBuiltinOntologyIngesting(path);
+    setImportState("uploading");
+    setImportError("");
+    setImportResult(null);
+    const label = displayName.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
+    const id = `import_${Date.now().toString(36)}`;
+    try {
+      const res = await apiFetchLongRunning("/api/v1/ontology/import-from-volume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path,
+          ontology_id: id,
+          ontology_label: label,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(await readApiErrorMessage(res));
       }
-      await new Promise((r) => setTimeout(r, pollInterval));
+      setImportState("processing");
+      const accepted = await res.json();
+      const ontologyId = accepted.ontology_id || id;
+      const finalResult = await pollImportStatus(ontologyId);
+      setImportResult(finalResult);
+      setImportState("success");
+      loadDocuments();
+      loadOntologies();
+    } catch (err) {
+      setImportError(
+        formatOperationError(err, {
+          operation: "Builtin ontology import (POST /api/v1/ontology/import-from-volume)",
+          path,
+          filename: displayName,
+        }),
+      );
+      setImportState("error");
+    } finally {
+      setBuiltinOntologyIngesting(null);
     }
-    throw new Error("Document processing timed out — please try extracting manually once it's ready.");
   };
 
   const ingestFromVolume = async (path: string, displayName: string) => {
@@ -387,23 +434,26 @@ export default function UploadPage() {
     setErrorMsg("");
     setResult(null);
     try {
-      const res = await apiFetch("/api/v1/documents/ingest-from-volume", {
+      const res = await apiFetchLongRunning("/api/v1/documents/ingest-from-volume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(
-          err.detail ?? err.error?.message ?? `Ingest failed (${res.status})`,
-        );
+        throw new Error(await readApiErrorMessage(res));
       }
       const data: UploadResult = await res.json();
       setResult({ ...data, filename: data.filename || displayName });
       loadDocuments();
       setUploadState("success");
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setErrorMsg(
+        formatOperationError(err, {
+          operation: "Document ingest from volume (POST /api/v1/documents/ingest-from-volume)",
+          path,
+          filename: displayName,
+        }),
+      );
       setUploadState("error");
     } finally {
       setBuiltinIngesting(null);
@@ -412,9 +462,6 @@ export default function UploadPage() {
 
   const uploadFile = async (file: File) => {
     if (isOntologyImportFilename(file.name)) {
-      if (!importName.trim()) {
-        setImportName(file.name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " "));
-      }
       setUploadState("idle");
       setResult(null);
       setErrorMsg("");
@@ -432,16 +479,13 @@ export default function UploadPage() {
     formData.append("file", file);
 
     try {
-      const res = await apiFetch("/api/v1/documents/upload", {
+      const res = await apiFetchLongRunning("/api/v1/documents/upload", {
         method: "POST",
         body: formData,
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(
-          err.detail ?? err.error?.message ?? `Upload failed (${res.status})`
-        );
+        throw new Error(await readApiErrorMessage(res));
       }
 
       const data: UploadResult = await res.json();
@@ -449,7 +493,12 @@ export default function UploadPage() {
       loadDocuments();
       setUploadState("success");
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setErrorMsg(
+        formatOperationError(err, {
+          operation: "Document upload to UC volume (POST /api/v1/documents/upload)",
+          filename: file.name,
+        }),
+      );
       setUploadState("error");
     }
   };
@@ -470,28 +519,11 @@ export default function UploadPage() {
     <main className="min-h-screen bg-gray-50 text-gray-900">
       <AppHeader
         title="Upload Documents"
-        subtitle="Drop a file to auto-detect: documents (PDF, DOCX, PPTX, Markdown) are staged on the UC volume for parse/chunk and extract; ontology files (OWL, TTL, RDF, JSON-LD, …) import directly into the graph."
+        subtitle="Stage documents (PDF, DOCX, PPTX, Markdown) on the UC volume, then parse and chunk on the Embedding page. Ontology files (OWL, TTL, RDF, JSON-LD, …) import directly into the graph."
         contentClassName="max-w-4xl"
       />
 
       <div className="max-w-4xl mx-auto px-6 py-10 space-y-8">
-
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <label htmlFor="import-name" className="block text-sm font-medium text-gray-700 mb-1">
-            Ontology name (optional, RDF/OWL imports only)
-          </label>
-          <input
-            id="import-name"
-            type="text"
-            value={importName}
-            onChange={(e) => setImportName(e.target.value)}
-            placeholder="e.g., FIBO Financial Instruments"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-          />
-          <p className="mt-1 text-xs text-gray-400">
-            Used when you upload .ttl, .owl, .rdf, .jsonld, etc. Ignored for PDF and Office documents.
-          </p>
-        </div>
 
         {/* Target ontology selector (document extraction) */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
@@ -521,22 +553,55 @@ export default function UploadPage() {
           </p>
         </div>
 
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">
+            Built-in sample ontologies
+          </h2>
+          <p className="text-xs text-gray-400 mb-4">
+            Seeded from repo <code className="text-gray-500">datasets/</code> under Unity Catalog
+          </p>
+          {!builtinOntologyLoaded ? (
+            <p className="text-sm text-gray-400">Loading volume catalog…</p>
+          ) : builtinOntologyFiles.length === 0 ? (
+            <p className="text-sm text-gray-400">
+              No built-in ontology files on the volume yet. Redeploy with dataset seeding or upload
+              .ttl / .owl / .jsonld via the drop zone below.
+            </p>
+          ) : (
+            <ul className="divide-y divide-gray-100 border border-gray-100 rounded-lg max-h-48 overflow-y-auto">
+              {builtinOntologyFiles.map((f) => (
+                <li
+                  key={f.path}
+                  className="flex items-center justify-between px-4 py-2.5 text-sm hover:bg-gray-50"
+                >
+                  <div className="min-w-0 pr-3">
+                    <p className="font-medium text-gray-800 truncate flex items-center gap-2">
+                      <span className="truncate">{f.name}</span>
+                      <UploadFileKindBadge kind="ontology" />
+                    </p>
+                    <p className="text-xs text-gray-400 truncate">{f.path}</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={builtinOntologyIngesting !== null || importState === "processing"}
+                    onClick={() => void importOntologyFromVolume(f.path, f.name)}
+                    className="shrink-0 text-xs px-3 py-1.5 bg-violet-700 text-white rounded-lg hover:bg-violet-800 disabled:opacity-50 transition-colors font-medium"
+                  >
+                    {builtinOntologyIngesting === f.path ? "Importing…" : "Use this file"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
         {/* Built-in sample domains on UC volume (not available via OS file picker) */}
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <h2 className="text-sm font-semibold text-gray-700 mb-1">
             Built-in sample documents
           </h2>
           <p className="text-xs text-gray-400 mb-4">
-            Seeded from repo{" "}
-            <code className="text-gray-500">datasets/</code> into one folder per domain under
-            Unity Catalog{" "}
-            <code className="text-gray-500 break-all">
-              {volumeBuiltinPath ||
-                "/Volumes/workspace/default/arango_workflow_volume/workflow-data/builtin/"}
-            </code>
-            {" "}(e.g. <code className="text-gray-500">…/builtin/financial/</code>, not{" "}
-            <code className="text-gray-500">…/builtin/corpora/</code>). Choose a file here instead
-            of browsing your laptop.
+            Seeded from repo <code className="text-gray-500">datasets/</code> under Unity Catalog
           </p>
           {!builtinLoaded ? (
             <p className="text-sm text-gray-400">Loading volume catalog…</p>
@@ -700,11 +765,8 @@ export default function UploadPage() {
           </div>
         )}
 
-        {importState === "error" && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-red-700 font-medium">Ontology import failed</p>
-            <p className="mt-1 text-sm text-red-600">{importError}</p>
-          </div>
+        {importState === "error" && importError && (
+          <OperationErrorPanel title="Ontology import failed" detail={importError} />
         )}
 
         {/* Document upload status */}
@@ -732,17 +794,21 @@ export default function UploadPage() {
               )}
             </div>
             <p className="mt-2 text-sm text-green-700">
-              Use <strong>Parse &amp; chunk</strong> on the document below when ready, then{" "}
-              <strong>Extract</strong> after status is <code className="text-green-800">ready</code>.
+              Continue on{" "}
+              <a
+                href={withBasePath(`/embedding?doc=${result.doc_id}`)}
+                className="font-semibold text-emerald-800 underline hover:text-emerald-900"
+              >
+                Parse &amp; Chunk
+              </a>{" "}
+              to parse and embed, then <strong>Extract</strong> here once status is{" "}
+              <code className="text-green-800">ready</code>.
             </p>
           </div>
         )}
 
-        {uploadState === "error" && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-red-700 font-medium">Upload failed</p>
-            <p className="mt-1 text-sm text-red-600">{errorMsg}</p>
-          </div>
+        {uploadState === "error" && errorMsg && (
+          <OperationErrorPanel title="Upload failed" detail={errorMsg} />
         )}
 
         {/* Document list */}
@@ -793,23 +859,13 @@ export default function UploadPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       {isDocument &&
-                        (doc.status === "staged" ||
-                        doc.status === "failed" ||
-                        doc.status === "uploading") && (
-                        preparingDocs.has(doc._key) ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-amber-100 text-amber-800 rounded-lg font-medium">
-                            <span className="h-3 w-3 border-2 border-amber-600 border-t-transparent rounded-full animate-spin" />
-                            Parsing…
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => prepareDocument(doc._key)}
-                            className="text-xs px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors font-medium"
-                          >
-                            Parse &amp; chunk
-                          </button>
-                        )
+                        (doc.status === "staged" || doc.status === "failed") && (
+                        <a
+                          href={withBasePath(`/embedding?doc=${doc._key}`)}
+                          className="text-xs px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors font-medium"
+                        >
+                          Parse &amp; chunk →
+                        </a>
                       )}
                       {isDocument &&
                         (doc.status === "ready" || doc.status === "processed") && (

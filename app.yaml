@@ -7,8 +7,8 @@ command:
 # Arango I/O: arango-gateway-app only (UC ARANGO_GATEWAY_REGISTRY_TABLE). No python-arango.
 # Deploy order: gateway → mcp-arango-agent → this app. Config source of truth: this file (not .env).
 #
-# Secrets (set in Databricks App UI / workspace secrets — do not commit real values):
-#   OPENAI_API_KEY (until model endpoint migration)
+# Secrets (empty value in git — inject at deploy via deploy_app.sh + shell env / .env):
+#   OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENAI_BASE_URL
 
 env:
   # ---------------------------------------------------------------------------
@@ -19,15 +19,9 @@ env:
       (Required) SQL warehouse id for UC reads — gateway, mcp-agent, and workflow URL registries.
     value: "473d40703241ee4c"
 
-  # LLM (OPENAI_API_KEY empty here — set in App secrets; future: Databricks model endpoint)
+  # LLM (empty here — export OPENAI_API_KEY or set in .env before ./deploy_app.sh)
   - name: OPENAI_API_KEY
-    description: "OpenAI API key for extraction until serving-endpoint migration. Set in Databricks secrets."
-    value: ""
-  - name: OPENAI_BASE_URL
-    description: "Optional OpenAI-compatible API base URL"
-    value: ""
-  - name: ANTHROPIC_API_KEY
-    description: "Anthropic API key (optional if using OpenAI models only). Set in Databricks secrets."
+    description: "OpenAI API key for embeddings and OpenAI extraction models (injected at deploy from env)."
     value: ""
   - name: LLM_EXTRACTION_MODEL
     description: "Primary extraction model (from your .env: gpt-4o-mini)"
@@ -80,9 +74,21 @@ env:
   - name: UC_WORKFLOW_DATA_SUBDIR
     description: "Subdirectory on UC_GRAPH_VOLUME_NAME for document uploads and builtin sample domains"
     value: "workflow-data"
+  - name: UC_WORKFLOW_DATA_IO_MODE
+    description: >-
+      UC I/O: auto (Files API on Databricks Apps — visible in catalog), files_api, or local_mount
+    value: "auto"
   - name: WORKFLOW_DATA_SEED_ON_STARTUP
     description: "When true, copy repo datasets/ into workflow-data/builtin on app startup (requires /Volumes mount)"
     value: "true"
+
+  # LLM 
+  - name: OPENAI_BASE_URL
+    description: "Optional OpenAI-compatible API base URL"
+    value: ""
+  - name: ANTHROPIC_API_KEY
+    description: "Anthropic API key (optional if using OpenAI models only). Set in Databricks secrets."
+    value: ""
 
   # ---------------------------------------------------------------------------
   # Runtime (Databricks)

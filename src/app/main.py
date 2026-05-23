@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -22,6 +23,8 @@ from app.api import (
     orgs,
     quality,
     revisions,
+    system,
+    uc_catalog,
     workflow_dashboard,
     ws_curation,
     ws_extraction,
@@ -70,12 +73,36 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     from app.services.workflow_data import seed_builtin_if_configured
 
     try:
+        from app.api.health import warm_ready_cache
+
+        await warm_ready_cache()
+    except Exception as exc:
+        log.warning("ready_cache_warm_failed", error=str(exc))
+
+    try:
         seed_result = seed_builtin_if_configured()
         log.info("workflow_data_seed", **seed_result)
     except Exception as exc:
         log.warning("workflow_data_seed_failed", error=str(exc))
 
+    async def _bootstrap_schema_background() -> None:
+        from app.services.schema_bootstrap import ensure_ontology_schema
+
+        try:
+            await asyncio.to_thread(ensure_ontology_schema)
+            log.info("ontology_schema_bootstrap_ok")
+        except Exception as exc:
+            log.warning("ontology_schema_bootstrap_failed", error=str(exc))
+
+    schema_task = asyncio.create_task(_bootstrap_schema_background())
+
     yield
+
+    schema_task.cancel()
+    try:
+        await schema_task
+    except asyncio.CancelledError:
+        pass
     close_db()
     log.info("shutdown_complete")
 
@@ -125,6 +152,8 @@ app.include_router(notifications.router)
 app.include_router(metrics.router)
 app.include_router(quality.router)
 app.include_router(revisions.router)
+app.include_router(system.router)
+app.include_router(uc_catalog.router)
 app.include_router(workflow_dashboard.router)
 app.include_router(ws_extraction.router)
 app.include_router(ws_curation.router)

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.embedding import embed_texts
+from app.services.embedding import _get_client, embed_texts
 
 
 def _make_embedding_response(texts: list[str]) -> MagicMock:
@@ -20,6 +20,27 @@ def _make_embedding_response(texts: list[str]) -> MagicMock:
         data.append(item)
     resp.data = data
     return resp
+
+
+class TestGetClient:
+    def test_uses_langchain_async_httpx_client(self):
+        from app.config import settings
+
+        mock_http = MagicMock()
+        with (
+            patch(
+                "langchain_openai.chat_models._client_utils._get_default_async_httpx_client",
+                return_value=mock_http,
+            ) as mock_factory,
+            patch("app.services.embedding.AsyncOpenAI") as mock_cls,
+            patch.object(settings, "openai_api_key", "sk-test"),
+            patch.object(settings, "llm_request_timeout_seconds", 60),
+            patch.object(settings, "openai_base_url", ""),
+        ):
+            _get_client()
+        mock_factory.assert_called_once_with(None, 60.0)
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["http_client"] is mock_http
 
 
 @patch("app.services.embedding._get_client")

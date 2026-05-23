@@ -46,9 +46,53 @@ def test_seed_builtin_writes_domain_subdirs(monkeypatch, tmp_path):
     assert "financial" in result["domains"]
     assert (wf_root / "builtin" / "financial" / "sample.md").is_file()
     assert not (wf_root / "builtin" / "corpora").exists()
-    manifest = Path(result["destination"]) / ".seed_manifest.json"
+    manifest = wf_root / vol.SEED_MANIFEST_REL
     assert manifest.is_file()
+    assert (wf_root / "builtin" / "ontologies" / "cyber" / "big.jsonld").is_file()
     assert "cyber" not in result["domains"]
+
+
+def test_browse_ontology_excludes_manifest_and_plain_json():
+    assert not vol.is_volume_file_browsable(
+        ".seed_manifest.json",
+        rel_path="builtin/.seed_manifest.json",
+        file_kind="ontology",
+    )
+    assert not vol.is_volume_file_browsable(
+        "accounts.json",
+        rel_path="builtin/cyber/accounts.json",
+        file_kind="ontology",
+    )
+    assert vol.is_volume_file_browsable(
+        "fraud_cyber_dataset.jsonld",
+        rel_path="builtin/ontologies/cyber/fraud_cyber_dataset.jsonld",
+        file_kind="ontology",
+    )
+
+
+def test_use_files_api_on_databricks_deploy_mode(monkeypatch):
+    monkeypatch.setenv("TEST_DEPLOYMENT_MODE", "self_managed_platform")
+    monkeypatch.setattr(vol, "local_mount_available", lambda: True)
+    assert vol.use_files_api_for_io() is True
+
+
+def test_use_local_mount_when_explicit(monkeypatch):
+    monkeypatch.setenv("UC_WORKFLOW_DATA_IO_MODE", "local_mount")
+    monkeypatch.setenv("TEST_DEPLOYMENT_MODE", "self_managed_platform")
+    monkeypatch.setattr(vol, "local_mount_available", lambda: True)
+    assert vol.use_files_api_for_io() is False
+
+
+def test_write_bytes_uses_files_api_when_configured(monkeypatch):
+    monkeypatch.setenv("ARANGO_REGISTRY_TABLE", "workspace.default.arango_connection_registry")
+    monkeypatch.setenv("UC_GRAPH_VOLUME_NAME", "arango_workflow_volume")
+    monkeypatch.setattr(vol, "use_files_api_for_io", lambda: True)
+
+    with patch.object(vol, "_write_via_files_api", return_value="uploads/x/a.md") as mock_write:
+        out = vol.write_bytes(relative_path="uploads/x/a.md", content=b"# hi")
+
+    assert out == "uploads/x/a.md"
+    mock_write.assert_called_once()
 
 
 def test_list_files_falls_back_to_files_api_when_unmounted(monkeypatch):

@@ -36,9 +36,12 @@ export function useActivePipelineAgents(): {
   }, []);
 
   useEffect(() => {
-    void refresh();
-    const id = setInterval(() => void refresh(), REFRESH_MS);
-    return () => clearInterval(id);
+    const start = window.setTimeout(() => void refresh(), 600);
+    const id = window.setInterval(() => void refresh(), REFRESH_MS);
+    return () => {
+      window.clearTimeout(start);
+      clearInterval(id);
+    };
   }, [refresh]);
 
   return { count, loading, error };

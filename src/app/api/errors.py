@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -104,9 +104,15 @@ def install_error_handlers(app: FastAPI) -> None:
             content=_error_body("ENTITY_NOT_FOUND", "Resource not found"),
         )
 
-    @app.exception_handler(500)
-    async def _internal_handler(_request: Request, _exc: Exception) -> JSONResponse:
+    @app.exception_handler(Exception)
+    async def _unhandled_handler(_request: Request, exc: Exception) -> JSONResponse:
+        if isinstance(exc, (AOEError, HTTPException)):
+            raise exc
         return JSONResponse(
             status_code=500,
-            content=_error_body("INTERNAL_ERROR", "An unexpected error occurred"),
+            content=_error_body(
+                "INTERNAL_ERROR",
+                str(exc) or "An unexpected error occurred",
+                {"exception_type": type(exc).__name__},
+            ),
         )

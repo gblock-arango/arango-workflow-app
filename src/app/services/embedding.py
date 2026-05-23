@@ -3,6 +3,10 @@
 Supports configurable model (via ``settings.embedding_model``) and batching.
 Uses async client with concurrent requests capped by a semaphore.
 Batches are constructed dynamically to stay under the 300K token-per-request limit.
+
+HTTP transport matches LangChain ``ChatOpenAI`` (loop-aware httpx client with
+keepalive tuning) so embeddings and extraction behave the same under uvicorn/uvloop
+(e.g. Databricks Apps).
 """
 
 from __future__ import annotations
@@ -30,9 +34,19 @@ _TIKTOKEN_MODEL = "cl100k_base"
 
 
 def _get_client() -> AsyncOpenAI:
-    kwargs: dict[str, Any] = {"api_key": settings.openai_api_key, "timeout": 20.0}
-    if settings.openai_base_url:
-        kwargs["base_url"] = settings.openai_base_url
+    """Build ``AsyncOpenAI`` with the same httpx stack as extraction ``ChatOpenAI``."""
+    from langchain_openai.chat_models._client_utils import _get_default_async_httpx_client
+
+    timeout = float(settings.llm_request_timeout_seconds)
+    base_url = (settings.openai_base_url or "").strip() or None
+    http_client = _get_default_async_httpx_client(base_url, timeout)
+    kwargs: dict[str, Any] = {
+        "api_key": settings.openai_api_key,
+        "timeout": timeout,
+        "http_client": http_client,
+    }
+    if base_url:
+        kwargs["base_url"] = base_url
     return AsyncOpenAI(**kwargs)
 
 

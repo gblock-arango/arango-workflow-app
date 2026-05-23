@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from app.db.client import get_db
 from app.db.utils import doc_get, run_aql
 from app.services import extraction as extraction_service
+from app.services.schema_bootstrap import ensure_ontology_schema_async
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ async def start_extraction(
     for the full extraction to complete.
     """
     doc_ids = _resolve_doc_ids(body)
+    await ensure_ontology_schema_async()
     db = get_db()
 
     ontology_ids: list[str] = []

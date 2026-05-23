@@ -1,8 +1,25 @@
 {
-  "ok": true,
   "layout_version": 2,
-  "domains": ["cybe", "financial", "healthcare", "legal", "supply-chain"],
-  "source": "datasets/",
-  "destination": "/Volumes/workspace/default/arango_workflow_volume/workflow-data/builtin",
-  "note": "Reference manifest. Deploy copies repo datasets/<domain>/*.md into builtin/<domain>/ on the UC volume (not builtin/corpora/). Cyber and external are skipped at seed time."
+  "description": "Reference layout for repo datasets/ → UC workflow-data (see workflow_data_volume.seed_builtin_datasets_from_bundle).",
+  "document_domains": {
+    "source": "datasets/<domain>/*.{md,pdf,docx,pptx,doc}",
+    "target": "workflow-data/builtin/<domain>/",
+    "domains": ["financial", "healthcare", "legal", "supply-chain"],
+    "skipped": ["cyber", "external", "__pycache__"]
+  },
+  "ontology_domains": {
+    "source": "datasets/<domain>/*.jsonld and datasets/cyber/*.jsonld",
+    "target": "workflow-data/builtin/ontologies/<domain>/",
+    "domains": ["cyber"],
+    "formats": ["jsonld", "json-ld", "ttl", "turtle", "owl", "rdf"],
+    "note": "Only JSON-LD/RDF ontology files are seeded; plain .json graph exports are not copied."
+  },
+  "instance_data": {
+    "source": "datasets/cyber/*.{json,csv}",
+    "target": "not_seeded",
+    "note": "Graph/instance CSV and JSON stay in the repo for Arango tooling; not listed in Upload built-ins."
+  },
+  "seed_manifest_on_volume": "workflow-data/settings/.seed_manifest.json",
+  "upload_ingest_documents": "workflow-data/builtin/<domain>/* → POST /api/v1/documents/ingest-from-volume",
+  "upload_import_ontologies": "workflow-data/builtin/ontologies/<domain>/*.jsonld → POST /api/v1/ontology/import-from-volume"
 }

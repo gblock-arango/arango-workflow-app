@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
+import AppLink from "@/components/layout/AppLink";
 import { withBasePath } from "@/lib/base-path";
 import { useActivePipelineAgents } from "@/lib/useActivePipelineAgents";
 import {
@@ -22,16 +23,19 @@ export default function Home() {
   const [statsError, setStatsError] = useState(false);
 
   useEffect(() => {
-    api
-      .get<LibraryStats>(
-        "/api/v1/ontology/library?limit=1&include_edge_counts=false",
-      )
-      .then((data) => {
-        setOntologyCount(data.total_count);
-      })
-      .catch(() => {
-        setStatsError(true);
-      });
+    const delay = window.setTimeout(() => {
+      api
+        .get<LibraryStats>(
+          "/api/v1/ontology/library?limit=1&include_edge_counts=false",
+        )
+        .then((data) => {
+          setOntologyCount(data.total_count);
+        })
+        .catch(() => {
+          setStatsError(true);
+        });
+    }, 400);
+    return () => window.clearTimeout(delay);
   }, []);
 
   return (
@@ -118,7 +122,9 @@ export default function Home() {
             <h2 className="text-lg font-semibold text-gray-900">
               Workflows
             </h2>
-            <NavButton href="/dashboard">Dashboard</NavButton>
+            <NavButton href="/dashboard" variant="green">
+              Dashboard Visualization
+            </NavButton>
           </div>
 
           <div className="space-y-2">
@@ -127,11 +133,25 @@ export default function Home() {
               badge="AutoGraph"
               badgeClassName="bg-indigo-100 text-indigo-800"
               actions={[
-                { label: "Add Tables", href: "/upload", description: "Import UC tables" },
+                {
+                  label: "Add Tables",
+                  href: "/add-tables",
+                  description: "Browse UC tables and edit annotations",
+                },
                 {
                   label: "Upload Documents",
                   href: "/upload",
                   description: "Ingest PDF, DOCX, PPTX, Markdown, JSON, JSON-LD",
+                },
+                {
+                  label: "Parse & Chunk",
+                  href: "/embedding",
+                  description: "Prepare staged documents — parse, chunk, and embed",
+                },
+                {
+                  label: "Run Extraction",
+                  href: "/pipeline",
+                  description: "Manage agentic workflow for ontology creation",
                 },
                 {
                   label: "View Ontologies",
@@ -226,8 +246,8 @@ function StatCardLink({
   children: React.ReactNode;
 }) {
   return (
-    <a
-      href={withBasePath(href)}
+    <AppLink
+      href={href}
       className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm min-h-[100px] flex flex-col hover:border-indigo-300 hover:shadow-md transition-all group"
     >
       <h2
@@ -236,7 +256,7 @@ function StatCardLink({
         {title}
       </h2>
       <div className="flex-1 flex flex-col justify-center">{children}</div>
-    </a>
+    </AppLink>
   );
 }
 
@@ -309,14 +329,23 @@ function AgentsCard() {
   );
 }
 
-function NavButton({ href, children }: { href: string; children: React.ReactNode }) {
+function NavButton({
+  href,
+  children,
+  variant = "default",
+}: {
+  href: string;
+  children: React.ReactNode;
+  variant?: "default" | "green";
+}) {
+  const className =
+    variant === "green"
+      ? "inline-flex items-center justify-center rounded-xl px-6 py-3 text-sm font-semibold text-emerald-900 bg-emerald-100 border border-emerald-200 shadow-sm hover:bg-emerald-200 hover:border-emerald-300 transition-colors"
+      : "inline-flex items-center justify-center rounded-xl px-6 py-3 text-sm font-semibold text-gray-800 bg-white border border-gray-200 shadow-sm hover:bg-gray-50 hover:border-gray-300 transition-colors";
   return (
-    <a
-      href={withBasePath(href)}
-      className="inline-flex items-center justify-center rounded-xl px-6 py-3 text-sm font-semibold text-gray-800 bg-white border border-gray-200 shadow-sm hover:bg-gray-50 hover:border-gray-300 transition-colors"
-    >
+    <AppLink href={href} className={className}>
       {children}
-    </a>
+    </AppLink>
   );
 }
 
@@ -346,7 +375,7 @@ function WorkflowLane({
         </span>
         <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
       </div>
-      <div className="p-5 grid grid-cols-3 gap-3">
+      <div className="p-5 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
         {actions.map((action) => (
           <WorkflowAction key={action.label} {...action} />
         ))}
@@ -388,8 +417,8 @@ function WorkflowAction({
   }
 
   return (
-    <a href={withBasePath(href)} className={className}>
+    <AppLink href={href} className={className}>
       {inner}
-    </a>
+    </AppLink>
   );
 }

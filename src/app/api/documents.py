@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, UploadFile
@@ -22,6 +23,11 @@ from app.db.utils import run_aql
 from app.models.common import PaginatedResponse
 from app.models.documents import DocumentStatus
 from app.services.ingestion import compute_file_hash
+from app.services.schema_bootstrap import (
+    ensure_ontology_schema_async,
+    ensure_staging_schema,
+    ensure_staging_schema_async,
+)
 from app.services.workflow_data import (
     browse_volume,
     ingest_file_from_volume,
@@ -119,6 +125,45 @@ def _resolve_duplicate_hash(file_hash: str) -> None:
     )
 
 
+def _ensure_staging_store_ready_sync() -> None:
+    """Create ``documents`` / ``chunks`` only (sync; safe inside ``asyncio.to_thread``)."""
+    try:
+        ensure_staging_schema()
+    except Exception as exc:
+        log.exception("staging schema failed before document write")
+        raise ValidationError(
+            "Document staging collections are not ready in Arango (via gateway). "
+            f"Check gateway connectivity: {exc}",
+            details={"exception_type": type(exc).__name__},
+        ) from exc
+
+
+async def _ensure_staging_store_ready() -> None:
+    """Create ``documents`` / ``chunks`` before registering a staged upload."""
+    try:
+        await ensure_staging_schema_async()
+    except Exception as exc:
+        log.exception("staging schema failed before document write")
+        raise ValidationError(
+            "Document staging collections are not ready in Arango (via gateway). "
+            f"Check gateway connectivity: {exc}",
+            details={"exception_type": type(exc).__name__},
+        ) from exc
+
+
+async def _ensure_document_store_ready() -> None:
+    """Apply full ontology migrations before parse/chunk/embed or extraction."""
+    try:
+        await ensure_ontology_schema_async()
+    except Exception as exc:
+        log.exception("schema bootstrap failed before document processing")
+        raise ValidationError(
+            "Ontology/document schema is not ready in Arango (via gateway). "
+            f"Check gateway connectivity and migrations: {exc}",
+            details={"exception_type": type(exc).__name__},
+        ) from exc
+
+
 def _persist_upload_metadata(
     doc_id: str,
     filename: str,
@@ -132,19 +177,26 @@ def _persist_upload_metadata(
         return {"volume_relative_path": rel, "volume_source": "upload"}
     except (OSError, ValueError) as exc:
         if required:
-            raise ValidationError(f"Could not save file to UC volume: {exc}") from exc
+            raise ValidationError(
+                f"Could not save file to UC volume (READ/WRITE VOLUME grant on "
+                f"workflow-data/uploads/ required): {exc}",
+                details={"exception_type": type(exc).__name__},
+            ) from exc
         log.warning("Could not persist upload to UC volume for %s: %s", doc_id, exc)
         return {}
 
 
-def _queue_processing(
+async def _queue_processing(
     doc_id: str,
     content: bytes,
     mime: str,
-) -> None:
+) -> dict[str, Any]:
+    """Ensure DB schema, then start parse → chunk → embed in the background."""
+    schema_info = await ensure_ontology_schema_async()
     task = asyncio.create_task(process_document(doc_id, content, mime))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+    return schema_info
 
 
 def _to_doc_response(doc: dict[str, Any]) -> dict[str, Any]:
@@ -186,23 +238,38 @@ async def upload_document(
 
     filename = file.filename or "untitled"
     initial_status = DocumentStatus.UPLOADING if process else DocumentStatus.STAGED
-    doc = documents_repo.create_document(
-        filename=filename,
-        mime_type=mime,
-        file_hash=file_hash,
-        org_id=org_id,
-        status=initial_status,
-    )
-    doc_id = doc["_key"]
+    doc_id = secrets.token_hex(8)
     try:
-        volume_meta = _persist_upload_metadata(doc_id=doc_id, filename=filename, content=content)
+        volume_meta = await asyncio.to_thread(
+            _persist_upload_metadata,
+            doc_id=doc_id,
+            filename=filename,
+            content=content,
+        )
     except ValidationError:
-        documents_repo.hard_delete_document(doc_id)
         raise
-    documents_repo.update_document_metadata(doc_id, metadata=volume_meta)
 
+    await _ensure_staging_store_ready()
+    try:
+        doc = await asyncio.to_thread(
+            documents_repo.create_document,
+            doc_id=doc_id,
+            filename=filename,
+            mime_type=mime,
+            file_hash=file_hash,
+            org_id=org_id,
+            status=initial_status,
+            metadata=volume_meta,
+        )
+    except Exception as exc:
+        log.exception("create_document failed during upload doc_id=%s", doc_id)
+        raise ValidationError(
+            f"Could not register document in Arango: {exc}",
+            details={"exception_type": type(exc).__name__, "doc_id": doc_id},
+        ) from exc
+    schema_info: dict[str, Any] | None = None
     if process:
-        _queue_processing(doc_id, content, mime)
+        schema_info = await _queue_processing(doc_id, content, mime)
     else:
         documents_repo.update_document_status(doc_id, DocumentStatus.STAGED)
 
@@ -213,6 +280,8 @@ async def upload_document(
     }
     if volume_meta.get("volume_relative_path"):
         out["volume_path"] = volume_meta["volume_relative_path"]
+    if schema_info is not None:
+        out["schema"] = schema_info
     return out
 
 
@@ -226,13 +295,109 @@ async def volume_status() -> dict[str, Any]:
 async def volume_browse(
     prefix: str = Query(default="builtin", description="Subpath under workflow-data"),
     limit: int = Query(default=500, ge=1, le=2000),
+    file_kind: str = Query(
+        default="all",
+        description="Filter: document, ontology, or all",
+    ),
 ) -> dict[str, Any]:
     """List ingestible files on the UC volume (built-in corpora and prior uploads)."""
+    if file_kind not in ("all", "document", "ontology"):
+        raise ValidationError("file_kind must be all, document, or ontology")
     try:
-        files = browse_volume(prefix=prefix, limit=limit)
+        files = await asyncio.to_thread(
+            browse_volume, prefix=prefix, limit=limit, file_kind=file_kind
+        )
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
     return {"prefix": prefix, "files": files, **workflow_data_status()}
+
+
+def _ingest_from_volume_impl(
+    body: IngestFromVolumeBody,
+    org_id: str | None,
+    process: bool,
+) -> tuple[dict[str, Any], tuple[str, bytes, str] | None]:
+    """Sync UC ingest (run in worker thread). Returns response + optional process triple."""
+    rel = body.path.strip().lstrip("/")
+    try:
+        content, filename, mime = ingest_file_from_volume(relative_path=rel)
+    except FileNotFoundError as exc:
+        raise ValidationError(
+            f"Volume file not found at workflow-data/{rel}. "
+            "Re-run deploy seed or check READ VOLUME on the app.",
+            details={"path": rel},
+        ) from exc
+    except ValueError as exc:
+        raise ValidationError(str(exc), details={"path": rel}) from exc
+    except OSError as exc:
+        raise ValidationError(
+            f"Could not read workflow-data/{rel} from UC volume: {exc}",
+            details={"path": rel, "exception_type": type(exc).__name__},
+        ) from exc
+
+    file_hash = compute_file_hash(content)
+    try:
+        _resolve_duplicate_hash(file_hash)
+    except ConflictError as exc:
+        raise ValidationError(
+            exc.message,
+            details={**(exc.details or {}), "path": rel},
+        ) from exc
+
+    source = "builtin" if rel.startswith("builtin/") else "upload"
+    initial_status = DocumentStatus.UPLOADING if process else DocumentStatus.STAGED
+
+    doc_id = secrets.token_hex(8)
+    try:
+        upload_rel = _persist_upload_metadata(doc_id=doc_id, filename=filename, content=content)
+    except ValidationError as exc:
+        raise ValidationError(
+            exc.message,
+            details={**(exc.details or {}), "path": rel, "doc_id": doc_id},
+        ) from exc
+    volume_meta = {
+        **upload_rel,
+        "volume_source_path": rel,
+        "volume_source": source,
+    }
+
+    _ensure_staging_store_ready_sync()
+    try:
+        doc = documents_repo.create_document(
+            doc_id=doc_id,
+            filename=filename,
+            mime_type=mime,
+            file_hash=file_hash,
+            org_id=org_id,
+            status=initial_status,
+            metadata=volume_meta,
+        )
+    except Exception as exc:
+        log.exception("create_document failed during ingest-from-volume path=%s", rel)
+        raise ValidationError(
+            f"Could not register document in Arango for {filename}: {exc}",
+            details={"path": rel, "doc_id": doc_id, "exception_type": type(exc).__name__},
+        ) from exc
+    if not process:
+        try:
+            documents_repo.update_document_status(doc_id, DocumentStatus.STAGED)
+        except Exception as exc:
+            log.exception("update_document_status failed path=%s", rel)
+            raise ValidationError(
+                f"Document saved but status update failed: {exc}",
+                details={"path": rel, "doc_id": doc_id, "exception_type": type(exc).__name__},
+            ) from exc
+
+    out: dict[str, Any] = {
+        "doc_id": doc_id,
+        "filename": doc["filename"],
+        "status": DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value,
+        "volume_path": upload_rel.get("volume_relative_path"),
+        "volume_source": source,
+        "volume_source_path": rel,
+    }
+    process_args = (doc_id, content, mime) if process else None
+    return out, process_args
 
 
 @router.post("/ingest-from-volume")
@@ -247,53 +412,32 @@ async def ingest_from_volume(
     ] = False,
 ) -> dict[str, Any]:
     """Register a UC workflow-data file and copy it under uploads/<doc-id>/ (no local picker)."""
-    try:
-        content, filename, mime = ingest_file_from_volume(relative_path=body.path)
-    except FileNotFoundError as exc:
-        raise ValidationError(f"Volume file not found: {body.path}") from exc
-    except ValueError as exc:
-        raise ValidationError(str(exc)) from exc
-
-    file_hash = compute_file_hash(content)
-    _resolve_duplicate_hash(file_hash)
-
     rel = body.path.strip().lstrip("/")
-    source = "builtin" if rel.startswith("builtin/") else "upload"
-    initial_status = DocumentStatus.UPLOADING if process else DocumentStatus.STAGED
-
-    doc = documents_repo.create_document(
-        filename=filename,
-        mime_type=mime,
-        file_hash=file_hash,
-        org_id=org_id,
-        status=initial_status,
-    )
-    doc_id = doc["_key"]
     try:
-        upload_rel = _persist_upload_metadata(doc_id=doc_id, filename=filename, content=content)
+        out, process_args = await asyncio.to_thread(
+            _ingest_from_volume_impl, body, org_id, process
+        )
     except ValidationError:
-        documents_repo.hard_delete_document(doc_id)
         raise
-    volume_meta = {
-        **upload_rel,
-        "volume_source_path": rel,
-        "volume_source": source,
-    }
-    documents_repo.update_document_metadata(doc_id, metadata=volume_meta)
+    except Exception as exc:
+        log.exception("ingest-from-volume failed path=%s", rel)
+        raise ValidationError(
+            f"Could not ingest workflow-data/{rel}: {exc}",
+            details={"path": rel, "exception_type": type(exc).__name__},
+        ) from exc
 
-    if process:
-        _queue_processing(doc_id, content, mime)
-    else:
-        documents_repo.update_document_status(doc_id, DocumentStatus.STAGED)
-
-    return {
-        "doc_id": doc_id,
-        "filename": doc["filename"],
-        "status": DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value,
-        "volume_path": upload_rel.get("volume_relative_path"),
-        "volume_source": source,
-        "volume_source_path": rel,
-    }
+    if process_args is not None:
+        doc_id, content, mime = process_args
+        try:
+            schema_info = await _queue_processing(doc_id, content, mime)
+            out["schema"] = schema_info
+        except Exception as exc:
+            log.exception("queue_processing failed during ingest-from-volume path=%s", rel)
+            raise ValidationError(
+                f"Document saved but processing could not start: {exc}",
+                details={"path": rel, "doc_id": doc_id, "exception_type": type(exc).__name__},
+            ) from exc
+    return out
 
 
 _PREPARE_ALLOWED = frozenset(
@@ -330,13 +474,14 @@ async def prepare_document(doc_id: str) -> dict[str, Any]:
 
     documents_repo.delete_chunks_for_document(doc_id)
     documents_repo.update_document_status(doc_id, DocumentStatus.UPLOADING)
-    _queue_processing(doc_id, content, mime)
+    schema_info = await _queue_processing(doc_id, content, mime)
 
     updated = documents_repo.get_document(doc_id)
     out: dict[str, Any] = {
         "doc_id": doc_id,
         "filename": filename,
         "status": (updated or doc).get("status", DocumentStatus.UPLOADING.value),
+        "schema": schema_info,
     }
     meta = (updated or doc).get("metadata") or {}
     if meta.get("volume_relative_path"):
@@ -423,7 +568,7 @@ async def update_document(
     )
     documents_repo.update_document_status(doc_id, DocumentStatus.UPLOADING)
 
-    _queue_processing(doc_id, content, mime)
+    await _queue_processing(doc_id, content, mime)
 
     updated = documents_repo.get_document(doc_id)
     return _to_doc_response(updated or {"_key": doc_id})

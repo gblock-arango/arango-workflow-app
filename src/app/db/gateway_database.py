@@ -49,6 +49,24 @@ def _q(seg: str) -> str:
     return quote(seg, safe="")
 
 
+def _normalize_return_new(
+    body: Any,
+    *,
+    return_new: bool,
+    fallback: Dict[str, Any] | None = None,
+) -> Any:
+    """Match ``python-arango`` ``insert``/``update`` shape when ``return_new=True``."""
+    if not return_new:
+        return body
+    if isinstance(body, dict) and "new" in body:
+        return body
+    if isinstance(body, dict) and "_key" in body:
+        merged = dict(fallback or {})
+        merged.update(body)
+        return {"new": merged}
+    return {"new": dict(fallback or {})}
+
+
 class GatewayCursor:
     """Minimal cursor over ``result`` batch (extend later for ``hasMore`` / ``id``)."""
 
@@ -352,6 +370,30 @@ class GatewayCollection:
             body["sparse"] = sparse
         return self.add_index(body)
 
+    def add_ttl_index(
+        self,
+        fields: Sequence[str],
+        *,
+        expiry_time: int | float = 0,
+        name: str | None = None,
+        in_background: bool = False,
+        sparse: bool = False,
+        **_: Any,
+    ) -> Any:
+        """``POST /_api/index`` with ``type: ttl`` (migration 006)."""
+        body: Dict[str, Any] = {
+            "type": "ttl",
+            "fields": list(fields),
+            "expireAfter": int(expiry_time),
+        }
+        if name:
+            body["name"] = name
+        if in_background:
+            body["inBackground"] = True
+        if sparse:
+            body["sparse"] = True
+        return self.add_index(body)
+
     def delete_index(self, index_id: str, ignore_missing: bool = False) -> Any:
         safe = quote(index_id, safe="")
         res = self._db._request(
@@ -365,8 +407,9 @@ class GatewayCollection:
             raise
 
     def insert(self, document: Dict[str, Any], **kwargs: Any) -> Any:
+        return_new = bool(kwargs.get("return_new"))
         qs = []
-        if kwargs.get("return_new"):
+        if return_new:
             qs.append("returnNew=true")
         if kwargs.get("sync") is not None:
             qs.append(f"waitForSync={'true' if kwargs['sync'] else 'false'}")
@@ -374,7 +417,8 @@ class GatewayCollection:
         if qs:
             path += "?" + "&".join(qs)
         res = self._db._request("POST", path, json_body=document)
-        return _unwrap_arango_result(res, op="insert")
+        body = _unwrap_arango_result(res, op="insert")
+        return _normalize_return_new(body, return_new=return_new, fallback=document)
 
     def insert_many(self, documents: Sequence[Dict[str, Any]], **_: Any) -> Any:
         path = f"/_db/{_q(self._db.name)}/_api/document/{_q(self.name)}"
@@ -411,13 +455,18 @@ class GatewayCollection:
 
     def update(self, document: Dict[str, Any], **kwargs: Any) -> Any:
         merge = kwargs.get("merge", True)
+        return_new = bool(kwargs.get("return_new"))
         key = document.get("_key") or document.get("_id", "").split("/")[-1]
         path = f"/_db/{_q(self._db.name)}/_api/document/{_q(self.name)}/{_q(str(key))}"
+        if return_new:
+            path += "?returnNew=true"
+        payload = {k: v for k, v in document.items() if k not in ("_key", "_id", "_rev")}
         if not merge:
             res = self._db._request("PUT", path, json_body=document)
         else:
-            res = self._db._request("PATCH", path, json_body=document)
-        return _unwrap_arango_result(res, op="update")
+            res = self._db._request("PATCH", path, json_body=payload)
+        body = _unwrap_arango_result(res, op="update")
+        return _normalize_return_new(body, return_new=return_new, fallback=document)
 
     def replace(self, document: Dict[str, Any]) -> Any:
         key = document.get("_key") or document.get("_id", "").split("/")[-1]
@@ -660,8 +709,13 @@ class GatewayDatabase:
         out = _unwrap_arango_result(res, op="js_tx")
         return out.get("result")
 
+    def _database_admin_path(self, name: str = "") -> str:
+        """User-database admin under ``/_db/<this-db>/_api/database`` (use ``_system``)."""
+        base = f"/_db/{_q(self.name)}/_api/database"
+        return f"{base}/{_q(name)}" if name else base
+
     def databases(self) -> Any:
-        res = self._request("GET", "/_api/database")
+        res = self._request("GET", self._database_admin_path())
         data = _unwrap_arango_result(res, op="databases")
         return data.get("result", [])
 
@@ -669,11 +723,13 @@ class GatewayDatabase:
         return name in self.databases()
 
     def create_database(self, name: str, **_: Any) -> Any:
-        res = self._request("POST", "/_api/database", json_body={"name": name})
+        res = self._request(
+            "POST", self._database_admin_path(), json_body={"name": name}
+        )
         return _unwrap_arango_result(res, op="create_db")
 
     def delete_database(self, name: str, **kwargs: Any) -> Any:
-        res = self._request("DELETE", f"/_api/database/{_q(name)}", json_body=None)
+        res = self._request("DELETE", self._database_admin_path(name), json_body=None)
         try:
             return _unwrap_arango_result(res, op="delete_db")
         except GatewayAPIError:

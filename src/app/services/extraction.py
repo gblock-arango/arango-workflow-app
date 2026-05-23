@@ -199,6 +199,17 @@ async def execute_run(
                 extra={"run_id": run_id},
             )
 
+    try:
+        from app.services.uc_entity_selections import format_uc_entities_for_prompt
+
+        uc_block = format_uc_entities_for_prompt()
+        if uc_block:
+            domain_context = (
+                f"{domain_context}\n\n{uc_block}" if domain_context else uc_block
+            )
+    except Exception:
+        log.debug("UC entity selection context unavailable", exc_info=True)
+
     chunks: list[dict[str, Any]] = []
     for did in doc_ids:
         chunks.extend(_load_document_chunks(db, did))

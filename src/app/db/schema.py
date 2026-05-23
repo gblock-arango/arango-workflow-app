@@ -19,8 +19,8 @@ log = logging.getLogger(__name__)
 _MIGRATIONS_PACKAGE = Path(__file__).resolve().parent.parent.parent / "migrations"
 
 
-def init_schema(db: StandardDatabase) -> None:
-    """Apply all pending database migrations."""
+def init_schema(db: StandardDatabase) -> list[str]:
+    """Apply all pending database migrations. Returns newly applied migration names."""
     migrations_parent = str(_MIGRATIONS_PACKAGE.parent)
     if migrations_parent not in sys.path:
         sys.path.insert(0, migrations_parent)
@@ -32,3 +32,4 @@ def init_schema(db: StandardDatabase) -> None:
         log.info("schema init applied %d migration(s)", len(applied))
     else:
         log.info("schema already up to date")
+    return applied

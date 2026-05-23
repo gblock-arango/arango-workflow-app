@@ -2411,6 +2411,27 @@ _import_jobs: dict[str, dict[str, Any]] = {}
 _import_tasks: dict[str, asyncio.Task[None]] = {}
 
 
+def _import_from_file_with_schema(
+    *,
+    file_content: bytes,
+    filename: str,
+    ontology_id: str,
+    ontology_label: str | None,
+    ontology_uri_prefix: str | None,
+) -> dict[str, Any]:
+    """Run migrations then parse/load ontology bytes (blocking; use via ``to_thread``)."""
+    from app.services.schema_bootstrap import ensure_ontology_schema
+
+    ensure_ontology_schema()
+    return import_from_file(
+        file_content=file_content,
+        filename=filename,
+        ontology_id=ontology_id,
+        ontology_label=ontology_label,
+        ontology_uri_prefix=ontology_uri_prefix,
+    )
+
+
 async def _run_import_job(
     *,
     ontology_id: str,
@@ -2425,7 +2446,7 @@ async def _run_import_job(
         return
     try:
         result = await asyncio.to_thread(
-            import_from_file,
+            _import_from_file_with_schema,
             file_content=content,
             filename=filename,
             ontology_id=ontology_id,
@@ -2444,9 +2465,108 @@ async def _run_import_job(
     except Exception as exc:  # pragma: no cover - defensive
         log.exception("Import job %s failed", ontology_id)
         job["status"] = "failed"
-        job["error_kind"] = "internal"
-        job["error"] = str(exc)
+        job["error_kind"] = type(exc).__name__
+        job["error"] = str(exc).strip() or type(exc).__name__
         job["finished_at"] = time.time()
+
+
+class ImportFromVolumeBody(BaseModel):
+    path: str = Field(..., description="Path under workflow-data, e.g. builtin/ontologies/cyber/foo.jsonld")
+    ontology_id: str | None = Field(None, description="Unique ID; generated if omitted")
+    ontology_label: str | None = Field(None, description="Human-readable label")
+    ontology_uri_prefix: str | None = None
+
+
+def _load_volume_ontology_import(body: ImportFromVolumeBody) -> tuple[bytes, str, str, str]:
+    """Read builtin/volume ontology bytes and validate (sync; run in worker thread)."""
+    from app.services.workflow_data import ingest_file_from_volume
+    from app.workflow_platform import workflow_data_volume as vol
+
+    rel = body.path.strip().lstrip("/")
+    try:
+        content, filename, _mime = ingest_file_from_volume(relative_path=rel)
+    except FileNotFoundError as exc:
+        raise ValidationError(
+            f"Volume file not found at workflow-data/{rel}. Re-run deploy seed or check READ VOLUME.",
+            details={"path": rel},
+        ) from exc
+    except ValueError as exc:
+        raise ValidationError(str(exc), details={"path": rel}) from exc
+    except OSError as exc:
+        raise ValidationError(
+            f"Could not read workflow-data/{rel} from UC volume: {exc}",
+            details={"path": rel, "exception_type": type(exc).__name__},
+        ) from exc
+
+    if not vol.is_allowed_ontology_file(filename):
+        raise ValidationError(f"Not an ontology file: {filename}", details={"path": rel})
+
+    ontology_id = (body.ontology_id or "").strip() or f"import_{int(time.time())}"
+    label = (body.ontology_label or "").strip() or re.sub(
+        r"\.[^.]+$", "", filename
+    ).replace("_", " ").replace("-", " ")
+
+    existing = _import_jobs.get(ontology_id)
+    if existing is not None and existing.get("status") == "running":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Import already in progress for ontology_id '{ontology_id}'",
+        )
+    if registry_repo.get_registry_entry(ontology_id) is not None:
+        raise HTTPException(
+            status_code=409, detail=f"Ontology '{ontology_id}' already exists in the registry"
+        )
+    return content, filename, ontology_id, label
+
+
+@router.post("/import-from-volume", status_code=202)
+async def import_ontology_from_volume(body: ImportFromVolumeBody) -> dict[str, Any]:
+    """Import an ontology file already on the UC workflow-data volume."""
+    rel = body.path.strip().lstrip("/")
+    try:
+        content, filename, ontology_id, label = await asyncio.to_thread(
+            _load_volume_ontology_import, body
+        )
+    except HTTPException:
+        raise
+    except ValidationError:
+        raise
+    except Exception as exc:
+        log.exception("volume ontology import prep failed path=%s", rel)
+        raise ValidationError(
+            f"Could not prepare ontology import for workflow-data/{rel}: {exc}",
+            details={"path": rel, "exception_type": type(exc).__name__},
+        ) from exc
+
+    _import_jobs[ontology_id] = {
+        "ontology_id": ontology_id,
+        "status": "running",
+        "filename": filename,
+        "ontology_label": label,
+        "started_at": time.time(),
+        "volume_path": body.path,
+    }
+    task = asyncio.create_task(
+        _run_import_job(
+            ontology_id=ontology_id,
+            content=content,
+            filename=filename,
+            ontology_label=label,
+            ontology_uri_prefix=body.ontology_uri_prefix,
+        )
+    )
+    _import_tasks[ontology_id] = task
+
+    def _drop_task_ref(_completed: asyncio.Task[None], oid: str = ontology_id) -> None:
+        _import_tasks.pop(oid, None)
+
+    task.add_done_callback(_drop_task_ref)
+    return {
+        "ontology_id": ontology_id,
+        "status": "running",
+        "filename": filename,
+        "job_status_url": f"/api/v1/ontology/import/{ontology_id}/status",
+    }
 
 
 @router.post("/import", status_code=202)

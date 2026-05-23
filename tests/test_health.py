@@ -34,17 +34,11 @@ def test_ready_when_gateway_and_arango_ok(mock_ready_sync):
     assert "Arango 3.12.4" in body["database"]
 
 
-@patch("app.api.health.get_db")
-@patch("app.api.health.gateway_connectivity_status")
-def test_ready_sync_impl_when_gateway_and_arango_ok(mock_gw_status, mock_get_db):
-    mock_gw_status.return_value = {
-        "gateway_url": "https://arango-gateway-app.example.aws.databricksapps.com",
-        "gateway_ok": True,
-        "gateway_message": "Gateway reachable",
-    }
-    db = MagicMock()
-    db.version.return_value = {"version": "3.12.4"}
-    mock_get_db.return_value = db
+@patch("app.db.client._connect_gateway")
+def test_ready_sync_impl_when_gateway_and_arango_ok(mock_connect):
+    client = MagicMock()
+    client.server_version = "3.12.4"
+    mock_connect.return_value = client
 
     from app.api.health import _ready_sync
 
@@ -52,10 +46,13 @@ def test_ready_sync_impl_when_gateway_and_arango_ok(mock_gw_status, mock_get_db)
     assert body["status"] == "ready"
     assert "Arango 3.12.4" in body["database"]
     assert body["gateway"] == "Gateway reachable"
+    mock_connect.assert_called_once()
 
 
 @patch("app.api.health.gateway_connectivity_status")
-def test_ready_not_ready_when_gateway_unreachable(mock_gw_status):
+@patch("app.db.client._connect_gateway")
+def test_ready_not_ready_when_gateway_unreachable(mock_connect, mock_gw_status):
+    mock_connect.side_effect = RuntimeError("connect failed")
     mock_gw_status.return_value = {
         "gateway_url": "https://arango-gateway-app.example.aws.databricksapps.com",
         "gateway_ok": False,

@@ -15,6 +15,10 @@ set -euo pipefail
 # Runtime config lives in ``app.yaml`` (injected by Databricks Apps). This script reads the same
 # file for deploy-time values (warehouse id, UC table names). Shell env / $7 still override.
 #
+# LLM secrets: keep ``value: ""`` in app.yaml in git. Before sync/deploy, this script copies
+# app.yaml to ``.app.yaml.deploy-backup``, injects OPENAI_API_KEY / ANTHROPIC_API_KEY /
+# OPENAI_BASE_URL from the environment (or repo ``.env``), syncs, then restores app.yaml on exit.
+#
 # After deploy: ./scripts/set_user_api_scopes.sh (User authorization / OBO for peer App calls).
 # Inspect UC: ./scripts/read_uc_peer_registry.sh
 # Next.js build output: logs/frontend-build.log (set WORKFLOW_FRONTEND_BUILD_FAIL_DEPLOY=1 to abort deploy on failure).
@@ -155,6 +159,40 @@ fi
 FRONTEND_OUT_DIR="${SCRIPT_DIR}/src/frontend/out"
 FRONTEND_OUT_REMOTE="${SOURCE_CODE_PATH}/src/frontend/out"
 
+APP_YAML="${SCRIPT_DIR}/app.yaml"
+INJECT_SECRETS_SCRIPT="${SCRIPT_DIR}/scripts/inject_app_yaml_secrets.py"
+
+_restore_app_yaml_secrets() {
+  if [[ -f "${INJECT_SECRETS_SCRIPT}" ]]; then
+    "${PYTHON_BIN}" "${INJECT_SECRETS_SCRIPT}" restore "${APP_YAML}" 2>/dev/null || true
+  fi
+}
+
+LOAD_DOTENV_SCRIPT="${SCRIPT_DIR}/scripts/load_deploy_dotenv.py"
+if [[ -f "${SCRIPT_DIR}/.env" && -f "${LOAD_DOTENV_SCRIPT}" ]]; then
+  echo "Loading deploy secrets from ${SCRIPT_DIR}/.env"
+  # shellcheck disable=SC1090
+  eval "$("${PYTHON_BIN}" "${LOAD_DOTENV_SCRIPT}" "${SCRIPT_DIR}/.env")"
+fi
+
+if [[ -f "${INJECT_SECRETS_SCRIPT}" ]]; then
+  if ! "${PYTHON_BIN}" "${INJECT_SECRETS_SCRIPT}" prepare "${APP_YAML}"; then
+    echo "ERROR: inject_app_yaml_secrets.py prepare failed." >&2
+    exit 1
+  fi
+  trap _restore_app_yaml_secrets EXIT
+  _openai_deploy_key="$("${PYTHON_BIN}" "${SCRIPT_DIR}/scripts/read_app_yaml_env.py" OPENAI_API_KEY "${APP_YAML}" 2>/dev/null || true)"
+  if [[ -z "${_openai_deploy_key// }" ]]; then
+    echo "WARNING: OPENAI_API_KEY is empty after deploy injection." >&2
+    echo "  Export OPENAI_API_KEY, add it to ${SCRIPT_DIR}/.env, or set in Databricks App UI after deploy." >&2
+    echo "  LLM embedding/extraction will fail until a key is configured." >&2
+  else
+    echo "OPENAI_API_KEY will be deployed via app.yaml for this sync only."
+  fi
+else
+  echo "NOTE: ${INJECT_SECRETS_SCRIPT} missing; app.yaml is synced as-is." >&2
+fi
+
 echo "Syncing local project to '${SOURCE_CODE_PATH}'..."
 _databricks sync . "${SOURCE_CODE_PATH}"
 
@@ -170,7 +208,7 @@ else
   echo "=== Syncing OntoExtract UI (src/frontend/out) to workspace ==="
   echo "  Local:  ${FRONTEND_OUT_DIR} (${_html_count} top-level .html files, incl. dashboard.html)"
   echo "  Remote: ${FRONTEND_OUT_REMOTE}"
-  echo "  (explicit --full sync; required because databricks sync . often skips build output)"
+  echo "  explicit --full sync; required because databricks sync . often skips build output"
   _databricks sync --full "${FRONTEND_OUT_DIR}" "${FRONTEND_OUT_REMOTE}"
   echo "=== Frontend static export sync complete ==="
 fi
@@ -191,14 +229,14 @@ _databricks apps deploy "${APP_NAME}" \
 echo "Fetching app metadata..."
 APP_JSON="$(_databricks apps get "${APP_NAME}" --output json)"
 APP_URL="$(
-  "${PYTHON_BIN}" -c 'import json,sys; print(json.load(sys.stdin).get("url",""))' <<< "${APP_JSON}"
+  APP_JSON="${APP_JSON}" "${PYTHON_BIN}" -c 'import json,os; print(json.loads(os.environ["APP_JSON"]).get("url",""))'
 )"
 APP_URL_NUMERIC_SUFFIX="$(_parse_app_url_numeric_suffix "${APP_JSON}")"
 APP_RESOURCE_ID="$(
-  "${PYTHON_BIN}" -c 'import json,sys; j=json.load(sys.stdin); print(j.get("id") or j.get("app_id") or "")' <<< "${APP_JSON}"
+  APP_JSON="${APP_JSON}" "${PYTHON_BIN}" -c 'import json,os; j=json.loads(os.environ["APP_JSON"]); print(j.get("id") or j.get("app_id") or "")'
 )"
 APP_SERVICE_PRINCIPAL_CLIENT_ID="$(
-  "${PYTHON_BIN}" -c 'import json,sys; print(json.load(sys.stdin).get("service_principal_client_id",""))' <<< "${APP_JSON}"
+  APP_JSON="${APP_JSON}" "${PYTHON_BIN}" -c 'import json,os; print(json.loads(os.environ["APP_JSON"]).get("service_principal_client_id",""))'
 )"
 
 if [[ -z "${APP_URL}" ]]; then
@@ -215,7 +253,7 @@ print_deployed_app_urls
 
 SET_USER_SCOPES_SCRIPT="${SCRIPT_DIR}/scripts/set_user_api_scopes.sh"
 if [[ -x "${SET_USER_SCOPES_SCRIPT}" ]]; then
-  echo "Setting user_api_scopes on '${APP_NAME}' (User authorization / OBO)…"
+  echo "Setting user_api_scopes on '${APP_NAME}' for User authorization / OBO…"
   if ! "${SET_USER_SCOPES_SCRIPT}" "${APP_NAME}" "${PROFILE}"; then
     echo "NOTE: set_user_api_scopes.sh failed. Peer App proxy may 401 until fixed. Re-run: ${SET_USER_SCOPES_SCRIPT} ${APP_NAME} ${PROFILE}" >&2
   fi
@@ -256,6 +294,17 @@ fi
 REGISTRY_CATALOG="$(echo "${REGISTRY_TABLE}" | cut -d. -f1)"
 REGISTRY_SCHEMA="$(echo "${REGISTRY_TABLE}" | cut -d. -f2)"
 UC_GRAPH_VOLUME_NAME="${UC_GRAPH_VOLUME_NAME:-arango_workflow_volume}"
+
+echo "Granting UC table metadata read + annotation write (Add Tables /api/v1/uc) on ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}…"
+echo "  SELECT ON SCHEMA — list tables, read table/column metadata via WorkspaceClient"
+echo "  MODIFY ON SCHEMA — COMMENT ON TABLE / ALTER COLUMN COMMENT when users click Save"
+if ! run_sql_statement "GRANT SELECT ON SCHEMA ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA} TO \`${APP_SERVICE_PRINCIPAL_CLIENT_ID}\`"; then
+  echo "NOTE: GRANT SELECT ON SCHEMA ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA} failed — Add Tables may not list or load UC tables." >&2
+fi
+if ! run_sql_statement "GRANT MODIFY ON SCHEMA ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA} TO \`${APP_SERVICE_PRINCIPAL_CLIENT_ID}\`"; then
+  echo "NOTE: GRANT MODIFY ON SCHEMA ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA} failed — Add Tables cannot push annotations to UC." >&2
+fi
+
 echo "Ensuring UC workflow-data volume ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_GRAPH_VOLUME_NAME}…"
 run_sql_statement "CREATE VOLUME IF NOT EXISTS ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_GRAPH_VOLUME_NAME}"
 run_sql_statement "GRANT READ VOLUME, WRITE VOLUME ON VOLUME ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_GRAPH_VOLUME_NAME} TO \`${APP_SERVICE_PRINCIPAL_CLIENT_ID}\`"
@@ -292,6 +341,7 @@ echo "  Gateway: UC ${ARANGO_GATEWAY_REGISTRY_TABLE} unless ARANGO_GATEWAY_BASE_
 echo "  MCP agent: UC ${ARANGO_AGENT_REGISTRY_TABLE} unless ARANGO_AGENT_BASE_URL is set."
 echo "  This app's URL: UC ${ARANGO_WORKFLOW_REGISTRY_TABLE} (for mcp-arango-agent /mcp/aoe)."
 echo "  Arango connection row (for gateway upstream): ${REGISTRY_TABLE}"
+echo "  Add Tables UC scope: SELECT + MODIFY on SCHEMA ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}; other schemas need extra GRANTs"
 echo "  Inspect locally: ./scripts/read_uc_peer_registry.sh ${PROFILE}"
 echo
 echo "To export in your current shell:"

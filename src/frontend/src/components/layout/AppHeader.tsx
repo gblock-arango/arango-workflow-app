@@ -1,12 +1,15 @@
 "use client";
 
-import { withBasePath } from "@/lib/base-path";
+import AppLink from "@/components/layout/AppLink";
 
 export function AppHeaderNav() {
   return (
-    <a href={withBasePath("/")} className="text-sm text-gray-500 hover:text-gray-700">
+    <AppLink
+      href="/"
+      className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
+    >
       Home
-    </a>
+    </AppLink>
   );
 }
 

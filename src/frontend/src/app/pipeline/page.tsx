@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { api } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import AppHeader from "@/components/layout/AppHeader";
+import LlmConnectivityBadge from "@/components/layout/LlmConnectivityBadge";
 import RunList from "@/components/pipeline/RunList";
 import RunMetrics from "@/components/pipeline/RunMetrics";
 import ErrorLog from "@/components/pipeline/ErrorLog";
@@ -93,10 +94,11 @@ function PipelineMonitorInner() {
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">
       <AppHeader
-        title="Agents"
-        subtitle="Real-time extraction pipeline dashboard"
+        title="Run Extraction"
+        subtitle="Manage agentic extraction workflows using the real-time pipeline dashboard"
         actions={
           <>
+            <LlmConnectivityBadge />
             {selectedRunId && (
               <div className="flex items-center gap-2 text-xs">
                 <span

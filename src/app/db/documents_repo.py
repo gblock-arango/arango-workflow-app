@@ -33,12 +33,13 @@ def create_document(
     org_id: str | None = None,
     metadata: dict[str, Any] | None = None,
     status: DocumentStatus = DocumentStatus.UPLOADING,
+    doc_id: str | None = None,
     db: StandardDatabase | None = None,
 ) -> dict[str, Any]:
     """Insert a new document record.  Returns the full stored document."""
     db = db or get_db()
     col = db.collection(DOCUMENTS_COLLECTION)
-    doc = {
+    doc: dict[str, Any] = {
         "filename": filename,
         "mime_type": mime_type,
         "file_hash": file_hash,
@@ -48,6 +49,8 @@ def create_document(
         "chunk_count": 0,
         "metadata": metadata or {},
     }
+    if doc_id:
+        doc["_key"] = doc_id
     result = cast("dict[str, Any]", col.insert(doc, return_new=True))
     return cast(dict[str, Any], result["new"])
 

@@ -1,5 +1,6 @@
 .env
 .env.local
+.app.yaml.deploy-backup
 logs/
 node_modules/
 src/frontend/.next/

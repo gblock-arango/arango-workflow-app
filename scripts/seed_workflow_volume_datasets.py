@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Seed repo ``datasets/`` into UC ``workflow-data/builtin/<domain>/`` (deploy-time, from laptop/CI).
+"""Seed repo ``datasets/`` into UC ``workflow-data/builtin/`` (deploy-time, from laptop/CI).
 
 Uses the Databricks Files API (requires ``databricks auth login`` or profile).
 App startup also seeds when ``WORKFLOW_DATA_SEED_ON_STARTUP=true`` and ``/Volumes`` is mounted.
 
-Layout (layout_version 2): no ``builtin/corpora/`` — each repo domain folder maps to
-``/Volumes/<catalog>/<schema>/<volume>/workflow-data/builtin/<domain>/``.
+Layout (layout_version 2):
+  - Documents: ``datasets/<domain>/*.{md,...}`` → ``builtin/<domain>/``
+  - Ontologies: ``*.jsonld`` → ``builtin/ontologies/<domain>/`` (cyber from ``datasets/cyber/``)
+  - Instance CSV/JSON under ``datasets/cyber/``: not copied (repo-only)
+  - Manifest: ``settings/.seed_manifest.json`` (not shown in ontology browse)
 """
 
 from __future__ import annotations
@@ -38,38 +41,67 @@ def _upload_via_sdk(
     w = WorkspaceClient(**kwargs)
 
     subdir = vol._workflow_data_dir_name()
-    dest_prefix = f"/Volumes/{catalog}/{schema}/{volume}/{subdir}/{vol.BUILTIN_SUBDIR}"
+    dest_prefix = f"/Volumes/{catalog}/{schema}/{volume}/{subdir}"
+    builtin_prefix = f"{dest_prefix}/{vol.BUILTIN_SUBDIR}"
+    settings_prefix = f"{dest_prefix}/{vol.SETTINGS_SUBDIR}"
     skip_dirs = vol._builtin_seed_skip_dirs()
     copied = 0
     domains: list[str] = []
+    ontology_domains: list[str] = []
 
     for domain_dir in sorted(datasets_dir.iterdir()):
         if not domain_dir.is_dir() or domain_dir.name in skip_dirs or domain_dir.name.startswith("."):
             continue
         domain_files = 0
         for f in sorted(domain_dir.iterdir()):
-            if not f.is_file() or not vol.is_allowed_document_file(f.name):
+            if not f.is_file():
                 continue
-            remote = f"{dest_prefix}/{domain_dir.name}/{f.name}"
-            with f.open("rb") as stream:
-                w.files.upload(remote, stream, overwrite=True)
-            copied += 1
-            domain_files += 1
+            if vol.is_allowed_document_file(f.name):
+                remote = f"{builtin_prefix}/{domain_dir.name}/{f.name}"
+                with f.open("rb") as stream:
+                    w.files.upload(remote, stream, overwrite=True)
+                copied += 1
+                domain_files += 1
+            elif vol.is_allowed_ontology_file(f.name) and f.name.lower().endswith(
+                (".jsonld", ".json-ld")
+            ):
+                remote = f"{builtin_prefix}/ontologies/{domain_dir.name}/{f.name}"
+                with f.open("rb") as stream:
+                    w.files.upload(remote, stream, overwrite=True)
+                copied += 1
+                if domain_dir.name not in ontology_domains:
+                    ontology_domains.append(domain_dir.name)
         if domain_files:
             domains.append(domain_dir.name)
 
-    manifest_remote = f"{dest_prefix}/{vol.SEED_MANIFEST_NAME}"
+    cyber_src = datasets_dir / "cyber"
+    if cyber_src.is_dir():
+        for f in sorted(cyber_src.iterdir()):
+            if f.is_file() and f.name.lower().endswith((".jsonld", ".json-ld")):
+                remote = f"{builtin_prefix}/ontologies/cyber/{f.name}"
+                with f.open("rb") as stream:
+                    w.files.upload(remote, stream, overwrite=True)
+                copied += 1
+        if "cyber" not in ontology_domains:
+            ontology_domains.append("cyber")
+
+    manifest_remote = f"{settings_prefix}/{vol.SEED_MANIFEST_NAME}"
     payload = {
         "ok": True,
         "skipped": False,
         "layout_version": 2,
         "files_copied": copied,
         "domains": domains,
+        "ontology_domains": sorted(ontology_domains),
         "source": str(datasets_dir),
-        "destination": dest_prefix,
+        "destination": builtin_prefix,
+        "manifest_path": vol.SEED_MANIFEST_REL,
         "via": "databricks-sdk",
         "force": force,
-        "note": "One UC folder per repo datasets/<domain>/ (no builtin/corpora/).",
+        "note": (
+            "Documents per datasets/<domain>/; ontologies under builtin/ontologies/; "
+            "cyber instance CSV/JSON not uploaded."
+        ),
     }
     import tempfile
 
@@ -94,7 +126,7 @@ def main() -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Upload all files even if .seed_manifest.json already exists on the volume",
+        help="Upload all files even if settings/.seed_manifest.json already exists on the volume",
     )
     args = parser.parse_args()
 

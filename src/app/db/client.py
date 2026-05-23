@@ -9,7 +9,7 @@ import app.config as app_config
 from app.config import Settings
 from app.db.gateway_arango_client import GatewayArangoClient
 from app.db.gateway_config import effective_gateway_url, get_gateway_settings
-from app.db.gateway_database import GatewayDatabase
+from app.db.gateway_database import GatewayAPIError, GatewayDatabase
 from app.workflow_platform.runtime import workflow_config_dict
 
 log = logging.getLogger(__name__)
@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 _gateway_client: GatewayArangoClient | None = None
 _dbs: dict[str, GatewayDatabase] = {}
 _config_signature: tuple[Any, ...] | None = None
+_database_ensured: bool = False
 
 
 def _settings_signature() -> tuple[Any, ...]:
@@ -61,10 +62,49 @@ def _connect_gateway() -> GatewayArangoClient:
     return _gateway_client
 
 
+def _ensure_database_exists() -> None:
+    """Create ``settings.arango_db`` via ``_system`` when missing (gateway mode).
+
+    Skipped on managed platforms where ``_system`` access is restricted.
+    """
+    global _database_ensured
+    if _database_ensured:
+        return
+
+    settings = _get_settings()
+    if not settings.can_create_databases:
+        log.info(
+            "skipping auto-create database on managed platform — database must be pre-provisioned",
+            extra={"db": settings.arango_db, "mode": settings.test_deployment_mode.value},
+        )
+        return
+
+    sys_db = get_system_db()
+    db_name = settings.arango_db
+    try:
+        if sys_db.has_database(db_name):
+            _database_ensured = True
+            return
+    except GatewayAPIError:
+        log.warning("could not list Arango databases via gateway", exc_info=True)
+
+    log.info("creating Arango database via gateway", extra={"db": db_name})
+    try:
+        sys_db.create_database(db_name)
+    except GatewayAPIError as exc:
+        # 1207: duplicate database name
+        if exc.error_code == 1207:
+            _database_ensured = True
+            return
+        raise
+    _database_ensured = True
+
+
 def get_db() -> GatewayDatabase:
     global _dbs
     settings = _get_settings()
     client = _connect_gateway()
+    _ensure_database_exists()
     if settings.arango_db not in _dbs:
         _dbs[settings.arango_db] = GatewayDatabase(client, settings.arango_db)
     return _dbs[settings.arango_db]
@@ -78,9 +118,10 @@ def get_system_db() -> GatewayDatabase:
 
 
 def close_db() -> None:
-    global _gateway_client, _dbs, _config_signature
+    global _gateway_client, _dbs, _config_signature, _database_ensured
     if _gateway_client is not None:
         _gateway_client.disconnect()
     _gateway_client = None
     _dbs = {}
     _config_signature = None
+    _database_ensured = False

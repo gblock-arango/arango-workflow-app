@@ -11,8 +11,8 @@ Unified **Databricks App**: FastAPI BFF + static Next.js. Genie chat is proxied 
 **Order:** gateway → mcp-arango-agent → this app.
 
 ```bash
-# 1. Edit app.yaml (DATABRICKS_SQL_WAREHOUSE_ID, registry tables, secrets in App UI)
-# 2. Set APP_SECRET_KEY + LLM keys in Databricks App environment / secrets (see app.yaml comments)
+# 1. Edit app.yaml (DATABRICKS_SQL_WAREHOUSE_ID, registry tables; keep OPENAI_API_KEY value empty in git)
+# 2. export OPENAI_API_KEY=...  (or put in .env) before ./deploy_app.sh — injected at deploy only
 
 ../arango-gateway-app/deploy_app.sh
 ../arango-mcp-app/deploy_app.sh
@@ -23,6 +23,7 @@ Unified **Databricks App**: FastAPI BFF + static Next.js. Genie chat is proxied 
 `deploy_app.sh` will:
 
 - Read **warehouse id and UC table names from `app.yaml`** (shell env still overrides)
+- **Inject `OPENAI_API_KEY`** (and optional `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`) from env/`.env` into `app.yaml` for sync only, then restore the empty value locally
 - Build the Next.js static export (`src/frontend/out`)
 - `databricks sync` + `apps deploy`
 - Grant UC `SELECT` to the app service principal

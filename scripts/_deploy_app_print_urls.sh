@@ -15,16 +15,16 @@ _workflow_public_base_url() {
 
 _parse_app_url_numeric_suffix() {
   local json="$1"
-  "${PYTHON_BIN:-python3}" -c "
-import json, sys
+  APP_JSON="${json}" "${PYTHON_BIN:-python3}" -c "
+import json, os
 from urllib.parse import urlparse
-j = json.load(sys.stdin)
+j = json.loads(os.environ['APP_JSON'])
 url = j.get('url', '') or ''
 host = urlparse(url).hostname or ''
 sub = host.split('.')[0] if host else ''
 parts = sub.rsplit('-', 1)
 print(parts[1] if len(parts) == 2 and parts[1].isdigit() else '')
-" <<< "${json}"
+"
 }
 
 print_deployed_app_urls() {
