@@ -10,9 +10,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Query, UploadFile
+from fastapi import APIRouter, Header, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_or_404
@@ -23,6 +23,8 @@ from app.db.utils import run_aql
 from app.models.common import PaginatedResponse
 from app.models.documents import DocumentStatus
 from app.services.ingestion import compute_file_hash
+from app.services.upload_filename import resolve_upload_filename
+from app.workflow_platform import workflow_data_volume as vol
 from app.services.schema_bootstrap import (
     ensure_ontology_schema_async,
     ensure_staging_schema,
@@ -35,7 +37,13 @@ from app.services.workflow_data import (
     read_staged_document_bytes,
     workflow_data_status,
 )
-from app.tasks import process_document
+from app.tasks import (
+    process_document,
+    request_pipeline_cancel,
+    run_chunk_stage,
+    run_embed_stage,
+    run_parse_stage,
+)
 
 log = logging.getLogger(__name__)
 
@@ -64,26 +72,25 @@ _EXTENSION_FALLBACK: dict[str, str] = {
 }
 
 
-def _validate_mime(file: UploadFile) -> str:
+def _validate_mime(*, filename: str, content_type: str | None) -> str:
     """Return the validated MIME type, raising ValidationError if unsupported.
 
     Falls back to filename-extension sniffing for known Office formats so
     a misconfigured browser ("application/octet-stream") doesn't block a
     legitimate upload.
     """
-    mime = file.content_type or ""
+    mime = content_type or ""
     if mime in _ALLOWED_MIME_TYPES:
         return mime
 
-    if file.filename:
-        lower = file.filename.lower()
-        for suffix, fallback in _EXTENSION_FALLBACK.items():
-            if lower.endswith(suffix):
-                return fallback
+    lower = (filename or "").lower()
+    for suffix, fallback in _EXTENSION_FALLBACK.items():
+        if lower.endswith(suffix):
+            return fallback
 
     raise ValidationError(
         f"Unsupported file type: {mime}",
-        details={"allowed": sorted(_ALLOWED_MIME_TYPES)},
+        details={"allowed": sorted(_ALLOWED_MIME_TYPES), "filename": filename},
     )
 
 
@@ -94,6 +101,15 @@ class IngestFromVolumeBody(BaseModel):
         ...,
         description="Path relative to workflow-data root, e.g. builtin/financial/foo.md",
     )
+
+
+class PipelineBatchBody(BaseModel):
+    doc_ids: list[str] = Field(..., min_length=1, max_length=100)
+    stage: Literal["parse", "chunk", "embed"]
+
+
+class PipelineCancelBody(BaseModel):
+    doc_ids: list[str] = Field(default_factory=list)
 
 
 def _resolve_duplicate_hash(file_hash: str) -> None:
@@ -219,6 +235,13 @@ def _to_doc_response(doc: dict[str, Any]) -> dict[str, Any]:
 async def upload_document(
     file: UploadFile,
     org_id: Annotated[str | None, Query()] = None,
+    x_original_filename: Annotated[
+        str | None,
+        Header(
+            alias="X-Original-Filename",
+            description="Original client filename when multipart omits Content-Disposition",
+        ),
+    ] = None,
     process: Annotated[
         bool,
         Query(
@@ -231,14 +254,21 @@ async def upload_document(
 ) -> dict[str, Any]:
     """Save upload to UC workflow-data; optionally start parse/chunk/embed."""
     content = await file.read()
-    mime = _validate_mime(file)
+    filename = resolve_upload_filename(
+        upload_name=file.filename,
+        client_hint=x_original_filename,
+        content_type=file.content_type,
+        content=content,
+    )
+    mime = _validate_mime(filename=filename, content_type=file.content_type)
 
     file_hash = compute_file_hash(content)
-    _resolve_duplicate_hash(file_hash)
+    await _ensure_staging_store_ready()
+    await asyncio.to_thread(_resolve_duplicate_hash, file_hash)
 
-    filename = file.filename or "untitled"
     initial_status = DocumentStatus.UPLOADING if process else DocumentStatus.STAGED
     doc_id = secrets.token_hex(8)
+    volume_meta: dict[str, Any] = {}
     try:
         volume_meta = await asyncio.to_thread(
             _persist_upload_metadata,
@@ -246,11 +276,10 @@ async def upload_document(
             filename=filename,
             content=content,
         )
-    except ValidationError:
-        raise
+        volume_meta["original_filename"] = filename
+        if file.filename and file.filename != filename:
+            volume_meta["multipart_filename"] = file.filename
 
-    await _ensure_staging_store_ready()
-    try:
         doc = await asyncio.to_thread(
             documents_repo.create_document,
             doc_id=doc_id,
@@ -261,8 +290,16 @@ async def upload_document(
             status=initial_status,
             metadata=volume_meta,
         )
+    except ValidationError:
+        rel = volume_meta.get("volume_relative_path")
+        if rel:
+            await asyncio.to_thread(vol.delete_relative, rel)
+        raise
     except Exception as exc:
         log.exception("create_document failed during upload doc_id=%s", doc_id)
+        rel = volume_meta.get("volume_relative_path")
+        if rel:
+            await asyncio.to_thread(vol.delete_relative, rel)
         raise ValidationError(
             f"Could not register document in Arango: {exc}",
             details={"exception_type": type(exc).__name__, "doc_id": doc_id},
@@ -301,8 +338,8 @@ async def volume_browse(
     ),
 ) -> dict[str, Any]:
     """List ingestible files on the UC volume (built-in corpora and prior uploads)."""
-    if file_kind not in ("all", "document", "ontology"):
-        raise ValidationError("file_kind must be all, document, or ontology")
+    if file_kind not in ("all", "document", "ontology", "instance"):
+        raise ValidationError("file_kind must be all, document, ontology, or instance")
     try:
         files = await asyncio.to_thread(
             browse_volume, prefix=prefix, limit=limit, file_kind=file_kind
@@ -336,6 +373,7 @@ def _ingest_from_volume_impl(
         ) from exc
 
     file_hash = compute_file_hash(content)
+    _ensure_staging_store_ready_sync()
     try:
         _resolve_duplicate_hash(file_hash)
     except ConflictError as exc:
@@ -361,7 +399,6 @@ def _ingest_from_volume_impl(
         "volume_source": source,
     }
 
-    _ensure_staging_store_ready_sync()
     try:
         doc = documents_repo.create_document(
             doc_id=doc_id,
@@ -448,6 +485,134 @@ _PREPARE_ALLOWED = frozenset(
     }
 )
 
+_ACTIVE_PIPELINE_STATUSES = frozenset(
+    {
+        DocumentStatus.PARSING,
+        DocumentStatus.CHUNKING,
+        DocumentStatus.EMBEDDING,
+        DocumentStatus.UPLOADING,
+    }
+)
+
+
+def _track_background_task(task: asyncio.Task[None]) -> None:
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+def _pipeline_flags(doc: dict[str, Any]) -> dict[str, bool]:
+    pipeline = (doc.get("metadata") or {}).get("pipeline") or {}
+    status = doc.get("status", "")
+    return {
+        "parsed": bool(pipeline.get("parsed"))
+        or status
+        in (
+            DocumentStatus.PARSED,
+            DocumentStatus.CHUNKING,
+            DocumentStatus.CHUNKED,
+            DocumentStatus.EMBEDDING,
+            DocumentStatus.READY,
+        ),
+        "chunked": bool(pipeline.get("chunked"))
+        or status
+        in (
+            DocumentStatus.CHUNKED,
+            DocumentStatus.EMBEDDING,
+            DocumentStatus.READY,
+        )
+        or int(doc.get("chunk_count") or 0) > 0,
+        "embedded": bool(pipeline.get("embedded")) or status == DocumentStatus.READY,
+    }
+
+
+async def _run_pipeline_stage(doc_id: str, stage: Literal["parse", "chunk", "embed"]) -> None:
+    await ensure_ontology_schema_async()
+    if stage == "parse":
+        doc = documents_repo.get_document(doc_id)
+        if not doc:
+            return
+        content, _filename, mime = read_staged_document_bytes(doc)
+        await run_parse_stage(doc_id, content, mime)
+    elif stage == "chunk":
+        await run_chunk_stage(doc_id)
+    else:
+        await run_embed_stage(doc_id)
+
+
+def _queue_pipeline_stage(doc_id: str, stage: Literal["parse", "chunk", "embed"]) -> None:
+    task = asyncio.create_task(_run_pipeline_stage(doc_id, stage))
+    _track_background_task(task)
+
+
+def _assert_stage_allowed(doc: dict[str, Any], stage: Literal["parse", "chunk", "embed"]) -> None:
+    status = doc.get("status", "")
+    if status in _ACTIVE_PIPELINE_STATUSES:
+        raise ConflictError(f"Document is already processing (status={status})")
+    flags = _pipeline_flags(doc)
+    if stage == "parse":
+        if status == DocumentStatus.READY:
+            raise ValidationError("Document is already completed")
+        return
+    if stage == "chunk":
+        if not flags["parsed"]:
+            raise ValidationError("Parse this document before chunking")
+        if flags["embedded"]:
+            raise ValidationError("Document is already completed")
+        return
+    if not flags["chunked"]:
+        raise ValidationError("Chunk this document before embedding")
+    if flags["embedded"]:
+        raise ValidationError("Document is already embedded")
+
+
+@router.post("/pipeline/batch")
+async def pipeline_batch(body: PipelineBatchBody) -> dict[str, Any]:
+    """Start parse, chunk, or embed for multiple documents (background tasks)."""
+    queued: list[str] = []
+    for doc_id in body.doc_ids:
+        doc = documents_repo.get_document(doc_id)
+        if not doc:
+            continue
+        try:
+            _assert_stage_allowed(doc, body.stage)
+        except (ValidationError, ConflictError):
+            continue
+        _queue_pipeline_stage(doc_id, body.stage)
+        queued.append(doc_id)
+    return {"stage": body.stage, "queued": queued, "count": len(queued)}
+
+
+@router.post("/pipeline/cancel")
+async def pipeline_cancel(body: PipelineCancelBody) -> dict[str, Any]:
+    """Request cancellation between pipeline stages (best-effort)."""
+    for doc_id in body.doc_ids:
+        request_pipeline_cancel(doc_id)
+    return {"cancelled": body.doc_ids, "count": len(body.doc_ids)}
+
+
+@router.post("/{doc_id}/pipeline/parse")
+async def pipeline_parse(doc_id: str) -> dict[str, Any]:
+    doc = get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
+    _assert_stage_allowed(doc, "parse")
+    _queue_pipeline_stage(doc_id, "parse")
+    return {"doc_id": doc_id, "stage": "parse", "status": "queued"}
+
+
+@router.post("/{doc_id}/pipeline/chunk")
+async def pipeline_chunk(doc_id: str) -> dict[str, Any]:
+    doc = get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
+    _assert_stage_allowed(doc, "chunk")
+    _queue_pipeline_stage(doc_id, "chunk")
+    return {"doc_id": doc_id, "stage": "chunk", "status": "queued"}
+
+
+@router.post("/{doc_id}/pipeline/embed")
+async def pipeline_embed(doc_id: str) -> dict[str, Any]:
+    doc = get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
+    _assert_stage_allowed(doc, "embed")
+    _queue_pipeline_stage(doc_id, "embed")
+    return {"doc_id": doc_id, "stage": "embed", "status": "queued"}
+
 
 @router.post("/{doc_id}/prepare")
 async def prepare_document(doc_id: str) -> dict[str, Any]:
@@ -456,11 +621,7 @@ async def prepare_document(doc_id: str) -> dict[str, Any]:
     status = doc.get("status", "")
     if status == DocumentStatus.READY:
         raise ValidationError("Document is already prepared (status=ready)")
-    if status in (
-        DocumentStatus.PARSING,
-        DocumentStatus.CHUNKING,
-        DocumentStatus.EMBEDDING,
-    ):
+    if status in _ACTIVE_PIPELINE_STATUSES:
         raise ConflictError(f"Document is already processing (status={status})")
     if status not in _PREPARE_ALLOWED:
         raise ValidationError(f"Cannot prepare document with status={status}")
@@ -491,7 +652,7 @@ async def prepare_document(doc_id: str) -> dict[str, Any]:
 
 @router.get("")
 async def list_documents(
-    limit: int = Query(default=25, ge=1, le=100),
+    limit: int = Query(default=25, ge=1, le=500),
     cursor: str | None = Query(default=None),
     sort: str = Query(default="upload_date"),
     order: str = Query(default="desc"),
@@ -532,6 +693,10 @@ async def update_document(
     doc_id: str,
     file: UploadFile,
     org_id: str | None = Query(default=None),
+    x_original_filename: Annotated[
+        str | None,
+        Header(alias="X-Original-Filename"),
+    ] = None,
 ) -> dict[str, Any]:
     """Replace document content with a new file upload (J.1).
 
@@ -541,7 +706,13 @@ async def update_document(
     doc = get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
 
     content = await file.read()
-    mime = _validate_mime(file)
+    filename = resolve_upload_filename(
+        upload_name=file.filename,
+        client_hint=x_original_filename,
+        content_type=file.content_type,
+        content=content,
+    )
+    mime = _validate_mime(filename=filename, content_type=file.content_type)
 
     file_hash = compute_file_hash(content)
 
@@ -553,8 +724,6 @@ async def update_document(
         )
 
     documents_repo.delete_chunks_for_document(doc_id)
-
-    filename = file.filename or doc.get("filename", "untitled")
     volume_meta = _persist_upload_metadata(
         doc_id=doc_id, filename=filename, content=content, required=False
     )

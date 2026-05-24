@@ -38,12 +38,14 @@ def _upload_file(
 class TestDocumentHelpers:
     def test_validate_mime_allows_markdown_by_extension(self):
         file = _upload_file(filename="note.md", content_type="")
-        assert _validate_mime(file) == "text/markdown"
+        assert _validate_mime(filename=file.filename, content_type=file.content_type) == (
+            "text/markdown"
+        )
 
     def test_validate_mime_rejects_unsupported_type(self):
         file = _upload_file(filename="note.txt", content_type="text/plain")
         with pytest.raises(ValidationError):
-            _validate_mime(file)
+            _validate_mime(filename=file.filename, content_type=file.content_type)
 
     def test_validate_mime_allows_pptx_by_declared_type(self):
         file = _upload_file(
@@ -52,25 +54,35 @@ class TestDocumentHelpers:
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             ),
         )
-        assert _validate_mime(file).endswith("presentationml.presentation")
+        assert _validate_mime(
+            filename=file.filename, content_type=file.content_type
+        ).endswith("presentationml.presentation")
 
     def test_validate_mime_allows_pptx_by_extension_when_browser_lies(self):
         # Some browsers send octet-stream for Office files; the
         # extension fallback should still let the upload through.
         file = _upload_file(filename="deck.pptx", content_type="application/octet-stream")
-        assert _validate_mime(file).endswith("presentationml.presentation")
+        assert _validate_mime(
+            filename=file.filename, content_type=file.content_type
+        ).endswith("presentationml.presentation")
 
     def test_validate_mime_allows_legacy_doc_by_declared_type(self):
         file = _upload_file(filename="memo.doc", content_type="application/msword")
-        assert _validate_mime(file) == "application/msword"
+        assert _validate_mime(filename=file.filename, content_type=file.content_type) == (
+            "application/msword"
+        )
 
     def test_validate_mime_allows_legacy_doc_by_extension(self):
         file = _upload_file(filename="memo.doc", content_type="")
-        assert _validate_mime(file) == "application/msword"
+        assert _validate_mime(filename=file.filename, content_type=file.content_type) == (
+            "application/msword"
+        )
 
     def test_validate_mime_extension_match_is_case_insensitive(self):
         file = _upload_file(filename="REPORT.PDF", content_type="application/octet-stream")
-        assert _validate_mime(file) == "application/pdf"
+        assert _validate_mime(filename=file.filename, content_type=file.content_type) == (
+            "application/pdf"
+        )
 
     def test_to_doc_response_fills_defaults(self):
         result = _to_doc_response({"_key": "d1"})
@@ -88,6 +100,7 @@ class TestUploadDocument:
         file = _upload_file()
         with (
             patch("app.api.documents.compute_file_hash", return_value="hash"),
+            patch("app.api.documents._ensure_staging_store_ready", return_value=None),
             patch(
                 "app.api.documents.documents_repo.find_document_by_hash",
                 return_value={"_key": "d0", "status": "ready"},
@@ -104,6 +117,7 @@ class TestUploadDocument:
         file = _upload_file()
         with (
             patch("app.api.documents.compute_file_hash", return_value="hash"),
+            patch("app.api.documents._ensure_staging_store_ready", return_value=None),
             patch(
                 "app.api.documents.documents_repo.find_document_by_hash",
                 return_value={"_key": "d0"},  # no status field

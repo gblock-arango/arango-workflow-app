@@ -1,5 +1,5 @@
 {
-  "layout_version": 2,
+  "layout_version": 3,
   "description": "Reference layout for repo datasets/ → UC workflow-data (see workflow_data_volume.seed_builtin_datasets_from_bundle).",
   "document_domains": {
     "source": "datasets/<domain>/*.{md,pdf,docx,pptx,doc}",
@@ -12,12 +12,13 @@
     "target": "workflow-data/builtin/ontologies/<domain>/",
     "domains": ["cyber"],
     "formats": ["jsonld", "json-ld", "ttl", "turtle", "owl", "rdf"],
-    "note": "Only JSON-LD/RDF ontology files are seeded; plain .json graph exports are not copied."
+    "note": "Only JSON-LD/RDF ontology files are seeded; plain .json graph exports are not copied here."
   },
   "instance_data": {
     "source": "datasets/cyber/*.{json,csv}",
-    "target": "not_seeded",
-    "note": "Graph/instance CSV and JSON stay in the repo for Arango tooling; not listed in Upload built-ins."
+    "target": "workflow-data/builtin/instance_data/cyber/",
+    "domains": ["cyber"],
+    "note": "Graph/instance fixtures (e.g. fraud_cyber_dataset.json); not listed in ontology browse."
   },
   "seed_manifest_on_volume": "workflow-data/settings/.seed_manifest.json",
   "upload_ingest_documents": "workflow-data/builtin/<domain>/* → POST /api/v1/documents/ingest-from-volume",

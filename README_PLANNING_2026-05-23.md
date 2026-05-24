@@ -10,9 +10,9 @@ Reassessed migration phases based on work completed to date, env naming tweaks, 
 |----------------|---------------|--------------|
 | **A** — Prove deployed ingest/extract | Deploy chain + E2E upload → chunk → extract | **Partially done** — stack is deployed; ingest UX and ops improved, but E2E “green path” is not fully proven |
 | **B** — Databricks LLM for LangGraph | Serving client + `_get_llm()` / embeddings | **Not started** — workflow still uses `OPENAI_API_KEY` + `text-embedding-3-small` / `gpt-4o-mini` |
-| **C** — MCP tool parity | Named wrappers beyond 4 tools | **Partial** — 4 tools + `aoe_workflow_api` escape hatch only |
-| **D** — Workflow agent → mcp-app | `ontoextract_mcp_orchestrator` | **Not started** |
-| **E** — Autograph Job | Compute plane in `arango-agent-autograph-job` | **Planned** (README exists); no runnable job yet |
+| **C** — OPTIONAL: MCP tool parity | Named wrappers beyond 4 tools | **Partial** — 4 tools + `aoe_workflow_api` escape hatch only to suit needs of extraction agent's current REST calls |
+| **D** — OPTIONAL: Allow LLM/user chat to initiate extraction processing steps using MCP tools (upload/parse/chunk/extract) via mcp-app | `ontoextract_mcp_orchestrator` | **Not started** |
+| **E** — Autograph Job | Migrate LangGraph compute to `arango-agent-autograph-job` | **Planned** (README exists); no runnable job yet |
 
 ### Work completed since the first plan (material)
 

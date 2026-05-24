@@ -4,10 +4,10 @@
 Uses the Databricks Files API (requires ``databricks auth login`` or profile).
 App startup also seeds when ``WORKFLOW_DATA_SEED_ON_STARTUP=true`` and ``/Volumes`` is mounted.
 
-Layout (layout_version 2):
+Layout (layout_version 3):
   - Documents: ``datasets/<domain>/*.{md,...}`` → ``builtin/<domain>/``
   - Ontologies: ``*.jsonld`` → ``builtin/ontologies/<domain>/`` (cyber from ``datasets/cyber/``)
-  - Instance CSV/JSON under ``datasets/cyber/``: not copied (repo-only)
+  - Instance graph: ``datasets/cyber/*.{json,csv}`` → ``builtin/instance_data/cyber/``
   - Manifest: ``settings/.seed_manifest.json`` (not shown in ontology browse)
 """
 
@@ -48,6 +48,7 @@ def _upload_via_sdk(
     copied = 0
     domains: list[str] = []
     ontology_domains: list[str] = []
+    instance_data_domains: list[str] = []
 
     for domain_dir in sorted(datasets_dir.iterdir()):
         if not domain_dir.is_dir() or domain_dir.name in skip_dirs or domain_dir.name.startswith("."):
@@ -76,23 +77,35 @@ def _upload_via_sdk(
 
     cyber_src = datasets_dir / "cyber"
     if cyber_src.is_dir():
+        cyber_instance_files = 0
         for f in sorted(cyber_src.iterdir()):
-            if f.is_file() and f.name.lower().endswith((".jsonld", ".json-ld")):
+            if not f.is_file():
+                continue
+            if f.name.lower().endswith((".jsonld", ".json-ld")):
                 remote = f"{builtin_prefix}/ontologies/cyber/{f.name}"
                 with f.open("rb") as stream:
                     w.files.upload(remote, stream, overwrite=True)
                 copied += 1
-        if "cyber" not in ontology_domains:
-            ontology_domains.append("cyber")
+                if "cyber" not in ontology_domains:
+                    ontology_domains.append("cyber")
+            elif vol.is_allowed_instance_data_file(f.name):
+                remote = f"{builtin_prefix}/{vol.INSTANCE_DATA_SUBDIR}/cyber/{f.name}"
+                with f.open("rb") as stream:
+                    w.files.upload(remote, stream, overwrite=True)
+                copied += 1
+                cyber_instance_files += 1
+        if cyber_instance_files and "cyber" not in instance_data_domains:
+            instance_data_domains.append("cyber")
 
     manifest_remote = f"{settings_prefix}/{vol.SEED_MANIFEST_NAME}"
     payload = {
         "ok": True,
         "skipped": False,
-        "layout_version": 2,
+        "layout_version": vol.LAYOUT_VERSION,
         "files_copied": copied,
         "domains": domains,
         "ontology_domains": sorted(ontology_domains),
+        "instance_data_domains": sorted(instance_data_domains),
         "source": str(datasets_dir),
         "destination": builtin_prefix,
         "manifest_path": vol.SEED_MANIFEST_REL,
@@ -100,7 +113,7 @@ def _upload_via_sdk(
         "force": force,
         "note": (
             "Documents per datasets/<domain>/; ontologies under builtin/ontologies/; "
-            "cyber instance CSV/JSON not uploaded."
+            "cyber instance JSON/CSV under builtin/instance_data/cyber/."
         ),
     }
     import tempfile

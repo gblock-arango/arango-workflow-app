@@ -27,6 +27,7 @@ def test_seed_builtin_writes_domain_subdirs(monkeypatch, tmp_path):
     (datasets / "financial" / "sample.md").write_text("# Sample\n", encoding="utf-8")
     (datasets / "cyber").mkdir()
     (datasets / "cyber" / "big.jsonld").write_text("{}", encoding="utf-8")
+    (datasets / "cyber" / "fraud_cyber_dataset.json").write_text("{}", encoding="utf-8")
 
     wf_root = tmp_path / "wf"
     wf_root.mkdir()
@@ -42,14 +43,29 @@ def test_seed_builtin_writes_domain_subdirs(monkeypatch, tmp_path):
 
     result = vol.seed_builtin_datasets_from_bundle(force=True)
     assert result["ok"] is True
-    assert result["layout_version"] == 2
+    assert result["layout_version"] == vol.LAYOUT_VERSION
     assert "financial" in result["domains"]
     assert (wf_root / "builtin" / "financial" / "sample.md").is_file()
     assert not (wf_root / "builtin" / "corpora").exists()
     manifest = wf_root / vol.SEED_MANIFEST_REL
     assert manifest.is_file()
     assert (wf_root / "builtin" / "ontologies" / "cyber" / "big.jsonld").is_file()
+    assert (wf_root / "builtin" / "instance_data" / "cyber" / "fraud_cyber_dataset.json").is_file()
+    assert "cyber" in result.get("instance_data_domains", [])
     assert "cyber" not in result["domains"]
+
+
+def test_browse_instance_data_under_instance_data_prefix():
+    assert vol.is_volume_file_browsable(
+        "fraud_cyber_dataset.json",
+        rel_path="builtin/instance_data/cyber/fraud_cyber_dataset.json",
+        file_kind="instance",
+    )
+    assert not vol.is_volume_file_browsable(
+        "fraud_cyber_dataset.json",
+        rel_path="builtin/ontologies/cyber/fraud_cyber_dataset.json",
+        file_kind="ontology",
+    )
 
 
 def test_browse_ontology_excludes_manifest_and_plain_json():

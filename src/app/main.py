@@ -86,7 +86,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         log.warning("workflow_data_seed_failed", error=str(exc))
 
     async def _bootstrap_schema_background() -> None:
-        from app.services.schema_bootstrap import ensure_ontology_schema
+        from app.services.schema_bootstrap import ensure_ontology_schema, ensure_staging_schema
+
+        try:
+            staging = await asyncio.to_thread(ensure_staging_schema)
+            log.info("staging_schema_bootstrap_ok", **staging)
+        except Exception as exc:
+            log.warning("staging_schema_bootstrap_failed", error=str(exc))
 
         try:
             await asyncio.to_thread(ensure_ontology_schema)

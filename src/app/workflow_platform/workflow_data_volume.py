@@ -18,8 +18,10 @@ def _workflow_data_dir_name() -> str:
         or "workflow-data"
     )
 BUILTIN_SUBDIR = "builtin"
+INSTANCE_DATA_SUBDIR = "instance_data"
 UPLOADS_SUBDIR = "uploads"
 SETTINGS_SUBDIR = "settings"
+LAYOUT_VERSION = 3
 SEED_MANIFEST_NAME = ".seed_manifest.json"
 SEED_MANIFEST_REL = f"{SETTINGS_SUBDIR}/{SEED_MANIFEST_NAME}"
 
@@ -29,6 +31,8 @@ ALLOWED_SUFFIXES = frozenset({".md", ".pdf", ".docx", ".pptx", ".doc"})
 ONTOLOGY_SUFFIXES = frozenset(
     {".jsonld", ".json-ld", ".json", ".ttl", ".turtle", ".owl", ".rdf", ".n3", ".nt", ".xml", ".skos"}
 )
+
+INSTANCE_DATA_SUFFIXES = frozenset({".json", ".csv"})
 
 _SUFFIX_TO_MIME: dict[str, str] = {
     ".md": "text/markdown",
@@ -133,6 +137,14 @@ def is_allowed_ontology_file(name: str) -> bool:
     return any(lower.endswith(s) for s in ONTOLOGY_SUFFIXES)
 
 
+def is_allowed_instance_data_file(name: str) -> bool:
+    """Graph/instance exports (``.json`` / ``.csv``), not JSON-LD ontologies."""
+    lower = (name or "").lower()
+    if lower.endswith(".jsonld") or lower.endswith(".json-ld"):
+        return False
+    return any(lower.endswith(s) for s in INSTANCE_DATA_SUFFIXES)
+
+
 def mime_for_ontology_filename(filename: str) -> str | None:
     lower = (filename or "").lower()
     for suffix, mime in _ONTOLOGY_SUFFIX_TO_MIME.items():
@@ -176,6 +188,10 @@ def is_volume_file_browsable(
         if not is_allowed_ontology_file(name):
             return False
         return rel.startswith(f"{BUILTIN_SUBDIR}/ontologies/")
+    if file_kind == "instance":
+        if not is_allowed_instance_data_file(name):
+            return False
+        return rel.startswith(f"{BUILTIN_SUBDIR}/{INSTANCE_DATA_SUBDIR}/")
     return is_volume_file_allowed(name, file_kind=file_kind)
 
 
@@ -198,6 +214,23 @@ def write_bytes(*, relative_path: str, content: bytes) -> str:
         msg = str(exc).strip() or err_name
         logger.warning("write_bytes failed for %s: %s", rel, exc)
         raise OSError(f"UC volume write failed for workflow-data/{rel}: {msg}") from exc
+
+
+def delete_relative(relative_path: str) -> None:
+    """Remove a file under workflow-data (best-effort; ignores missing paths)."""
+    rel = safe_relative_path(relative_path)
+    try:
+        if use_files_api_for_io():
+            from databricks.sdk import WorkspaceClient
+
+            abs_path = f"{workflow_data_root_uc_path()}/{rel}"
+            WorkspaceClient().files.delete(abs_path)
+            return
+        target = resolve_under_workflow_data(rel)
+        if target.is_file():
+            target.unlink()
+    except Exception as exc:
+        logger.debug("delete_relative ignored for %s: %s", rel, exc)
 
 
 def read_bytes(relative_path: str) -> bytes:
@@ -454,7 +487,7 @@ def seed_builtin_datasets_from_bundle(*, force: bool = False) -> dict[str, Any]:
                 existing = json.loads(manifest_path.read_text(encoding="utf-8"))
             else:
                 existing = None
-            if existing and existing.get("ok") and existing.get("layout_version") == 2:
+            if existing and existing.get("ok") and existing.get("layout_version") == LAYOUT_VERSION:
                 return {"ok": True, "skipped": True, "reason": "already_seeded", **existing}
         except (OSError, json.JSONDecodeError, FileNotFoundError):
             pass
@@ -491,15 +524,31 @@ def seed_builtin_datasets_from_bundle(*, force: bool = False) -> dict[str, Any]:
         if domain_files:
             domains.append(domain_dir.name)
 
-    # Cyber ontology JSON-LD fixtures (domain skipped for documents).
+    # Cyber fixtures (domain skipped for documents): ontologies + instance graph JSON.
     cyber_src = src / "cyber"
+    instance_data_domains: list[str] = []
     if cyber_src.is_dir():
         if not use_files_api_for_io():
             (dest_root / "ontologies" / "cyber").mkdir(parents=True, exist_ok=True)
+            (dest_root / INSTANCE_DATA_SUBDIR / "cyber").mkdir(parents=True, exist_ok=True)
+        cyber_instance_files = 0
         for f in sorted(cyber_src.iterdir()):
-            if f.is_file() and is_allowed_ontology_file(f.name):
+            if not f.is_file():
+                continue
+            if is_allowed_ontology_file(f.name) and (
+                f.name.lower().endswith(".jsonld") or f.name.lower().endswith(".json-ld")
+            ):
                 _seed_copy_file(rel=f"{BUILTIN_SUBDIR}/ontologies/cyber/{f.name}", src=f)
                 copied += 1
+            elif is_allowed_instance_data_file(f.name):
+                _seed_copy_file(
+                    rel=f"{BUILTIN_SUBDIR}/{INSTANCE_DATA_SUBDIR}/cyber/{f.name}",
+                    src=f,
+                )
+                copied += 1
+                cyber_instance_files += 1
+        if cyber_instance_files:
+            instance_data_domains.append("cyber")
 
     ontology_domains: list[str] = []
     ont_root = dest_root / "ontologies"
@@ -511,17 +560,19 @@ def seed_builtin_datasets_from_bundle(*, force: bool = False) -> dict[str, Any]:
     payload = {
         "ok": True,
         "skipped": False,
-        "layout_version": 2,
+        "layout_version": LAYOUT_VERSION,
         "files_copied": copied,
         "domains": domains,
         "ontology_domains": ontology_domains,
+        "instance_data_domains": instance_data_domains,
         "source": str(src),
         "destination": str(dest_root),
         "manifest_path": SEED_MANIFEST_REL,
         "note": (
             "Documents: datasets/<domain>/*.md -> builtin/<domain>/. "
             "Ontologies: *.jsonld -> builtin/ontologies/<domain>/. "
-            "Instance CSV/JSON (cyber): repo only, not copied to UC."
+            "Instance graph JSON/CSV: datasets/cyber/*.{json,csv} -> "
+            f"builtin/{INSTANCE_DATA_SUBDIR}/cyber/."
         ),
     }
     try:

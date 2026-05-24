@@ -5,6 +5,7 @@ import {
   api,
   apiFetch,
   apiFetchLongRunning,
+  apiUploadWithProgress,
   readApiErrorMessage,
   VOLUME_BROWSE_TIMEOUT_MS,
 } from "@/lib/api-client";
@@ -75,6 +76,68 @@ interface ImportResultData {
   ontology_id?: string;
   name?: string;
   class_count?: number;
+  property_count?: number;
+  triple_count?: number;
+  vertex_count?: number;
+  edge_count?: number;
+  graph_name?: string;
+  named_graph?: string;
+}
+
+interface ImportJobProgress {
+  stage?: string;
+  progress_pct?: number;
+  status_message?: string;
+}
+
+function importStageLabel(stage?: string): string {
+  switch (stage) {
+    case "queued":
+      return "Queued";
+    case "schema":
+      return "Schema migrations";
+    case "loading":
+      return "Loading graph";
+    case "registry":
+      return "Registry";
+    case "completed":
+      return "Complete";
+    default:
+      return stage ? stage.replace(/_/g, " ") : "Running";
+  }
+}
+
+function LinearProgressBar({
+  percent,
+  message,
+  stageLabel,
+}: {
+  percent: number;
+  message?: string;
+  stageLabel?: string;
+}) {
+  const clamped = Math.min(100, Math.max(0, percent));
+  return (
+    <div className="w-full space-y-2">
+      <div className="flex items-center justify-between gap-2 text-xs">
+        {stageLabel ? (
+          <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 font-semibold uppercase tracking-wide text-blue-800">
+            {stageLabel}
+          </span>
+        ) : (
+          <span />
+        )}
+        <span className="tabular-nums text-blue-600">{clamped}%</span>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-blue-100">
+        <div
+          className="h-full rounded-full bg-blue-600 transition-all duration-300"
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+      {message ? <p className="text-sm text-blue-700">{message}</p> : null}
+    </div>
+  );
 }
 
 interface ExtractionRunResponse {
@@ -99,7 +162,10 @@ export default function UploadPage() {
     "idle" | "uploading" | "processing" | "success" | "error"
   >("idle");
   const [importResult, setImportResult] = useState<ImportResultData | null>(null);
+  const [importProgress, setImportProgress] = useState<ImportJobProgress | null>(null);
   const [importError, setImportError] = useState("");
+  const [docUploadPercent, setDocUploadPercent] = useState<number | null>(null);
+  const [docUploadStage, setDocUploadStage] = useState("");
   const [builtinFiles, setBuiltinFiles] = useState<VolumeFileEntry[]>([]);
   const [builtinLoaded, setBuiltinLoaded] = useState(false);
   const [builtinIngesting, setBuiltinIngesting] = useState<string | null>(null);
@@ -286,6 +352,7 @@ export default function UploadPage() {
     setImportState("uploading");
     setImportError("");
     setImportResult(null);
+    setImportProgress(null);
 
     const formData = new FormData();
     formData.append("file", file);
@@ -311,6 +378,11 @@ export default function UploadPage() {
       // files can take minutes (per-triple writes against a remote cluster),
       // so a single synchronous HTTP request would exceed the proxy timeout.
       setImportState("processing");
+      setImportProgress({
+        stage: "queued",
+        progress_pct: 0,
+        status_message: "Import queued…",
+      });
       const accepted = await res.json();
       const ontologyId = accepted.ontology_id || id;
 
@@ -320,6 +392,7 @@ export default function UploadPage() {
       loadDocuments();
       loadOntologies();
     } catch (err) {
+      setImportProgress(null);
       setImportError(
         formatOperationError(err, {
           operation: "Ontology file upload (POST /api/v1/ontology/import)",
@@ -348,12 +421,31 @@ export default function UploadPage() {
         throw new Error(await readApiErrorMessage(statusRes));
       }
       const job = await statusRes.json();
+      if (job.status === "running") {
+        setImportProgress({
+          stage: job.stage as string | undefined,
+          progress_pct:
+            typeof job.progress_pct === "number" ? job.progress_pct : undefined,
+          status_message: job.status_message as string | undefined,
+        });
+      }
       if (job.status === "completed") {
         const result = (job.result ?? {}) as Record<string, unknown>;
+        setImportProgress({
+          stage: "completed",
+          progress_pct: 100,
+          status_message: "Import complete",
+        });
         return {
           ontology_id: (result.registry_key as string) ?? ontologyId,
           name: result.name as string | undefined,
           class_count: result.class_count as number | undefined,
+          property_count: result.property_count as number | undefined,
+          triple_count: result.triple_count as number | undefined,
+          vertex_count: result.vertex_count as number | undefined,
+          edge_count: result.edge_count as number | undefined,
+          graph_name: result.graph_name as string | undefined,
+          named_graph: result.named_graph as string | undefined,
         };
       }
       if (job.status === "failed") {
@@ -391,6 +483,7 @@ export default function UploadPage() {
     setImportState("uploading");
     setImportError("");
     setImportResult(null);
+    setImportProgress(null);
     const label = displayName.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
     const id = `import_${Date.now().toString(36)}`;
     try {
@@ -407,6 +500,11 @@ export default function UploadPage() {
         throw new Error(await readApiErrorMessage(res));
       }
       setImportState("processing");
+      setImportProgress({
+        stage: "queued",
+        progress_pct: 0,
+        status_message: "Import queued…",
+      });
       const accepted = await res.json();
       const ontologyId = accepted.ontology_id || id;
       const finalResult = await pollImportStatus(ontologyId);
@@ -415,6 +513,7 @@ export default function UploadPage() {
       loadDocuments();
       loadOntologies();
     } catch (err) {
+      setImportProgress(null);
       setImportError(
         formatOperationError(err, {
           operation: "Builtin ontology import (POST /api/v1/ontology/import-from-volume)",
@@ -475,13 +574,27 @@ export default function UploadPage() {
     setUploadState("uploading");
     setErrorMsg("");
     setResult(null);
+    setDocUploadPercent(0);
+    setDocUploadStage("Uploading file to server…");
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", file, file.name);
+
+    const uploadHeaders: Record<string, string> = {};
+    if (file.name) {
+      uploadHeaders["X-Original-Filename"] = encodeURIComponent(file.name);
+    }
 
     try {
-      const res = await apiFetchLongRunning("/api/v1/documents/upload", {
-        method: "POST",
-        body: formData,
+      const res = await apiUploadWithProgress("/api/v1/documents/upload", formData, {
+        headers: uploadHeaders,
+        onProgress: ({ percent }) => {
+          setDocUploadPercent(percent);
+          if (percent >= 100) {
+            setDocUploadStage("Saving to UC volume and registering catalog entry…");
+          } else {
+            setDocUploadStage("Uploading file to server…");
+          }
+        },
       });
 
       if (!res.ok) {
@@ -489,6 +602,8 @@ export default function UploadPage() {
       }
 
       const data: UploadResult = await res.json();
+      setDocUploadPercent(100);
+      setDocUploadStage("Complete");
       setResult(data);
       loadDocuments();
       setUploadState("success");
@@ -500,6 +615,9 @@ export default function UploadPage() {
         }),
       );
       setUploadState("error");
+    } finally {
+      setDocUploadPercent(null);
+      setDocUploadStage("");
     }
   };
 
@@ -519,7 +637,7 @@ export default function UploadPage() {
     <main className="min-h-screen bg-gray-50 text-gray-900">
       <AppHeader
         title="Upload Documents"
-        subtitle="Stage documents (PDF, DOCX, PPTX, Markdown) on the UC volume, then parse and chunk on the Embedding page. Ontology files (OWL, TTL, RDF, JSON-LD, …) import directly into the graph."
+        subtitle="Documents: file bytes go to the UC volume; ArangoDB stores only a small catalog row for Parse & Chunk. Ontology files load classes/triples (and optional graph vertices) into ArangoDB."
         contentClassName="max-w-4xl"
       />
 
@@ -683,7 +801,7 @@ export default function UploadPage() {
             Drop a file here or click to browse
           </p>
           <p className="mt-1 text-sm text-gray-400">
-            <strong>Documents:</strong> PDF, DOCX, PPTX, Markdown → saved to the UC volume
+            <strong>Documents:</strong> PDF, DOCX, PPTX, Markdown → file bytes on the UC volume
             {volumeUploadsHint ? (
               <>
                 {" "}
@@ -692,7 +810,8 @@ export default function UploadPage() {
             ) : (
               <> under workflow-data/uploads/</>
             )}
-            , then <strong>Parse &amp; chunk</strong> and <strong>Extract</strong>.
+            ; a lightweight catalog row in ArangoDB (not a copy of the file). Then{" "}
+            <strong>Parse &amp; chunk</strong> and <strong>Extract</strong>.
             <br />
             <strong>Ontology files:</strong> .ttl, .owl, .rdf, .n3, .nt, .jsonld, .json, .xml, .skos →
             direct graph import (no chunking).
@@ -707,11 +826,15 @@ export default function UploadPage() {
         )}
 
         {importState === "processing" && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
-            <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-blue-700 font-medium">
-              Importing ontology via ArangoRDF… this can take a few minutes for large files.
-            </p>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+            <LinearProgressBar
+              percent={importProgress?.progress_pct ?? 5}
+              stageLabel={importStageLabel(importProgress?.stage)}
+              message={
+                importProgress?.status_message ??
+                "Importing ontology into ArangoDB… large files can take several minutes."
+              }
+            />
           </div>
         )}
 
@@ -733,6 +856,33 @@ export default function UploadPage() {
               {importResult.class_count != null && (
                 <p>
                   <span className="font-mono">classes:</span> {String(importResult.class_count)}
+                </p>
+              )}
+              {importResult.property_count != null && (
+                <p>
+                  <span className="font-mono">properties:</span>{" "}
+                  {String(importResult.property_count)}
+                </p>
+              )}
+              {importResult.triple_count != null && (
+                <p>
+                  <span className="font-mono">triples:</span> {String(importResult.triple_count)}
+                </p>
+              )}
+              {importResult.vertex_count != null && (
+                <p>
+                  <span className="font-mono">vertices:</span>{" "}
+                  {String(importResult.vertex_count)}
+                </p>
+              )}
+              {importResult.edge_count != null && (
+                <p>
+                  <span className="font-mono">edges:</span> {String(importResult.edge_count)}
+                </p>
+              )}
+              {importResult.graph_name && (
+                <p>
+                  <span className="font-mono">graph:</span> {importResult.graph_name}
                 </p>
               )}
             </div>
@@ -771,15 +921,22 @@ export default function UploadPage() {
 
         {/* Document upload status */}
         {uploadState === "uploading" && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
-            <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-blue-700 font-medium">Saving file to UC volume…</p>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+            <LinearProgressBar
+              percent={docUploadPercent ?? 0}
+              stageLabel="Upload"
+              message={docUploadStage || "Saving to UC volume…"}
+            />
           </div>
         )}
 
         {uploadState === "success" && result && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <p className="text-green-700 font-medium">Saved to UC volume</p>
+            <p className="text-green-700 font-medium">Saved to UC volume (catalog registered)</p>
+            <p className="mt-1 text-xs text-green-700">
+              File content is stored on the volume only. ArangoDB holds metadata (doc id, path,
+              hash) for the pipeline — not a second copy of the file.
+            </p>
             <div className="mt-2 text-sm text-green-600 space-y-1">
               <p>
                 <span className="font-mono">doc_id:</span> {result.doc_id}

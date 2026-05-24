@@ -52,3 +52,17 @@ def test_update_return_new_wraps_document():
     assert "new" in result
     assert result["new"]["_key"] == "d1"
     assert client.request.call_args[0][1].endswith("?returnNew=true")
+
+
+def test_delete_index_uses_collection_and_handle_in_path():
+    client = MagicMock()
+    client.request.return_value = {"ok": True, "body": {"error": False}}
+    db = GatewayDatabase(client, "OntoExtract")
+    col = GatewayCollection(db, "chunks")
+
+    col.delete_index("chunks/12345")
+
+    client.request.assert_called_once()
+    method, path = client.request.call_args[0][0], client.request.call_args[0][1]
+    assert method == "DELETE"
+    assert "/_api/index/chunks/12345" in path

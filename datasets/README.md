@@ -37,7 +37,7 @@ datasets/
 │   ├── service-agreement-clauses.md
 │   ├── case-summary.md
 │   └── privacy-policy-excerpt.md
-├── cyber/                        (graph JSON/JSON-LD; not auto-seeded to UC builtin)
+├── cyber/                        (JSON-LD ontology + instance graph JSON; see seed paths below)
 └── external/                     (created by scripts/fetch-corpora.sh; gitignored)
     ├── redocred/
     ├── webnlg/
@@ -48,11 +48,15 @@ datasets/
 
 ## Unity Catalog seed path (arango-workflow-app)
 
-Deploy copies each domain folder’s ingestible files (`.md`, `.pdf`, …) to:
+Deploy copies:
 
-`/Volumes/workspace/default/arango_workflow_volume/workflow-data/builtin/<domain>/`
+| Repo path | UC volume path |
+| --- | --- |
+| `datasets/<domain>/*.{md,pdf,…}` | `workflow-data/builtin/<domain>/` |
+| `datasets/cyber/*.jsonld` | `workflow-data/builtin/ontologies/cyber/` |
+| `datasets/cyber/*.{json,csv}` (graph/instance) | `workflow-data/builtin/instance_data/cyber/` |
 
-There is **no** `builtin/corpora/` layer. Re-seed after layout changes:
+There is **no** `builtin/corpora/` layer. Re-seed after layout changes (or bump `layout_version` on deploy):
 
 ```bash
 python3 scripts/seed_workflow_volume_datasets.py --profile YOUR_PROFILE --force

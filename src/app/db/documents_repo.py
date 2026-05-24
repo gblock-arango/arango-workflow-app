@@ -275,17 +275,46 @@ def find_document_by_hash(
 ) -> dict[str, Any] | None:
     """Look up an active document by its SHA-256 hash."""
     db = db or get_db()
+    if not db.has_collection(DOCUMENTS_COLLECTION):
+        return None
     query = """\
 FOR doc IN @@col
   FILTER doc.file_hash == @hash
   FILTER doc.status != "deleted"
   LIMIT 1
   RETURN doc"""
-    rows = list(run_aql(db, query, bind_vars={"@col": DOCUMENTS_COLLECTION, "hash": file_hash}))
+    try:
+        rows = list(run_aql(db, query, bind_vars={"@col": DOCUMENTS_COLLECTION, "hash": file_hash}))
+    except Exception as exc:
+        if "not found" in str(exc).lower() and DOCUMENTS_COLLECTION in str(exc):
+            return None
+        raise
     return rows[0] if rows else None
 
 
 # ---------- chunks ----------
+
+
+def update_chunk_embeddings(
+    updates: list[tuple[str, list[float]]],
+    *,
+    db: StandardDatabase | None = None,
+) -> int:
+    """Set ``embedding`` on existing chunks by ``_key``. Returns count updated."""
+    if not updates:
+        return 0
+    db = db or get_db()
+    if not db.has_collection(CHUNKS_COLLECTION):
+        return 0
+    col = db.collection(CHUNKS_COLLECTION)
+    count = 0
+    for chunk_key, embedding in updates:
+        try:
+            col.update({"_key": chunk_key, "embedding": embedding})
+            count += 1
+        except Exception as exc:
+            log.warning("chunk %s embedding update failed: %s", chunk_key, exc)
+    return count
 
 
 def create_chunks(

@@ -6,7 +6,8 @@ Small graph fixture for testing graph databases, JSON-LD ingestion, ArangoDB imp
 
 | File | Purpose |
 |---|---|
-| `fraud_cyber_dataset.jsonld` | JSON-LD graph with compact ontology context and all instances/edges. |
+| `fraud_cyber_ontology_annotated.jsonld` | JSON-LD ontology (seeded to `builtin/ontologies/cyber/`). |
+| `fraud_cyber_dataset.json` | Combined graph JSON / instance data (seeded to `builtin/instance_data/cyber/`). |
 | `combined_graph.json` | Single JSON file with all collections and metadata. |
 | `accounts.json/csv` | 30 account vertices. |
 | `transactions.json/csv` | 100 transaction vertices. |

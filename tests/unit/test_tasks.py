@@ -7,7 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.ingestion import Chunk, ParsedDocument, Section
-from app.tasks import _build_chunk_dicts, _ensure_vector_index, process_document
+from app.tasks import (
+    _build_chunk_dicts,
+    _ensure_vector_index,
+    process_document,
+    run_chunk_stage,
+    run_parse_stage,
+)
 
 # ---------------------------------------------------------------------------
 # _build_chunk_dicts
@@ -208,113 +214,101 @@ class TestEnsureVectorIndex:
 
 class TestProcessDocument:
     @pytest.mark.asyncio
-    @patch("app.tasks._ensure_vector_index")
-    @patch("app.tasks.embedding_svc")
+    @patch("app.tasks.run_embed_stage", new_callable=AsyncMock)
+    @patch("app.tasks.run_chunk_stage", new_callable=AsyncMock)
+    @patch("app.tasks.run_parse_stage", new_callable=AsyncMock)
     @patch("app.tasks.documents_repo")
-    @patch("app.tasks.chunk_document")
-    @patch("app.tasks.parse_markdown")
     async def test_markdown_happy_path(
-        self, mock_parse_md, mock_chunk, mock_docs_repo, mock_embed_svc, mock_vec_idx
+        self, mock_docs_repo, mock_parse_stage, mock_chunk_stage, mock_embed_stage
     ):
-        parsed = ParsedDocument(
-            sections=[Section(heading="Title", text="Hello world")],
-            title="Test",
-        )
-        mock_parse_md.return_value = parsed
-
-        chunks = [
-            Chunk(
-                text="Hello world",
-                chunk_index=0,
-                source_page=None,
-                section_heading="Title",
-                token_count=5,
-            ),
+        mock_docs_repo.get_document.side_effect = [
+            {"status": "parsed"},
+            {"status": "chunked"},
         ]
-        mock_chunk.return_value = chunks
-        mock_embed_svc.embed_texts = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
-        mock_docs_repo.create_chunks.return_value = [{"_key": "c1"}]
 
         await process_document("doc1", b"# Hello world", "text/markdown")
 
-        mock_parse_md.assert_called_once()
-        mock_chunk.assert_called_once_with(parsed)
-        mock_embed_svc.embed_texts.assert_awaited_once_with(["Hello world"])
-        mock_docs_repo.create_chunks.assert_called_once()
-        mock_docs_repo.update_document_status.assert_any_call("doc1", "ready")
-        mock_vec_idx.assert_called_once()
+        mock_parse_stage.assert_awaited_once_with("doc1", b"# Hello world", "text/markdown")
+        mock_chunk_stage.assert_awaited_once_with("doc1")
+        mock_embed_stage.assert_awaited_once_with("doc1")
 
     @pytest.mark.asyncio
-    @patch("app.tasks._ensure_vector_index")
-    @patch("app.tasks.embedding_svc")
+    @patch("app.tasks.run_embed_stage", new_callable=AsyncMock)
+    @patch("app.tasks.run_chunk_stage", new_callable=AsyncMock)
+    @patch("app.tasks.run_parse_stage", new_callable=AsyncMock)
     @patch("app.tasks.documents_repo")
-    @patch("app.tasks.chunk_document")
-    @patch("app.tasks.parse_markdown")
-    async def test_empty_chunks_marks_ready_with_warning(
-        self, mock_parse_md, mock_chunk, mock_docs_repo, mock_embed_svc, mock_vec_idx
+    async def test_stops_after_failed_parse(
+        self, mock_docs_repo, mock_parse_stage, mock_chunk_stage, mock_embed_stage
     ):
-        parsed = ParsedDocument(sections=[], title="Empty")
-        mock_parse_md.return_value = parsed
-        mock_chunk.return_value = []
+        mock_docs_repo.get_document.return_value = {"status": "failed"}
 
         await process_document("doc1", b"", "text/markdown")
 
-        mock_docs_repo.update_document_status.assert_any_call(
-            "doc1", "ready", error_message="No content extracted"
-        )
-        mock_embed_svc.embed_texts.assert_not_called()
+        mock_parse_stage.assert_awaited_once()
+        mock_chunk_stage.assert_not_awaited()
+        mock_embed_stage.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("app.tasks.documents_repo")
     async def test_unsupported_mime_marks_failed(self, mock_docs_repo):
-        await process_document("doc1", b"data", "application/octet-stream")
+        with pytest.raises(ValueError, match="Unsupported MIME type"):
+            await run_parse_stage("doc1", b"data", "application/octet-stream")
 
         mock_docs_repo.update_document_status.assert_any_call(
             "doc1", "failed", error_message="Unsupported MIME type: application/octet-stream"
         )
 
     @pytest.mark.asyncio
-    @patch("app.tasks._ensure_vector_index")
-    @patch("app.tasks.embedding_svc")
     @patch("app.tasks.documents_repo")
     @patch("app.tasks.chunk_document")
-    @patch("app.tasks.parse_pdf")
-    async def test_pdf_dispatches_to_parse_pdf(
-        self, mock_parse_pdf, mock_chunk, mock_docs_repo, mock_embed_svc, mock_vec_idx
+    @patch("app.tasks.parse_markdown")
+    async def test_empty_chunks_marks_failed(self, mock_parse_md, mock_chunk, mock_docs_repo):
+        parsed = ParsedDocument(sections=[], title="Empty")
+        mock_parse_md.return_value = parsed
+        mock_chunk.return_value = []
+        mock_docs_repo.get_document.return_value = {
+            "metadata": {"pipeline": {"parsed_document": {"sections": []}}},
+        }
+
+        await run_chunk_stage("doc1")
+
+        mock_docs_repo.update_document_status.assert_any_call(
+            "doc1", "failed", error_message="No content extracted"
+        )
+
+    @pytest.mark.asyncio
+    @patch("app.tasks.run_embed_stage", new_callable=AsyncMock)
+    @patch("app.tasks.run_chunk_stage", new_callable=AsyncMock)
+    @patch("app.tasks.run_parse_stage", new_callable=AsyncMock)
+    @patch("app.tasks.documents_repo")
+    async def test_pdf_dispatches_to_parse_stage(
+        self, mock_docs_repo, mock_parse_stage, mock_chunk_stage, mock_embed_stage
     ):
-        parsed = ParsedDocument(sections=[Section(heading="S", text="content")])
-        mock_parse_pdf.return_value = parsed
-        mock_chunk.return_value = [
-            Chunk(text="content", chunk_index=0, source_page=1, section_heading="S", token_count=3),
-        ]
-        mock_embed_svc.embed_texts = AsyncMock(return_value=[[0.5]])
-        mock_docs_repo.create_chunks.return_value = [{"_key": "c1"}]
+        mock_docs_repo.get_document.side_effect = [{"status": "parsed"}, {"status": "chunked"}]
 
         await process_document("doc1", b"pdf-bytes", "application/pdf")
 
-        # parse_pdf is called in a thread, so check chunk_document got the parsed result
-        mock_chunk.assert_called_once_with(parsed)
+        mock_parse_stage.assert_awaited_once_with("doc1", b"pdf-bytes", "application/pdf")
 
     @pytest.mark.asyncio
-    @patch("app.tasks._ensure_vector_index")
-    @patch("app.tasks.embedding_svc")
     @patch("app.tasks.documents_repo")
     @patch("app.tasks.chunk_document")
     @patch("app.tasks.parse_markdown")
     async def test_all_chunk_inserts_fail_marks_failed(
-        self, mock_parse_md, mock_chunk, mock_docs_repo, mock_embed_svc, mock_vec_idx
+        self, mock_parse_md, mock_chunk, mock_docs_repo
     ):
         parsed = ParsedDocument(sections=[Section(heading="S", text="text")])
         mock_parse_md.return_value = parsed
         mock_chunk.return_value = [
             Chunk(text="text", chunk_index=0, source_page=None, section_heading="S", token_count=2),
         ]
-        mock_embed_svc.embed_texts = AsyncMock(return_value=[[0.1]])
-        mock_docs_repo.create_chunks.return_value = []  # all inserts failed
+        mock_docs_repo.create_chunks.return_value = []
+        mock_docs_repo.get_document.return_value = {
+            "metadata": {"pipeline": {"parsed_document": {"sections": [{"heading": "S", "text": "text"}]}}},
+        }
 
-        await process_document("doc1", b"# text", "text/markdown")
+        with pytest.raises(RuntimeError):
+            await run_chunk_stage("doc1")
 
-        # Should have been marked as failed
         calls = mock_docs_repo.update_document_status.call_args_list
-        last_call = calls[-1]
-        assert last_call[0][1] == "failed"
+        assert calls[-1][0][1] == "failed"

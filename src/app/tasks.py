@@ -14,11 +14,13 @@ from typing import Any, cast
 
 from app.db import documents_repo
 from app.db.client import get_db
+from app.db.utils import run_aql
 from app.models.documents import DocumentStatus
 from app.services import embedding as embedding_svc
 from app.services.ingestion import (
     Chunk,
     ParsedDocument,
+    Section,
     chunk_document,
     parse_doc,
     parse_docx,
@@ -28,6 +30,70 @@ from app.services.ingestion import (
 )
 
 log = logging.getLogger(__name__)
+
+_pipeline_cancelled: set[str] = set()
+
+
+def request_pipeline_cancel(doc_id: str) -> None:
+    _pipeline_cancelled.add(doc_id)
+
+
+def clear_pipeline_cancel(doc_id: str) -> None:
+    _pipeline_cancelled.discard(doc_id)
+
+
+def is_pipeline_cancelled(doc_id: str) -> bool:
+    return doc_id in _pipeline_cancelled
+
+
+def _parsed_to_dict(parsed: ParsedDocument) -> dict[str, Any]:
+    return {
+        "sections": [
+            {
+                "heading": s.heading,
+                "text": s.text,
+                "page_number": s.page_number,
+            }
+            for s in parsed.sections
+        ],
+        "title": parsed.title,
+        "author": parsed.author,
+        "page_count": parsed.page_count,
+    }
+
+
+def _parsed_from_dict(data: dict[str, Any]) -> ParsedDocument:
+    sections = [
+        Section(
+            heading=str(s.get("heading") or ""),
+            text=str(s.get("text") or ""),
+            page_number=s.get("page_number"),
+        )
+        for s in data.get("sections") or []
+    ]
+    return ParsedDocument(
+        sections=sections,
+        title=str(data.get("title") or ""),
+        author=str(data.get("author") or ""),
+        page_count=int(data.get("page_count") or 0),
+    )
+
+
+def _merge_pipeline_metadata(doc_id: str, **flags: Any) -> None:
+    doc = documents_repo.get_document(doc_id) or {}
+    existing = (doc.get("metadata") or {}).get("pipeline") or {}
+    pipeline = {**existing, **flags}
+    documents_repo.update_document_metadata(doc_id, metadata={"pipeline": pipeline})
+
+
+def _load_stored_parsed(doc_id: str) -> ParsedDocument:
+    doc = documents_repo.get_document(doc_id)
+    if not doc:
+        raise ValueError(f"Document {doc_id} not found")
+    raw = (doc.get("metadata") or {}).get("pipeline", {}).get("parsed_document")
+    if not raw:
+        raise ValueError(f"Document {doc_id} has not been parsed yet")
+    return _parsed_from_dict(raw)
 
 _MIME_PARSERS: dict[str, Callable[[bytes], ParsedDocument]] = {
     "application/pdf": lambda file_bytes: parse_pdf(file_bytes),
@@ -43,61 +109,127 @@ _MIME_PARSERS: dict[str, Callable[[bytes], ParsedDocument]] = {
 }
 
 
-async def process_document(doc_id: str, file_bytes: bytes, mime_type: str) -> None:
-    """Full ingestion pipeline for a single document.
-
-    Updates ``documents.status`` at each stage.  On failure the document is
-    marked ``failed`` with the error message stored.
-    """
+async def run_parse_stage(doc_id: str, file_bytes: bytes, mime_type: str) -> None:
+    """Parse document bytes and persist structured text under ``metadata.pipeline``."""
+    clear_pipeline_cancel(doc_id)
     try:
-        # --- parsing ---
         log.info("[ingest:%s] stage=parsing mime=%s bytes=%d", doc_id, mime_type, len(file_bytes))
         documents_repo.update_document_status(doc_id, DocumentStatus.PARSING)
         parsed = await _parse(file_bytes, mime_type)
+        if is_pipeline_cancelled(doc_id):
+            raise RuntimeError("Cancelled")
         log.info("[ingest:%s] parsing done, sections=%d", doc_id, len(parsed.sections))
+        documents_repo.delete_chunks_for_document(doc_id)
+        _merge_pipeline_metadata(
+            doc_id,
+            parsed=True,
+            chunked=False,
+            embedded=False,
+            parsed_document=_parsed_to_dict(parsed),
+        )
+        documents_repo.update_document_chunk_count(doc_id, 0)
+        documents_repo.update_document_status(doc_id, DocumentStatus.PARSED)
+    except Exception as exc:
+        log.exception("[ingest:%s] parse stage failed", doc_id)
+        documents_repo.update_document_status(doc_id, DocumentStatus.FAILED, error_message=str(exc))
+        raise
+    finally:
+        clear_pipeline_cancel(doc_id)
 
-        # --- chunking ---
+
+async def run_chunk_stage(doc_id: str) -> None:
+    """Chunk a previously parsed document and store chunks without embeddings."""
+    clear_pipeline_cancel(doc_id)
+    try:
+        parsed = _load_stored_parsed(doc_id)
         log.info("[ingest:%s] stage=chunking", doc_id)
         documents_repo.update_document_status(doc_id, DocumentStatus.CHUNKING)
         chunks = chunk_document(parsed)
+        if is_pipeline_cancelled(doc_id):
+            raise RuntimeError("Cancelled")
         if not chunks:
-            log.warning("[ingest:%s] no chunks produced — marking ready with warning", doc_id)
             documents_repo.update_document_status(
-                doc_id, DocumentStatus.READY, error_message="No content extracted"
+                doc_id, DocumentStatus.FAILED, error_message="No content extracted"
             )
             return
         log.info("[ingest:%s] chunking done, num_chunks=%d", doc_id, len(chunks))
-
-        # --- embedding ---
-        log.info("[ingest:%s] stage=embedding, num_texts=%d", doc_id, len(chunks))
-        documents_repo.update_document_status(doc_id, DocumentStatus.EMBEDDING)
-        texts = [c.text for c in chunks]
-        embeddings = await embedding_svc.embed_texts(texts)
-        log.info("[ingest:%s] embedding done, num_embeddings=%d", doc_id, len(embeddings))
-
-        # --- store chunks ---
-        log.info("[ingest:%s] stage=storing chunks", doc_id)
-        chunk_dicts = _build_chunk_dicts(doc_id, chunks, embeddings)
+        documents_repo.delete_chunks_for_document(doc_id)
+        chunk_dicts = [
+            {
+                "doc_id": doc_id,
+                "text": c.text,
+                "chunk_index": c.chunk_index,
+                "source_page": c.source_page,
+                "section_heading": c.section_heading,
+                "token_count": c.token_count,
+            }
+            for c in chunks
+        ]
         stored = documents_repo.create_chunks(chunk_dicts)
         if not stored:
             raise RuntimeError(f"All {len(chunk_dicts)} chunk inserts failed — check ArangoDB logs")
         documents_repo.update_document_chunk_count(doc_id, len(stored))
-        log.info(
-            "[ingest:%s] chunks stored, requested=%d stored=%d",
-            doc_id,
-            len(chunk_dicts),
-            len(stored),
+        _merge_pipeline_metadata(doc_id, chunked=True, embedded=False)
+        documents_repo.update_document_status(doc_id, DocumentStatus.CHUNKED)
+    except Exception as exc:
+        log.exception("[ingest:%s] chunk stage failed", doc_id)
+        documents_repo.update_document_status(doc_id, DocumentStatus.FAILED, error_message=str(exc))
+        raise
+    finally:
+        clear_pipeline_cancel(doc_id)
+
+
+async def run_embed_stage(doc_id: str) -> None:
+    """Embed and persist vectors for existing chunks."""
+    clear_pipeline_cancel(doc_id)
+    try:
+        db = get_db()
+        rows = list(
+            run_aql(
+                db,
+                "FOR c IN @@col FILTER c.doc_id == @doc_id SORT c.chunk_index ASC RETURN c",
+                bind_vars={"@col": documents_repo.CHUNKS_COLLECTION, "doc_id": doc_id},
+            )
         )
-
-        # --- vector index ---
+        if not rows:
+            raise ValueError(f"No chunks found for document {doc_id} — run chunk stage first")
+        log.info("[ingest:%s] stage=embedding, num_texts=%d", doc_id, len(rows))
+        documents_repo.update_document_status(doc_id, DocumentStatus.EMBEDDING)
+        texts = [str(r.get("text") or "") for r in rows]
+        embeddings = await embedding_svc.embed_texts(texts)
+        if is_pipeline_cancelled(doc_id):
+            raise RuntimeError("Cancelled")
+        updates = [(str(r["_key"]), emb) for r, emb in zip(rows, embeddings, strict=True)]
+        updated = documents_repo.update_chunk_embeddings(updates)
+        if updated != len(updates):
+            raise RuntimeError(f"Only {updated}/{len(updates)} chunk embeddings were stored")
         _ensure_vector_index()
-
+        _merge_pipeline_metadata(doc_id, embedded=True)
         documents_repo.update_document_status(doc_id, DocumentStatus.READY)
         log.info("[ingest:%s] COMPLETE — document ready", doc_id)
-
     except Exception as exc:
-        log.exception("[ingest:%s] FAILED at current stage", doc_id)
+        log.exception("[ingest:%s] embed stage failed", doc_id)
         documents_repo.update_document_status(doc_id, DocumentStatus.FAILED, error_message=str(exc))
+        raise
+    finally:
+        clear_pipeline_cancel(doc_id)
+
+
+async def process_document(doc_id: str, file_bytes: bytes, mime_type: str) -> None:
+    """Full ingestion pipeline for a single document (parse → chunk → embed)."""
+    try:
+        await run_parse_stage(doc_id, file_bytes, mime_type)
+        doc = documents_repo.get_document(doc_id)
+        if not doc or doc.get("status") == DocumentStatus.FAILED:
+            return
+        await run_chunk_stage(doc_id)
+        doc = documents_repo.get_document(doc_id)
+        if not doc or doc.get("status") == DocumentStatus.FAILED:
+            return
+        await run_embed_stage(doc_id)
+    except Exception:
+        # Stages already set status=failed
+        return
 
 
 _VECTOR_INDEX_NAME = "idx_chunks_embedding_vector"

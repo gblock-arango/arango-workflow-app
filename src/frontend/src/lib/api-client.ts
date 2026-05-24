@@ -196,6 +196,63 @@ export function apiFetchLongRunning(
   return apiFetch(path, init, LONG_RUNNING_API_TIMEOUT_MS);
 }
 
+export interface UploadProgressEvent {
+  loaded: number;
+  total: number;
+  percent: number;
+}
+
+/**
+ * POST ``FormData`` with XMLHttpRequest upload progress (``fetch`` has no upload events).
+ */
+export function apiUploadWithProgress(
+  path: string,
+  formData: FormData,
+  options: {
+    headers?: Record<string, string>;
+    onProgress?: (event: UploadProgressEvent) => void;
+    timeoutMs?: number;
+  } = {},
+): Promise<Response> {
+  const { headers, onProgress, timeoutMs = LONG_RUNNING_API_TIMEOUT_MS } = options;
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", backendUrl(path));
+    xhr.timeout = timeoutMs;
+    const token = getToken();
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
+    if (headers) {
+      for (const [key, value] of Object.entries(headers)) {
+        xhr.setRequestHeader(key, value);
+      }
+    }
+    xhr.upload.addEventListener("progress", (event) => {
+      if (!onProgress || !event.lengthComputable || event.total <= 0) {
+        return;
+      }
+      onProgress({
+        loaded: event.loaded,
+        total: event.total,
+        percent: Math.round((event.loaded / event.total) * 100),
+      });
+    });
+    xhr.onload = () => {
+      resolve(
+        new Response(xhr.responseText, {
+          status: xhr.status,
+          statusText: xhr.statusText,
+        }),
+      );
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.ontimeout = () => reject(new Error("Upload timed out"));
+    xhr.send(formData);
+  });
+}
+
 function resolveApiBaseUrl(baseUrl: string): string {
   if (typeof window === "undefined") {
     return baseUrl;

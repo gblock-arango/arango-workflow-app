@@ -2432,6 +2432,25 @@ def _import_from_file_with_schema(
     )
 
 
+def _update_import_job(ontology_id: str, **fields: Any) -> None:
+    job = _import_jobs.get(ontology_id)
+    if job is not None:
+        job.update(fields)
+
+
+def _enrich_import_job_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize graph naming and counts for the status API / UI."""
+    out = dict(result)
+    registry_key = out.get("registry_key") or out.get("ontology_id")
+    pgt_graph = out.get("graph_name")
+    if pgt_graph and not str(pgt_graph).startswith("ontology_"):
+        out["named_graph"] = pgt_graph
+        out["graph_name"] = f"ontology_{pgt_graph}"
+    elif registry_key and not out.get("graph_name"):
+        out["graph_name"] = f"ontology_{registry_key}"
+    return out
+
+
 async def _run_import_job(
     *,
     ontology_id: str,
@@ -2445,16 +2464,41 @@ async def _run_import_job(
     if job is None:
         return
     try:
+        from app.services.schema_bootstrap import ensure_ontology_schema
+
+        _update_import_job(
+            ontology_id,
+            stage="schema",
+            progress_pct=10,
+            status_message="Applying Arango schema migrations…",
+        )
+        await asyncio.to_thread(ensure_ontology_schema)
+        _update_import_job(
+            ontology_id,
+            stage="loading",
+            progress_pct=25,
+            status_message="Parsing ontology and loading into ArangoDB…",
+        )
         result = await asyncio.to_thread(
-            _import_from_file_with_schema,
-            file_content=content,
-            filename=filename,
-            ontology_id=ontology_id,
+            import_from_file,
+            content,
+            filename,
+            ontology_id,
             ontology_label=ontology_label,
             ontology_uri_prefix=ontology_uri_prefix,
         )
+        _update_import_job(
+            ontology_id,
+            stage="registry",
+            progress_pct=95,
+            status_message="Updating ontology registry…",
+        )
+        enriched = _enrich_import_job_result(result)
         job["status"] = "completed"
-        job["result"] = result
+        job["stage"] = "completed"
+        job["progress_pct"] = 100
+        job["status_message"] = "Import complete"
+        job["result"] = enriched
         job["finished_at"] = time.time()
     except ValueError as exc:
         log.warning("Import job %s rejected: %s", ontology_id, exc)
@@ -2541,6 +2585,9 @@ async def import_ontology_from_volume(body: ImportFromVolumeBody) -> dict[str, A
     _import_jobs[ontology_id] = {
         "ontology_id": ontology_id,
         "status": "running",
+        "stage": "queued",
+        "progress_pct": 0,
+        "status_message": "Import queued…",
         "filename": filename,
         "ontology_label": label,
         "started_at": time.time(),
@@ -2600,6 +2647,9 @@ async def import_ontology_endpoint(
     _import_jobs[ontology_id] = {
         "ontology_id": ontology_id,
         "status": "running",
+        "stage": "queued",
+        "progress_pct": 0,
+        "status_message": "Import queued…",
         "filename": file.filename,
         "ontology_label": ontology_label,
         "started_at": time.time(),
@@ -2643,11 +2693,20 @@ async def import_status_endpoint(ontology_id: str) -> dict[str, Any]:
         return {
             "ontology_id": ontology_id,
             "status": "completed",
-            "result": {
-                "registry_key": entry.get("_key", ontology_id),
-                "filename": entry.get("source_filename"),
-                "triple_count": entry.get("triple_count"),
-            },
+            "stage": "completed",
+            "progress_pct": 100,
+            "status_message": "Import complete",
+            "result": _enrich_import_job_result(
+                {
+                    "registry_key": entry.get("_key", ontology_id),
+                    "name": entry.get("name") or entry.get("label"),
+                    "filename": entry.get("source_filename"),
+                    "triple_count": entry.get("triple_count"),
+                    "class_count": entry.get("class_count"),
+                    "property_count": entry.get("property_count"),
+                    "graph_name": entry.get("graph_name"),
+                }
+            ),
         }
     raise HTTPException(
         status_code=404, detail=f"No import job found for ontology_id '{ontology_id}'"

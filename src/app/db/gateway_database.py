@@ -395,10 +395,19 @@ class GatewayCollection:
         return self.add_index(body)
 
     def delete_index(self, index_id: str, ignore_missing: bool = False) -> Any:
-        safe = quote(index_id, safe="")
-        res = self._db._request(
-            "DELETE", f"/_db/{_q(self._db.name)}/_api/index/{safe}"
-        )
+        # Arango expects DELETE /_api/index/{collection}/{index-id}, not /_api/index/{id}
+        # alone. Index ``id`` from ``indexes()`` is often ``{collection}/{handle}``.
+        if "/" in index_id:
+            coll, handle = index_id.split("/", 1)
+            path = (
+                f"/_db/{_q(self._db.name)}/_api/index/{_q(coll)}/{quote(handle, safe='')}"
+            )
+        else:
+            path = (
+                f"/_db/{_q(self._db.name)}/_api/index/{_q(self.name)}/"
+                f"{quote(index_id, safe='')}"
+            )
+        res = self._db._request("DELETE", path)
         try:
             return _unwrap_arango_result(res, op="delete_index")
         except GatewayAPIError:
