@@ -19,7 +19,7 @@ env:
       (Required) SQL warehouse id for UC reads — gateway, mcp-agent, and workflow URL registries.
     value: "473d40703241ee4c"
 
-  # LLM — Databricks Model Serving (Autograph / LangGraph)
+  # LLM — Databricks Model Serving (Autograph / LangGraph). OpenAI keys optional when set.
   - name: AUTOGRAPH_LLM_PROVIDER
     description: "auto | databricks_serving | openai | anthropic. On Databricks, auto uses serving when AUTOGRAPH_*_MODEL_NAME is set."
     value: "databricks_serving"
@@ -27,15 +27,12 @@ env:
     description: "Serving endpoint name for LangGraph extraction (not a URL)."
     value: "databricks-meta-llama-3-3-70b-instruct"
   - name: AUTOGRAPH_EMBEDDING_MODEL_NAME
-    description: "FM API serving endpoint. Default databricks-bge-large-en; aliases bge_large_en_v1_5, gte_large_en_v1_5."
+    description: >-
+      FM API serving endpoint. Default databricks-bge-large-en; aliases bge_large_en_v1_5, gte_large_en_v1_5.
     value: "databricks-bge-large-en"
   - name: AUTOGRAPH_EMBEDDING_DIMENSION
     description: "Faiss dim: 1024 large, 768 base, 384 small (must match model)."
     value: "1024"
-
-  # ---------------------------------------------------------------------------
-  # LLM Optional — Databricks Model Serving (Autograph / LangGraph). OpenAI keys optional when set.
-  # ---------------------------------------------------------------------------
   - name: AUTOGRAPH_LLM_RESOLVE_QUERY
     description: "Optional; resolve READY endpoint when AUTOGRAPH_LLM_MODEL_NAME is empty."
     value: ""
@@ -46,7 +43,7 @@ env:
     description: "Call serving_endpoints.get when list() omits foundation_model metadata."
     value: "false"
   - name: OPENAI_API_KEY
-    description: "Optional OpenAI API key (injected at deploy). Not required when AUTOGRAPH_LLM_PROVIDER=databricks_serving."
+    description: "OpenAI API key (injected at deploy). Not required when AUTOGRAPH_LLM_PROVIDER=databricks_serving."
     value: ""
   - name: LLM_EXTRACTION_MODEL
     description: "Extraction model when not using Databricks serving"
