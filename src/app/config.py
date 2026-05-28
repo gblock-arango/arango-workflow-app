@@ -35,6 +35,15 @@ class DeploymentMode(StrEnum):
     MANAGED_PLATFORM = "managed_platform"
 
 
+class LlmProvider(StrEnum):
+    """How LangGraph extraction and chunk embeddings reach LLMs."""
+
+    AUTO = "auto"
+    DATABRICKS_SERVING = "databricks_serving"
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=_resolved_env_files() or None,
@@ -85,6 +94,62 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     llm_extraction_model: str = "claude-sonnet-4-20250514"
     embedding_model: str = "text-embedding-3-small"
+    #: ``auto`` on Databricks uses Model Serving when ``AUTOGRAPH_*_MODEL_NAME`` or resolve
+    #: queries are set; ``openai`` / ``anthropic`` force external APIs; ``databricks_serving``
+    #: requires workspace OAuth and serving endpoint names.
+    autograph_llm_provider: str = Field(
+        default="auto",
+        validation_alias=AliasChoices(
+            "AUTOGRAPH_LLM_PROVIDER",
+            "LLM_PROVIDER",
+        ),
+    )
+    #: Databricks serving endpoint **name** for LangGraph extraction (not a full URL).
+    autograph_llm_model_name: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "AUTOGRAPH_LLM_MODEL_NAME",
+            "LLM_SERVING_ENDPOINT",
+        ),
+    )
+    autograph_llm_resolve_query: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "AUTOGRAPH_LLM_RESOLVE_QUERY",
+            "AUTOGRAPH_LLM_FOUNDATION_MODEL_QUERY",
+        ),
+    )
+    #: Databricks serving endpoint **name** for chunk/ER embeddings.
+    autograph_embedding_model_name: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "AUTOGRAPH_EMBEDDING_MODEL_NAME",
+            "EMBEDDING_SERVING_ENDPOINT",
+            "AUTOGRAPH_EMBEDDING_SERVING_ENDPOINT",
+        ),
+    )
+    autograph_embedding_resolve_query: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "AUTOGRAPH_EMBEDDING_RESOLVE_QUERY",
+            "AUTOGRAPH_EMBEDDING_FOUNDATION_MODEL_QUERY",
+        ),
+    )
+    autograph_resolve_endpoint_deep: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "AUTOGRAPH_RESOLVE_ENDPOINT_DEEP",
+            "AUTOGRAPH_LLM_RESOLVE_ENDPOINT_DEEP",
+        ),
+    )
+    #: Vector index dimension for ``chunks.embedding`` (0 = infer from model/provider).
+    autograph_embedding_dimension: int = Field(
+        default=0,
+        validation_alias=AliasChoices(
+            "AUTOGRAPH_EMBEDDING_DIMENSION",
+            "EMBEDDING_DIMENSION",
+        ),
+    )
     #: Per-request HTTP timeout for LLM calls, in seconds. Without an
     #: explicit timeout, ``ChatAnthropic`` and ``ChatOpenAI`` inherit
     #: their underlying httpx client default (``None`` = wait forever
@@ -263,6 +328,62 @@ class Settings(BaseSettings):
     def supports_satellite_collections(self) -> bool:
         """SatelliteCollections are cluster-only (Enterprise Edition)."""
         return self.is_cluster
+
+    @property
+    def llm_provider_normalized(self) -> LlmProvider:
+        raw = (self.autograph_llm_provider or "auto").strip().lower()
+        try:
+            return LlmProvider(raw)
+        except ValueError:
+            return LlmProvider.AUTO
+
+    def _databricks_serving_configured_for_chat(self) -> bool:
+        return bool(
+            (self.autograph_llm_model_name or "").strip()
+            or (self.autograph_llm_resolve_query or "").strip()
+        )
+
+    def _databricks_serving_configured_for_embeddings(self) -> bool:
+        return bool(
+            (self.autograph_embedding_model_name or "").strip()
+            or (self.autograph_embedding_resolve_query or "").strip()
+        )
+
+    def use_databricks_for_extraction(self) -> bool:
+        provider = self.llm_provider_normalized
+        if provider == LlmProvider.DATABRICKS_SERVING:
+            return True
+        if provider in (LlmProvider.OPENAI, LlmProvider.ANTHROPIC):
+            return False
+        if not self.is_cluster:
+            return False
+        return self._databricks_serving_configured_for_chat()
+
+    def use_databricks_for_embeddings(self) -> bool:
+        provider = self.llm_provider_normalized
+        if provider == LlmProvider.DATABRICKS_SERVING:
+            return True
+        if provider in (LlmProvider.OPENAI, LlmProvider.ANTHROPIC):
+            return False
+        if not self.is_cluster:
+            return False
+        return self._databricks_serving_configured_for_embeddings()
+
+    @property
+    def effective_embedding_dimension(self) -> int:
+        if self.autograph_embedding_dimension > 0:
+            return int(self.autograph_embedding_dimension)
+        if self.use_databricks_for_embeddings():
+            from app.llm.databricks_serving import (
+                effective_embedding_model_name,
+                default_embedding_dimension_for_model,
+            )
+
+            return default_embedding_dimension_for_model(effective_embedding_model_name())
+        model = (self.embedding_model or "").lower()
+        if "text-embedding-3" in model or "ada" in model:
+            return 1536
+        return 1536
 
     @property
     def wcc_backend_preference(self) -> str:

@@ -34,7 +34,15 @@ _TIKTOKEN_MODEL = "cl100k_base"
 
 
 def _get_client() -> AsyncOpenAI:
-    """Build ``AsyncOpenAI`` with the same httpx stack as extraction ``ChatOpenAI``."""
+    """Build ``AsyncOpenAI`` (OpenAI API or Databricks ``/serving-endpoints``)."""
+    from app.llm.databricks_serving import (
+        uses_databricks_serving_for_embeddings,
+        workspace_async_openai_client,
+    )
+
+    if uses_databricks_serving_for_embeddings():
+        return workspace_async_openai_client()
+
     from langchain_openai.chat_models._client_utils import _get_default_async_httpx_client
 
     timeout = float(settings.llm_request_timeout_seconds)
@@ -91,7 +99,9 @@ async def embed_texts(
     if not texts:
         return []
 
-    model = model or settings.embedding_model
+    from app.llm.databricks_serving import effective_embedding_model_name
+
+    model = model or effective_embedding_model_name()
     client = _get_client()
     batches = _build_batches(texts)
     log.info(

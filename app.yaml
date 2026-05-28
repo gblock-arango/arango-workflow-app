@@ -19,14 +19,37 @@ env:
       (Required) SQL warehouse id for UC reads — gateway, mcp-agent, and workflow URL registries.
     value: "473d40703241ee4c"
 
-  # LLM (empty here — export OPENAI_API_KEY or set in .env before ./deploy_app.sh)
+  # LLM — Databricks Model Serving (Autograph / LangGraph). OpenAI keys optional when set.
+  - name: AUTOGRAPH_LLM_PROVIDER
+    description: "auto | databricks_serving | openai | anthropic. On Databricks, auto uses serving when AUTOGRAPH_*_MODEL_NAME is set."
+    value: "databricks_serving"
+  - name: AUTOGRAPH_LLM_MODEL_NAME
+    description: "Serving endpoint name for LangGraph extraction (not a URL)."
+    value: "databricks-meta-llama-3-3-70b-instruct"
+  - name: AUTOGRAPH_EMBEDDING_MODEL_NAME
+    description: >-
+      FM API serving endpoint. Default databricks-bge-large-en; aliases bge_large_en_v1_5, gte_large_en_v1_5.
+    value: "databricks-bge-large-en"
+  - name: AUTOGRAPH_EMBEDDING_DIMENSION
+    description: "Faiss dim: 1024 large, 768 base, 384 small (must match model)."
+    value: "1024"
+  - name: AUTOGRAPH_LLM_RESOLVE_QUERY
+    description: "Optional; resolve READY endpoint when AUTOGRAPH_LLM_MODEL_NAME is empty."
+    value: ""
+  - name: AUTOGRAPH_EMBEDDING_RESOLVE_QUERY
+    description: "Optional; resolve embedding endpoint when AUTOGRAPH_EMBEDDING_MODEL_NAME is empty."
+    value: ""
+  - name: AUTOGRAPH_RESOLVE_ENDPOINT_DEEP
+    description: "Call serving_endpoints.get when list() omits foundation_model metadata."
+    value: "false"
   - name: OPENAI_API_KEY
-    description: "OpenAI API key for embeddings and OpenAI extraction models (injected at deploy from env)."
+    description: "OpenAI API key (injected at deploy). Not required when AUTOGRAPH_LLM_PROVIDER=databricks_serving."
     value: ""
   - name: LLM_EXTRACTION_MODEL
-    description: "Primary extraction model (from your .env: gpt-4o-mini)"
+    description: "Extraction model when not using Databricks serving"
     value: "gpt-4o-mini"
   - name: EMBEDDING_MODEL
+    description: "Embedding model when not using Databricks serving"
     value: "text-embedding-3-small"
 
   # ---------------------------------------------------------------------------
@@ -66,6 +89,9 @@ env:
   - name: ARANGO_WORKFLOW_REGISTRY_AUTO_CREATE
     description: "When true, upsert this app's public URL into ARANGO_WORKFLOW_REGISTRY_TABLE at startup"
     value: "true"
+  - name: EMBEDDING_STATUS_TABLE
+    description: "UC Delta table for parse/chunk/embed pipeline status (catalog.schema.table)"
+    value: "workspace.default.embedding_status"
 
   - name: UC_GRAPH_VOLUME_NAME
     value: "arango_workflow_volume"
@@ -153,6 +179,16 @@ resources:
     sql_warehouse:
       id: ${DATABRICKS_SQL_WAREHOUSE_ID}
       permission: CAN_USE
+  # Autograph LangGraph + embeddings (workspace OAuth → /serving-endpoints). CAN_QUERY is
+  # granted to this app's service principal on deploy when you redeploy after adding these.
+  - name: autograph-llm-serving
+    serving_endpoint:
+      name: ${AUTOGRAPH_LLM_MODEL_NAME}
+      permission: CAN_QUERY
+  - name: autograph-embedding-serving
+    serving_endpoint:
+      name: ${AUTOGRAPH_EMBEDDING_MODEL_NAME}
+      permission: CAN_QUERY
   - name: workflow-volume
     uc_securable:
       securable_type: VOLUME

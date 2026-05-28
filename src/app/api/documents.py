@@ -19,6 +19,7 @@ from app.api.dependencies import get_or_404
 from app.api.errors import ConflictError, ValidationError
 from app.db import documents_repo
 from app.db.client import get_db
+from app.db.gateway_errors import format_gateway_error
 from app.db.utils import run_aql
 from app.models.common import PaginatedResponse
 from app.models.documents import DocumentStatus
@@ -37,12 +38,12 @@ from app.services.workflow_data import (
     read_staged_document_bytes,
     workflow_data_status,
 )
-from app.tasks import (
-    process_document,
+from app.services import embedding_artifacts
+from app.services import embedding_status as emb_status_svc
+from app.services.embedding_pipeline import (
+    process_embedding_document,
     request_pipeline_cancel,
-    run_chunk_stage,
-    run_embed_stage,
-    run_parse_stage,
+    run_pipeline_stage as run_embedding_pipeline_stage,
 )
 
 log = logging.getLogger(__name__)
@@ -112,8 +113,58 @@ class PipelineCancelBody(BaseModel):
     doc_ids: list[str] = Field(default_factory=list)
 
 
+def _register_embedding_row(
+    *,
+    doc_id: str,
+    filename: str,
+    mime_type: str,
+    volume_relative_path: str,
+    file_size_bytes: int,
+    file_hash: str,
+    status: str = "staged",
+) -> None:
+    emb_status_svc.register_staged_document(
+        doc_id=doc_id,
+        filename=filename,
+        mime_type=mime_type,
+        volume_relative_path=volume_relative_path,
+        file_size_bytes=file_size_bytes,
+        file_hash=file_hash,
+        status=status,
+    )
+
+
+def _resolve_duplicate_hash_embedding(file_hash: str) -> None:
+    """Discard prior staged/failed UC embedding rows for the same content hash."""
+    existing = emb_status_svc.find_by_file_hash(file_hash)
+    if not existing:
+        return
+    prior_status = existing.get("status")
+    if prior_status in ("failed", "staged"):
+        prior_id = existing["doc_id"]
+        emb_status_svc.delete_embedding_status(prior_id)
+        embedding_artifacts.delete_pipeline_artifacts(prior_id)
+        log.info(
+            "discarded prior embedding_status %s doc %s (hash=%s)",
+            prior_status,
+            prior_id,
+            file_hash,
+        )
+        return
+    raise ConflictError(
+        "Duplicate document — a file with identical content already exists",
+        details={
+            "existing_doc_id": existing["doc_id"],
+            "existing_status": prior_status,
+            "file_hash": file_hash,
+            "catalog": "embedding_status",
+        },
+    )
+
+
 def _resolve_duplicate_hash(file_hash: str) -> None:
     """Allow re-upload when the only existing record is FAILED; else raise ConflictError."""
+    _resolve_duplicate_hash_embedding(file_hash)
     existing = documents_repo.find_document_by_hash(file_hash)
     if not existing:
         return
@@ -149,7 +200,7 @@ def _ensure_staging_store_ready_sync() -> None:
         log.exception("staging schema failed before document write")
         raise ValidationError(
             "Document staging collections are not ready in Arango (via gateway). "
-            f"Check gateway connectivity: {exc}",
+            f"Check gateway connectivity: {format_gateway_error(exc)}",
             details={"exception_type": type(exc).__name__},
         ) from exc
 
@@ -162,7 +213,7 @@ async def _ensure_staging_store_ready() -> None:
         log.exception("staging schema failed before document write")
         raise ValidationError(
             "Document staging collections are not ready in Arango (via gateway). "
-            f"Check gateway connectivity: {exc}",
+            f"Check gateway connectivity: {format_gateway_error(exc)}",
             details={"exception_type": type(exc).__name__},
         ) from exc
 
@@ -207,12 +258,11 @@ async def _queue_processing(
     content: bytes,
     mime: str,
 ) -> dict[str, Any]:
-    """Ensure DB schema, then start parse → chunk → embed in the background."""
-    schema_info = await ensure_ontology_schema_async()
-    task = asyncio.create_task(process_document(doc_id, content, mime))
+    """Start UC parse → chunk → embed in the background (no Arango)."""
+    task = asyncio.create_task(process_embedding_document(doc_id, content, mime))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
-    return schema_info
+    return {"pipeline": "uc_embedding_status"}
 
 
 def _to_doc_response(doc: dict[str, Any]) -> dict[str, Any]:
@@ -279,6 +329,19 @@ async def upload_document(
         volume_meta["original_filename"] = filename
         if file.filename and file.filename != filename:
             volume_meta["multipart_filename"] = file.filename
+
+        rel_path = volume_meta.get("volume_relative_path")
+        if rel_path:
+            await asyncio.to_thread(
+                _register_embedding_row,
+                doc_id=doc_id,
+                filename=filename,
+                mime_type=mime,
+                volume_relative_path=str(rel_path),
+                file_size_bytes=len(content),
+                file_hash=file_hash,
+                status=DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value,
+            )
 
         doc = await asyncio.to_thread(
             documents_repo.create_document,
@@ -399,6 +462,18 @@ def _ingest_from_volume_impl(
         "volume_source": source,
     }
 
+    upload_rel_path = upload_rel.get("volume_relative_path")
+    if upload_rel_path:
+        _register_embedding_row(
+            doc_id=doc_id,
+            filename=filename,
+            mime_type=mime,
+            volume_relative_path=str(upload_rel_path),
+            file_size_bytes=len(content),
+            file_hash=file_hash,
+            status=DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value,
+        )
+
     try:
         doc = documents_repo.create_document(
             doc_id=doc_id,
@@ -500,81 +575,21 @@ def _track_background_task(task: asyncio.Task[None]) -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
-def _pipeline_flags(doc: dict[str, Any]) -> dict[str, bool]:
-    pipeline = (doc.get("metadata") or {}).get("pipeline") or {}
-    status = doc.get("status", "")
-    return {
-        "parsed": bool(pipeline.get("parsed"))
-        or status
-        in (
-            DocumentStatus.PARSED,
-            DocumentStatus.CHUNKING,
-            DocumentStatus.CHUNKED,
-            DocumentStatus.EMBEDDING,
-            DocumentStatus.READY,
-        ),
-        "chunked": bool(pipeline.get("chunked"))
-        or status
-        in (
-            DocumentStatus.CHUNKED,
-            DocumentStatus.EMBEDDING,
-            DocumentStatus.READY,
-        )
-        or int(doc.get("chunk_count") or 0) > 0,
-        "embedded": bool(pipeline.get("embedded")) or status == DocumentStatus.READY,
-    }
-
-
-async def _run_pipeline_stage(doc_id: str, stage: Literal["parse", "chunk", "embed"]) -> None:
-    await ensure_ontology_schema_async()
-    if stage == "parse":
-        doc = documents_repo.get_document(doc_id)
-        if not doc:
-            return
-        content, _filename, mime = read_staged_document_bytes(doc)
-        await run_parse_stage(doc_id, content, mime)
-    elif stage == "chunk":
-        await run_chunk_stage(doc_id)
-    else:
-        await run_embed_stage(doc_id)
-
-
 def _queue_pipeline_stage(doc_id: str, stage: Literal["parse", "chunk", "embed"]) -> None:
-    task = asyncio.create_task(_run_pipeline_stage(doc_id, stage))
+    task = asyncio.create_task(run_embedding_pipeline_stage(doc_id, stage))
     _track_background_task(task)
-
-
-def _assert_stage_allowed(doc: dict[str, Any], stage: Literal["parse", "chunk", "embed"]) -> None:
-    status = doc.get("status", "")
-    if status in _ACTIVE_PIPELINE_STATUSES:
-        raise ConflictError(f"Document is already processing (status={status})")
-    flags = _pipeline_flags(doc)
-    if stage == "parse":
-        if status == DocumentStatus.READY:
-            raise ValidationError("Document is already completed")
-        return
-    if stage == "chunk":
-        if not flags["parsed"]:
-            raise ValidationError("Parse this document before chunking")
-        if flags["embedded"]:
-            raise ValidationError("Document is already completed")
-        return
-    if not flags["chunked"]:
-        raise ValidationError("Chunk this document before embedding")
-    if flags["embedded"]:
-        raise ValidationError("Document is already embedded")
 
 
 @router.post("/pipeline/batch")
 async def pipeline_batch(body: PipelineBatchBody) -> dict[str, Any]:
-    """Start parse, chunk, or embed for multiple documents (background tasks)."""
+    """Start parse, chunk, or embed (UC embedding_status; backward-compatible path)."""
     queued: list[str] = []
     for doc_id in body.doc_ids:
-        doc = documents_repo.get_document(doc_id)
-        if not doc:
+        row = await asyncio.to_thread(emb_status_svc.get_embedding_status, doc_id)
+        if not row:
             continue
         try:
-            _assert_stage_allowed(doc, body.stage)
+            emb_status_svc.assert_stage_allowed(row, body.stage)
         except (ValidationError, ConflictError):
             continue
         _queue_pipeline_stage(doc_id, body.stage)
@@ -592,61 +607,82 @@ async def pipeline_cancel(body: PipelineCancelBody) -> dict[str, Any]:
 
 @router.post("/{doc_id}/pipeline/parse")
 async def pipeline_parse(doc_id: str) -> dict[str, Any]:
-    doc = get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
-    _assert_stage_allowed(doc, "parse")
+    row = get_or_404(
+        await asyncio.to_thread(emb_status_svc.get_embedding_status, doc_id),
+        "Embedding document",
+        doc_id,
+    )
+    emb_status_svc.assert_stage_allowed(row, "parse")
     _queue_pipeline_stage(doc_id, "parse")
     return {"doc_id": doc_id, "stage": "parse", "status": "queued"}
 
 
 @router.post("/{doc_id}/pipeline/chunk")
 async def pipeline_chunk(doc_id: str) -> dict[str, Any]:
-    doc = get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
-    _assert_stage_allowed(doc, "chunk")
+    row = get_or_404(
+        await asyncio.to_thread(emb_status_svc.get_embedding_status, doc_id),
+        "Embedding document",
+        doc_id,
+    )
+    emb_status_svc.assert_stage_allowed(row, "chunk")
     _queue_pipeline_stage(doc_id, "chunk")
     return {"doc_id": doc_id, "stage": "chunk", "status": "queued"}
 
 
 @router.post("/{doc_id}/pipeline/embed")
 async def pipeline_embed(doc_id: str) -> dict[str, Any]:
-    doc = get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
-    _assert_stage_allowed(doc, "embed")
+    row = get_or_404(
+        await asyncio.to_thread(emb_status_svc.get_embedding_status, doc_id),
+        "Embedding document",
+        doc_id,
+    )
+    emb_status_svc.assert_stage_allowed(row, "embed")
     _queue_pipeline_stage(doc_id, "embed")
     return {"doc_id": doc_id, "stage": "embed", "status": "queued"}
 
 
 @router.post("/{doc_id}/prepare")
 async def prepare_document(doc_id: str) -> dict[str, Any]:
-    """Parse, chunk, and embed a staged document (reads bytes from UC workflow-data/uploads/)."""
-    doc = get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
-    status = doc.get("status", "")
-    if status == DocumentStatus.READY:
+    """Parse, chunk, and embed via UC embedding_status (reads bytes from workflow-data/uploads/)."""
+    row = get_or_404(
+        await asyncio.to_thread(emb_status_svc.get_embedding_status, doc_id),
+        "Embedding document",
+        doc_id,
+    )
+    status = str(row.get("status") or "")
+    if status == "ready":
         raise ValidationError("Document is already prepared (status=ready)")
-    if status in _ACTIVE_PIPELINE_STATUSES:
+    if status in {s.value for s in _ACTIVE_PIPELINE_STATUSES}:
         raise ConflictError(f"Document is already processing (status={status})")
-    if status not in _PREPARE_ALLOWED:
+    if status not in {s.value for s in _PREPARE_ALLOWED}:
         raise ValidationError(f"Cannot prepare document with status={status}")
 
     try:
-        content, filename, mime = read_staged_document_bytes(doc)
+        content, filename, mime = read_staged_document_bytes(
+            {"metadata": {"volume_relative_path": row["volume_relative_path"]}}
+        )
     except FileNotFoundError as exc:
         raise ValidationError(str(exc)) from exc
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
 
-    documents_repo.delete_chunks_for_document(doc_id)
-    documents_repo.update_document_status(doc_id, DocumentStatus.UPLOADING)
+    await asyncio.to_thread(
+        lambda: emb_status_svc.update_embedding_status(
+            doc_id,
+            status=DocumentStatus.UPLOADING.value,
+            clear_error=True,
+        )
+    )
     schema_info = await _queue_processing(doc_id, content, mime)
 
-    updated = documents_repo.get_document(doc_id)
+    updated = await asyncio.to_thread(emb_status_svc.get_embedding_status, doc_id)
     out: dict[str, Any] = {
         "doc_id": doc_id,
         "filename": filename,
-        "status": (updated or doc).get("status", DocumentStatus.UPLOADING.value),
+        "status": (updated or row).get("status", DocumentStatus.UPLOADING.value),
         "schema": schema_info,
+        "volume_path": row.get("volume_relative_path"),
     }
-    meta = (updated or doc).get("metadata") or {}
-    if meta.get("volume_relative_path"):
-        out["volume_path"] = meta["volume_relative_path"]
     return out
 
 

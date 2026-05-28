@@ -22,6 +22,7 @@ Unified **Databricks App**: FastAPI BFF + static Next.js. Genie chat is proxied 
 
 `deploy_app.sh` will:
 
+- Declare **Model Serving** resources in `app.yaml` (`autograph-llm-serving`, `autograph-embedding-serving` with `CAN_QUERY`) and run `scripts/grant_autograph_serving_permissions.py` as a fallback ACL repair
 - Read **warehouse id and UC table names from `app.yaml`** (shell env still overrides)
 - **Inject `OPENAI_API_KEY`** (and optional `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`) from env/`.env` into `app.yaml` for sync only, then restore the empty value locally
 - Build the Next.js static export (`src/frontend/out`)

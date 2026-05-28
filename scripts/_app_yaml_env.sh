@@ -41,4 +41,7 @@ load_deploy_config_from_app_yaml() {
   _resolve_from_app_yaml REGISTRY_TABLE ARANGO_REGISTRY_TABLE
   _resolve_from_app_yaml UC_GRAPH_VOLUME_NAME
   _resolve_from_app_yaml SERVICE_URL_PATH_PREFIX
+  _resolve_from_app_yaml AUTOGRAPH_LLM_MODEL_NAME
+  _resolve_from_app_yaml AUTOGRAPH_EMBEDDING_MODEL_NAME
+  _resolve_from_app_yaml AUTOGRAPH_LLM_PROVIDER
 }

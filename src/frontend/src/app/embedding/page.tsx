@@ -2,38 +2,30 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { api, apiFetch } from "@/lib/api-client";
+import { api, apiFetch, LONG_RUNNING_API_TIMEOUT_MS } from "@/lib/api-client";
 import AppHeader from "@/components/layout/AppHeader";
 import AppLink from "@/components/layout/AppLink";
 import LlmConnectivityBadge from "@/components/layout/LlmConnectivityBadge";
 import { getUploadFileKind } from "@/lib/fileAccept";
+import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
 
-interface VolumeFile {
-  path: string;
-  name: string;
-  size_bytes: number;
-}
-
-interface DocumentEntry {
-  _key: string;
+interface EmbeddingStatusRow {
+  doc_id: string;
   filename: string;
-  status: string;
   mime_type: string;
+  volume_relative_path: string;
+  file_size_bytes: number;
+  status: string;
+  parsed: boolean;
+  chunked: boolean;
+  embedded: boolean;
   chunk_count: number;
-  error_message?: string;
-  metadata?: {
-    volume_relative_path?: string;
-    pipeline?: {
-      parsed?: boolean;
-      chunked?: boolean;
-      embedded?: boolean;
-    };
-  };
+  error_message?: string | null;
 }
 
 interface UploadRow {
   rowKey: string;
-  docId: string | null;
+  docId: string;
   displayName: string;
   filepath: string;
   sizeKb: number;
@@ -41,6 +33,7 @@ interface UploadRow {
   chunked: boolean;
   embedded: boolean;
   status: string;
+  error_message?: string | null;
 }
 
 type PipelineStage = "parse" | "chunk" | "embed";
@@ -52,77 +45,39 @@ const ACTIVE_STATUSES = new Set([
   "embedding",
 ]);
 
-const UPLOAD_PATH_RE = /^uploads\/([^/]+)\/(.+)$/i;
-
-function pipelineFlags(doc: DocumentEntry | undefined) {
-  if (!doc) {
-    return { parsed: false, chunked: false, embedded: false };
-  }
-  const pipeline = doc.metadata?.pipeline;
-  const status = doc.status;
-  const parsed =
-    Boolean(pipeline?.parsed) ||
-    ["parsed", "chunking", "chunked", "embedding", "ready"].includes(status);
-  const chunked =
-    Boolean(pipeline?.chunked) ||
-    ["chunked", "embedding", "ready"].includes(status) ||
-    doc.chunk_count > 0;
-  const embedded = Boolean(pipeline?.embedded) || status === "ready";
-  return { parsed, chunked, embedded };
+function rowFlags(row: EmbeddingStatusRow) {
+  const status = row.status;
+  return {
+    parsed:
+      row.parsed ||
+      ["parsed", "chunking", "chunked", "embedding", "ready"].includes(status),
+    chunked:
+      row.chunked ||
+      ["chunked", "embedding", "ready"].includes(status) ||
+      row.chunk_count > 0,
+    embedded: row.embedded || status === "ready",
+  };
 }
 
-function buildUploadRows(files: VolumeFile[], documents: DocumentEntry[]): UploadRow[] {
-  const docById = new Map(documents.map((d) => [d._key, d]));
-  const docByVolumePath = new Map<string, DocumentEntry>();
-  for (const doc of documents) {
-    const rel = doc.metadata?.volume_relative_path;
-    if (rel) docByVolumePath.set(rel, doc);
-  }
-
-  const rows: UploadRow[] = [];
-  const seen = new Set<string>();
-
-  for (const file of files) {
-    const match = UPLOAD_PATH_RE.exec(file.path);
-    const docId = match?.[1] ?? null;
-    const displayName = match?.[2] ?? file.name;
-    const doc =
-      (docId ? docById.get(docId) : undefined) ?? docByVolumePath.get(file.path);
-    const flags = pipelineFlags(doc);
-    const rowKey = file.path;
-    seen.add(rowKey);
-    rows.push({
-      rowKey,
-      docId: doc?._key ?? docId,
-      displayName,
-      filepath: file.path,
-      sizeKb: Math.round((file.size_bytes || 0) / 1024),
-      parsed: flags.parsed,
-      chunked: flags.chunked,
-      embedded: flags.embedded,
-      status: doc?.status ?? "staged",
-    });
-  }
-
-  for (const doc of documents) {
-    if (getUploadFileKind(doc.filename) !== "document") continue;
-    const rel = doc.metadata?.volume_relative_path;
-    if (rel && seen.has(rel)) continue;
-    const flags = pipelineFlags(doc);
-    rows.push({
-      rowKey: doc._key,
-      docId: doc._key,
-      displayName: doc.filename,
-      filepath: rel ?? `uploads/${doc._key}/${doc.filename}`,
-      sizeKb: 0,
-      parsed: flags.parsed,
-      chunked: flags.chunked,
-      embedded: flags.embedded,
-      status: doc.status,
-    });
-  }
-
-  return rows.sort((a, b) => a.displayName.localeCompare(b.displayName));
+function statusRowsToUploadRows(rows: EmbeddingStatusRow[]): UploadRow[] {
+  return rows
+    .filter((r) => getUploadFileKind(r.filename) === "document")
+    .map((r) => {
+      const flags = rowFlags(r);
+      return {
+        rowKey: r.doc_id,
+        docId: r.doc_id,
+        displayName: r.filename,
+        filepath: r.volume_relative_path,
+        sizeKb: Math.round((r.file_size_bytes || 0) / 1024),
+        parsed: flags.parsed,
+        chunked: flags.chunked,
+        embedded: flags.embedded,
+        status: r.status,
+        error_message: r.error_message,
+      };
+    })
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
 export default function EmbeddingPage() {
@@ -143,8 +98,7 @@ function EmbeddingPageInner() {
   const searchParams = useSearchParams();
   const docFromUrl = searchParams.get("doc");
 
-  const [volumeFiles, setVolumeFiles] = useState<VolumeFile[]>([]);
-  const [documents, setDocuments] = useState<DocumentEntry[]>([]);
+  const [statusRows, setStatusRows] = useState<EmbeddingStatusRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -156,41 +110,38 @@ function EmbeddingPageInner() {
   const [activeStage, setActiveStage] = useState<PipelineStage | null>(null);
   const cancelRef = useRef(false);
 
-  const loadData = useCallback(async () => {
+  const loadStatus = useCallback(async () => {
     try {
-      const [browseRes, docsRes] = await Promise.all([
-        api.get<{ files: VolumeFile[] }>(
-          "/api/v1/documents/volume/browse?prefix=uploads&file_kind=document&limit=500",
-          { timeoutMs: 120_000 },
-        ),
-        api.get<{ data: DocumentEntry[] }>("/api/v1/documents?limit=500"),
-      ]);
-      setVolumeFiles(browseRes.files ?? []);
-      setDocuments(
-        (docsRes.data ?? []).filter((d) => getUploadFileKind(d.filename) === "document"),
+      const res = await api.get<{ data: EmbeddingStatusRow[] }>(
+        "/api/v1/embedding/status?limit=500",
+        { timeoutMs: LONG_RUNNING_API_TIMEOUT_MS },
       );
+      setStatusRows(res.data ?? []);
+      setErrorMsg("");
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMsg(`Embedding status (UC table): ${msg}`);
+      setStatusRows([]);
     } finally {
       setLoaded(true);
     }
   }, []);
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    const cancel = scheduleAfterInitialPaint(() => {
+      void loadStatus();
+    }, 100);
+    return () => cancel();
+  }, [loadStatus]);
 
   useEffect(() => {
-    const hasActive = documents.some((d) => ACTIVE_STATUSES.has(d.status));
+    const hasActive = statusRows.some((r) => ACTIVE_STATUSES.has(r.status));
     if (!hasActive && !activeStage) return;
-    const id = window.setInterval(() => void loadData(), 2000);
+    const id = window.setInterval(() => void loadStatus(), 2000);
     return () => window.clearInterval(id);
-  }, [loadData, documents, activeStage]);
+  }, [loadStatus, statusRows, activeStage]);
 
-  const rows = useMemo(
-    () => buildUploadRows(volumeFiles, documents),
-    [volumeFiles, documents],
-  );
+  const rows = useMemo(() => statusRowsToUploadRows(statusRows), [statusRows]);
 
   useEffect(() => {
     if (!docFromUrl || rows.length === 0) return;
@@ -204,10 +155,7 @@ function EmbeddingPageInner() {
   );
 
   const selectedDocIds = useMemo(
-    () =>
-      selectedRows
-        .map((r) => r.docId)
-        .filter((id): id is string => Boolean(id)),
+    () => selectedRows.map((r) => r.docId),
     [selectedRows],
   );
 
@@ -258,31 +206,37 @@ function EmbeddingPageInner() {
   };
 
   const waitForStage = async (docIds: string[], stage: PipelineStage) => {
-    const targetStatus =
-      stage === "parse" ? "parsed" : stage === "chunk" ? "chunked" : "ready";
     const deadline = Date.now() + 300_000;
     while (Date.now() < deadline) {
       if (cancelRef.current) throw new Error("Cancelled");
-      const res = await apiFetch("/api/v1/documents?limit=500");
-      if (res.ok) {
-        const body = await res.json();
-        const list: DocumentEntry[] = body.data ?? [];
-        setDocuments(list.filter((d) => getUploadFileKind(d.filename) === "document"));
+      try {
+        const res = await api.get<{ data: EmbeddingStatusRow[] }>(
+          "/api/v1/embedding/status?limit=500",
+          { timeoutMs: LONG_RUNNING_API_TIMEOUT_MS },
+        );
+        const list = res.data ?? [];
+        setStatusRows(list);
         let done = 0;
         for (const id of docIds) {
-          const doc = list.find((d) => d._key === id);
-          if (!doc) continue;
-          if (doc.status === "failed") {
-            throw new Error(doc.error_message ?? `Processing failed for ${id}`);
+          const row = list.find((r) => r.doc_id === id);
+          if (!row) continue;
+          if (row.status === "failed") {
+            throw new Error(row.error_message ?? `Processing failed for ${id}`);
           }
-          if (stage === "parse" && pipelineFlags(doc).parsed) done += 1;
-          else if (stage === "chunk" && pipelineFlags(doc).chunked) done += 1;
-          else if (stage === "embed" && doc.status === targetStatus) done += 1;
-          else if (doc.status === targetStatus) done += 1;
+          const flags = rowFlags(row);
+          if (stage === "parse" && flags.parsed) done += 1;
+          else if (stage === "chunk" && flags.chunked) done += 1;
+          else if (stage === "embed" && row.status === "ready") done += 1;
         }
         const pct = docIds.length ? Math.round((done / docIds.length) * 100) : 100;
         setStageProgress((p) => ({ ...p, [stage]: pct }));
         if (done >= docIds.length) return;
+      } catch (err) {
+        if (err instanceof Error && err.message !== "Cancelled") {
+          const timedOut = /timed out|AbortError|signal timed out/i.test(err.message);
+          if (timedOut) throw err;
+        }
+        throw err;
       }
       await new Promise((r) => setTimeout(r, 1500));
     }
@@ -300,21 +254,25 @@ function EmbeddingPageInner() {
     setActiveStage(stage);
     setStageProgress((p) => ({ ...p, [stage]: 0 }));
     try {
-      const res = await apiFetch("/api/v1/documents/pipeline/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ doc_ids: ids, stage }),
-      });
+      const res = await apiFetch(
+        "/api/v1/embedding/pipeline/batch",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ doc_ids: ids, stage }),
+        },
+        LONG_RUNNING_API_TIMEOUT_MS,
+      );
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail ?? err.error?.message ?? `${stage} failed (${res.status})`);
       }
       await waitForStage(ids, stage);
       setStageProgress((p) => ({ ...p, [stage]: 100 }));
-      await loadData();
+      await loadStatus();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
-      await loadData();
+      await loadStatus();
     } finally {
       setActiveStage(null);
     }
@@ -324,7 +282,7 @@ function EmbeddingPageInner() {
     cancelRef.current = true;
     const ids = eligibleForStage(stage);
     if (ids.length > 0) {
-      await apiFetch("/api/v1/documents/pipeline/cancel", {
+      await apiFetch("/api/v1/embedding/pipeline/cancel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ doc_ids: ids }),
@@ -332,26 +290,28 @@ function EmbeddingPageInner() {
     }
     setActiveStage(null);
     setStageProgress((p) => ({ ...p, [stage]: 0 }));
-    await loadData();
+    await loadStatus();
   };
 
   const docIdsEligible = async (stage: PipelineStage): Promise<string[]> => {
-    const res = await api.get<{ data: DocumentEntry[] }>("/api/v1/documents?limit=500");
-    const docs = (res.data ?? []).filter((d) => getUploadFileKind(d.filename) === "document");
-    const selectedIds = new Set(
-      rows.filter((r) => selectedKeys.has(r.rowKey) && r.docId).map((r) => r.docId as string),
+    const res = await api.get<{ data: EmbeddingStatusRow[] }>(
+      "/api/v1/embedding/status?limit=500",
     );
-    return docs
-      .filter((d) => selectedIds.has(d._key))
-      .filter((d) => {
-        const flags = pipelineFlags(d);
+    const list = res.data ?? [];
+    const selectedIds = new Set(
+      rows.filter((r) => selectedKeys.has(r.rowKey)).map((r) => r.docId),
+    );
+    return list
+      .filter((r) => selectedIds.has(r.doc_id))
+      .filter((r) => {
+        const flags = rowFlags(r);
         if (stage === "parse") {
-          return d.status === "staged" || d.status === "failed" || !flags.parsed;
+          return r.status === "staged" || r.status === "failed" || !flags.parsed;
         }
         if (stage === "chunk") return flags.parsed && !flags.chunked;
         return flags.chunked && !flags.embedded;
       })
-      .map((d) => d._key);
+      .map((r) => r.doc_id);
   };
 
   const processAll = async () => {
@@ -380,7 +340,9 @@ function EmbeddingPageInner() {
 
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
         <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm text-sm text-gray-600">
-          Files live under UC{" "}
+          Pipeline status is stored in Unity Catalog{" "}
+          <code className="text-gray-500">embedding_status</code>; file bytes and artifacts live
+          under UC{" "}
           <code className="text-gray-500">workflow-data/uploads/</code>. Stage new files on{" "}
           <AppLink href="/upload" className="font-medium text-indigo-600 hover:text-indigo-800">
             Upload Documents
@@ -418,10 +380,10 @@ function EmbeddingPageInner() {
           </div>
 
           {!loaded ? (
-            <p className="px-5 py-8 text-sm text-gray-400">Loading uploads…</p>
+            <p className="px-5 py-8 text-sm text-gray-400">Loading embedding status…</p>
           ) : rows.length === 0 ? (
             <div className="px-5 py-8 text-sm text-gray-500">
-              <p>No files in the uploads directory yet.</p>
+              <p>No documents in embedding_status yet.</p>
               <AppLink
                 href="/upload"
                 className="mt-2 inline-block font-medium text-indigo-600 hover:text-indigo-800"
@@ -468,9 +430,6 @@ function EmbeddingPageInner() {
                       </td>
                       <td className="px-4 py-3 font-medium text-gray-900 max-w-[12rem] truncate">
                         {row.displayName}
-                        {!row.docId && (
-                          <span className="ml-2 text-xs text-amber-600">(no registry)</span>
-                        )}
                       </td>
                       <td className="px-4 py-3 font-mono text-xs text-gray-500 max-w-[16rem] truncate">
                         {row.filepath}

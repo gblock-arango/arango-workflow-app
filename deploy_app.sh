@@ -19,7 +19,13 @@ set -euo pipefail
 # app.yaml to ``.app.yaml.deploy-backup``, injects OPENAI_API_KEY / ANTHROPIC_API_KEY /
 # OPENAI_BASE_URL from the environment (or repo ``.env``), syncs, then restores app.yaml on exit.
 #
+# On first run, if the App does not exist yet, the script runs ``databricks apps create`` before deploy.
+# A brand-new app often shows ``app_status=UNAVAILABLE`` until the first deploy; see
+# ``ensure_app_running_before_deploy`` (do not ``apps start`` in that state — it races with ``apps deploy``).
+#
 # After deploy: ./scripts/set_user_api_scopes.sh (User authorization / OBO for peer App calls).
+# Serving: app.yaml declares autograph-* serving_endpoint resources (CAN_QUERY on deploy);
+#   grant_autograph_serving_permissions.py repairs ACLs if needed; ensure_serving_endpoints.py probes READY.
 # Inspect UC: ./scripts/read_uc_peer_registry.sh
 # Next.js build output: logs/frontend-build.log (set WORKFLOW_FRONTEND_BUILD_FAIL_DEPLOY=1 to abort deploy on failure).
 
@@ -56,6 +62,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=scripts/_app_yaml_env.sh
 source "${SCRIPT_DIR}/scripts/_app_yaml_env.sh"
+
+# BGE/GTE widget ids → databricks-bge-large-en / databricks-gte-large-en (FM APIs).
+_normalize_autograph_embedding_endpoint() {
+  local raw="${AUTOGRAPH_EMBEDDING_MODEL_NAME:-}"
+  if [[ -z "${raw// }" ]]; then
+    return 0
+  fi
+  local resolved
+  resolved="$(
+    PYTHONPATH="${SCRIPT_DIR}/src" RAW="${raw}" "${PYTHON_BIN}" -c \
+      'from app.llm.databricks_serving import normalize_serving_endpoint_name; import os; print(normalize_serving_endpoint_name(os.environ["RAW"]))'
+  )"
+  if [[ -n "${resolved}" && "${resolved}" != "${raw}" ]]; then
+    echo "Normalized AUTOGRAPH_EMBEDDING_MODEL_NAME: ${raw} -> ${resolved}"
+    export AUTOGRAPH_EMBEDDING_MODEL_NAME="${resolved}"
+  fi
+}
+_normalize_autograph_embedding_endpoint
 load_deploy_config_from_app_yaml
 
 echo "Deploy config (app.yaml + env overrides):"
@@ -97,8 +121,33 @@ _databricks() {
 # shellcheck source=scripts/_deploy_app_print_urls.sh
 source "${SCRIPT_DIR}/scripts/_deploy_app_print_urls.sh"
 
+_app_active_deployment_state() {
+  local json="$1"
+  "${PYTHON_BIN}" -c 'import json,sys; d=json.load(sys.stdin); print((d.get("active_deployment") or {}).get("status",{}).get("state",""))' <<< "${json}" 2>/dev/null || true
+}
+
+_wait_for_active_deployment_idle() {
+  local json deploy_state waited=0
+  local max_wait="${DEPLOY_WAIT_ACTIVE_DEPLOYMENT_SEC:-900}"
+  local poll="${DEPLOY_WAIT_ACTIVE_DEPLOYMENT_POLL_SEC:-10}"
+  while (( waited < max_wait )); do
+    if ! json="$(_databricks apps get "${APP_NAME}" --output json 2>/dev/null)"; then
+      return 1
+    fi
+    deploy_state="$(_app_active_deployment_state "${json}")"
+    if [[ -z "${deploy_state}" || "${deploy_state}" == "SUCCEEDED" || "${deploy_state}" == "FAILED" || "${deploy_state}" == "CANCELLED" ]]; then
+      return 0
+    fi
+    echo "  App deployment in progress (active_deployment.status.state=${deploy_state}); waiting ${poll}s…"
+    sleep "${poll}"
+    waited=$((waited + poll))
+  done
+  echo "ERROR: timed out after ${max_wait}s waiting for app deployment to finish." >&2
+  return 1
+}
+
 ensure_app_running_before_deploy() {
-  local json app_state compute_state
+  local json app_state compute_state app_msg
   if ! json="$(_databricks apps get "${APP_NAME}" --output json 2>/dev/null)"; then
     return 0
   fi
@@ -108,17 +157,50 @@ ensure_app_running_before_deploy() {
   compute_state="$(
     "${PYTHON_BIN}" -c 'import json,sys; d=json.load(sys.stdin); print((d.get("compute_status") or {}).get("state",""))' <<< "${json}" 2>/dev/null || true
   )"
+  app_msg="$(
+    "${PYTHON_BIN}" -c 'import json,sys; d=json.load(sys.stdin); print((d.get("app_status") or {}).get("message",""))' <<< "${json}" 2>/dev/null || true
+  )"
   if [[ "${app_state}" == "RUNNING" ]]; then
     echo "App '${APP_NAME}' is RUNNING; proceeding to deploy."
     return 0
   fi
+  # After `apps create`, compute is often ACTIVE while app_status stays UNAVAILABLE until the first
+  # `apps deploy`. Starting the app in that state kicks off a deployment that races with deploy.
+  if [[ "${app_state}" == "UNAVAILABLE" && "${compute_state}" == "ACTIVE" ]]; then
+    if echo "${app_msg}" | grep -qiE 'not been deployed|deploy(ing)?[[:space:]]+source|run your app by deploying'; then
+      echo "NOTE: App '${APP_NAME}' has no source deployment yet (app_status=UNAVAILABLE, compute_status=ACTIVE)."
+      echo "      Skipping \`databricks apps start\`; the next step (\`databricks apps deploy\`) uploads code and should make the app available."
+      return 0
+    fi
+  fi
   echo "App '${APP_NAME}' is not RUNNING (app_status=${app_state:-unknown}, compute_status=${compute_state:-unknown})."
-  echo "Deploy requires RUNNING; starting app…"
+  echo "Trying \`databricks apps start\` so compute is ready (deploy may still succeed if the platform accepts it)..."
   if [[ "${SKIP_APPS_START_BEFORE_DEPLOY:-}" == "1" ]]; then
     echo "SKIP_APPS_START_BEFORE_DEPLOY=1: skipping databricks apps start; deploy may fail." >&2
     return 0
   fi
   _databricks apps start "${APP_NAME}"
+  _wait_for_active_deployment_idle || true
+}
+
+_deploy_app() {
+  local deploy_out deploy_rc
+  set +e
+  deploy_out="$(_databricks apps deploy "${APP_NAME}" --source-code-path "${SOURCE_CODE_PATH}" 2>&1)"
+  deploy_rc=$?
+  set -e
+  if [[ "${deploy_rc}" -eq 0 ]]; then
+    return 0
+  fi
+  if echo "${deploy_out}" | grep -qiE 'active deployment in progress|deployment in progress'; then
+    echo "NOTE: ${deploy_out}"
+    echo "Another deployment is already running (often from \`databricks apps start\`). Waiting, then retrying deploy…"
+    _wait_for_active_deployment_idle
+    _databricks apps deploy "${APP_NAME}" --source-code-path "${SOURCE_CODE_PATH}"
+    return $?
+  fi
+  echo "${deploy_out}" >&2
+  return "${deploy_rc}"
 }
 
 echo "NOTE: Arango cluster credentials live on arango-gateway-app; this app uses gateway HTTP + UC URL registries."
@@ -223,8 +305,7 @@ fi
 ensure_app_running_before_deploy
 
 echo "Deploying app '${APP_NAME}' from '${SOURCE_CODE_PATH}'..."
-_databricks apps deploy "${APP_NAME}" \
-  --source-code-path "${SOURCE_CODE_PATH}"
+_deploy_app
 
 echo "Fetching app metadata..."
 APP_JSON="$(_databricks apps get "${APP_NAME}" --output json)"
@@ -246,6 +327,76 @@ fi
 if [[ -z "${APP_SERVICE_PRINCIPAL_CLIENT_ID}" ]]; then
   echo "ERROR: Could not extract app service principal client id." >&2
   exit 1
+fi
+
+verify_serving_endpoint() {
+  local ep="$1"
+  if [[ -z "${ep// }" ]]; then
+    return 0
+  fi
+  echo "Serving endpoint probe: '${ep}'"
+  local se_json
+  if ! se_json="$(_databricks serving-endpoints get "${ep}" -o json 2>/dev/null)"; then
+    echo "WARNING: databricks serving-endpoints get '${ep}' failed (wrong name or permissions)." >&2
+    return 0
+  fi
+  "${PYTHON_BIN}" -c '
+import json,sys
+d=json.load(sys.stdin)
+name=d.get("name") or ""
+state=d.get("state") or {}
+ready=state.get("ready") if isinstance(state,dict) else None
+print(f"  endpoint={name!r} state.ready={ready!r}")
+' <<< "${se_json}" || true
+}
+
+verify_serving_endpoint "${AUTOGRAPH_LLM_MODEL_NAME:-}"
+verify_serving_endpoint "${AUTOGRAPH_EMBEDDING_MODEL_NAME:-}"
+
+GRANT_SERVING_SCRIPT="${SCRIPT_DIR}/scripts/grant_autograph_serving_permissions.py"
+if [[ -f "${GRANT_SERVING_SCRIPT}" ]]; then
+  _grant_args=(--app-name "${APP_NAME}" --service-principal-id "${APP_SERVICE_PRINCIPAL_CLIENT_ID}")
+  if [[ -n "${AUTOGRAPH_LLM_MODEL_NAME:-}" ]]; then
+    _grant_args+=(--endpoint "${AUTOGRAPH_LLM_MODEL_NAME}")
+  fi
+  if [[ -n "${AUTOGRAPH_EMBEDDING_MODEL_NAME:-}" ]]; then
+    _grant_args+=(--endpoint "${AUTOGRAPH_EMBEDDING_MODEL_NAME}")
+  fi
+  if [[ ${#_grant_args[@]} -gt 2 ]]; then
+    echo "Granting CAN_QUERY on Autograph serving endpoints to app SP…"
+    set +e
+    "${PYTHON_BIN}" "${GRANT_SERVING_SCRIPT}" "${_grant_args[@]}"
+    _grant_rc=$?
+    set -e
+    if [[ "${_grant_rc}" -ne 0 ]]; then
+      echo "WARNING: grant_autograph_serving_permissions failed (deploy user needs CAN MANAGE on endpoints)." >&2
+      if [[ "${GRANT_SERVING_PERMISSIONS_FAIL_DEPLOY:-}" == "1" ]]; then
+        exit 1
+      fi
+    fi
+  fi
+fi
+
+ENSURE_SERVING_SCRIPT="${SCRIPT_DIR}/scripts/ensure_serving_endpoints.py"
+if [[ -f "${ENSURE_SERVING_SCRIPT}" ]]; then
+  if [[ -n "${PROFILE}" ]]; then
+    export DATABRICKS_CONFIG_PROFILE="${PROFILE}"
+  fi
+  export AUTOGRAPH_LLM_MODEL_NAME="${AUTOGRAPH_LLM_MODEL_NAME:-}"
+  export AUTOGRAPH_EMBEDDING_MODEL_NAME="${AUTOGRAPH_EMBEDDING_MODEL_NAME:-}"
+  # Embedding is on the ingest green path; block deploy when FM API endpoint is missing or not READY.
+  ENSURE_SERVING_ENDPOINTS_FAIL_DEPLOY="${ENSURE_SERVING_ENDPOINTS_FAIL_DEPLOY:-1}"
+  set +e
+  "${PYTHON_BIN}" "${ENSURE_SERVING_SCRIPT}"
+  _ensure_se_rc=$?
+  set -e
+  if [[ "${_ensure_se_rc}" -ne 0 ]]; then
+    echo "ERROR: serving endpoint(s) missing or not READY (Autograph LLM/embeddings will fail)." >&2
+    if [[ "${ENSURE_SERVING_ENDPOINTS_FAIL_DEPLOY}" == "1" ]]; then
+      exit 1
+    fi
+    echo "WARNING: continuing deploy (ENSURE_SERVING_ENDPOINTS_FAIL_DEPLOY=0)." >&2
+  fi
 fi
 
 echo "App deployed - open in browser:"

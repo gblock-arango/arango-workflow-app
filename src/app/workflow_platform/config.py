@@ -7,6 +7,7 @@ _DEFAULT_ARANGO_REGISTRY_TABLE = "workspace.default.arango_connection_registry"
 _DEFAULT_ARANGO_GATEWAY_REGISTRY_TABLE = "workspace.default.arango_gateway_registry"
 _DEFAULT_ARANGO_AGENT_REGISTRY_TABLE = "workspace.default.arango_agent_registry"
 _DEFAULT_ARANGO_WORKFLOW_REGISTRY_TABLE = "workspace.default.arango_workflow_registry"
+_DEFAULT_EMBEDDING_STATUS_TABLE = "workspace.default.embedding_status"
 _DEFAULT_ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE = (
     "workspace.default.arango_bronze_simulated_injector_registry"
 )
@@ -38,6 +39,12 @@ class AppConfig:
 
     DATABRICKS_SQL_WAREHOUSE_ID: str = field(
         default_factory=lambda: (os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID", "") or "").strip()
+    )
+    EMBEDDING_STATUS_TABLE: str = field(
+        default_factory=lambda: (
+            (os.environ.get("EMBEDDING_STATUS_TABLE", "") or "").strip()
+            or _DEFAULT_EMBEDDING_STATUS_TABLE
+        )
     )
     ARANGO_GATEWAY_BASE_URL: str = field(
         default_factory=lambda: (os.environ.get("ARANGO_GATEWAY_BASE_URL", "") or "").strip()

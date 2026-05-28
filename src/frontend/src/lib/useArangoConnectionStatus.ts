@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, apiFetch } from "@/lib/api-client";
+import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
 
 export type ArangoConnectionState = "loading" | "connected" | "error";
 
@@ -18,7 +19,7 @@ interface CachedStatus {
   at: number;
 }
 
-const CACHE_KEY = "aoe_arango_ready_v1";
+const CACHE_KEY = "aoe_arango_ready_v2";
 /** Browser fetch timeout for ``GET /ready`` (one gateway version probe; server caches ~45s). */
 export const ARANGO_READY_FETCH_TIMEOUT_MS = 15_000;
 /** Background re-check while staying on the home page (does not flash yellow). */
@@ -52,32 +53,43 @@ function writeConnectedCache(detail: string): void {
   }
 }
 
-async function fetchReady(signal: AbortSignal): Promise<{
+async function fetchReady(
+  signal: AbortSignal,
+  refresh: boolean,
+): Promise<{
   health: ArangoConnectionState;
   detail: string;
 }> {
-  const res = await apiFetch("/ready", { signal });
+  const path = refresh ? "/ready?refresh=true" : "/ready";
+  const res = await apiFetch(path, { signal });
   const data = (await res.json().catch(() => ({}))) as HealthStatus;
   if (!res.ok) {
     const hint =
-      typeof data.detail === "string" ? data.detail : `HTTP ${res.status}`;
-    if (res.status === 500 && !data.detail) {
+      typeof data.detail === "string"
+        ? data.detail
+        : typeof data.database === "string"
+          ? data.database
+          : `HTTP ${res.status}`;
+    if (res.status === 500 && !data.detail && !data.database) {
       throw new Error(
         "API unreachable. Start the backend (make backend) and ensure BACKEND_PROXY_URL matches.",
       );
     }
     throw new Error(hint);
   }
+  const detail =
+    (typeof data.detail === "string" && data.detail.trim()) ||
+    [data.database, data.gateway].filter(Boolean).join(" · ") ||
+    "connected";
   if (data.status === "ready") {
-    const parts = [data.gateway, data.database].filter(Boolean);
     return {
       health: "connected",
-      detail: parts.join(" · ") || "connected",
+      detail,
     };
   }
   return {
     health: "error",
-    detail: data.database || data.gateway || "Database not ready",
+    detail: detail || "Database not ready",
   };
 }
 
@@ -101,7 +113,7 @@ export function useArangoConnectionStatus(): {
   const healthRef = useRef(health);
   healthRef.current = health;
 
-  const runCheck = useCallback(async (opts: { silent: boolean }) => {
+  const runCheck = useCallback(async (opts: { silent: boolean; refresh: boolean }) => {
     const controller = new AbortController();
     const timer = window.setTimeout(
       () => controller.abort(),
@@ -113,7 +125,7 @@ export function useArangoConnectionStatus(): {
     }
 
     try {
-      const result = await fetchReady(controller.signal);
+      const result = await fetchReady(controller.signal, opts.refresh);
       setHealth(result.health);
       setHealthDetail(result.detail);
       if (result.health === "connected") {
@@ -142,12 +154,18 @@ export function useArangoConnectionStatus(): {
   }, []);
 
   useEffect(() => {
-    void runCheck({ silent: Boolean(readConnectedCache()) });
+    const cancelDeferred = scheduleAfterInitialPaint(
+      () => void runCheck({ silent: Boolean(readConnectedCache()), refresh: true }),
+      200,
+    );
     const id = window.setInterval(
-      () => void runCheck({ silent: true }),
+      () => void runCheck({ silent: true, refresh: false }),
       ARANGO_READY_REFRESH_MS,
     );
-    return () => window.clearInterval(id);
+    return () => {
+      cancelDeferred();
+      window.clearInterval(id);
+    };
   }, [runCheck]);
 
   return { health, healthDetail };

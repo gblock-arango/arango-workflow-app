@@ -95,7 +95,7 @@ function PipelineMonitorInner() {
     <main className="min-h-screen bg-gray-50 text-gray-900">
       <AppHeader
         title="Run Extraction"
-        subtitle="Manage agentic extraction workflows using the real-time pipeline dashboard"
+        subtitle="Manage agentic extraction workflows using the real-time pipeline dashboard."
         actions={
           <>
             <LlmConnectivityBadge />

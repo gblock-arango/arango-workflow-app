@@ -260,31 +260,27 @@ class TestPrepareDocument:
     async def test_prepare_staged_document_queues_processing(self):
         task = MagicMock()
         mock_create_task = MagicMock(side_effect=lambda coro: (coro.close(), task)[1])
+        emb_row = {
+            "doc_id": "d1",
+            "filename": "doc.pdf",
+            "mime_type": "application/pdf",
+            "status": "staged",
+            "volume_relative_path": "uploads/d1/doc.pdf",
+        }
 
         with (
             patch(
-                "app.api.documents.ensure_ontology_schema_async",
-                return_value={"ok": True, "migrations_applied": [], "migration_count": 0},
-            ),
-            patch(
-                "app.api.documents.documents_repo.get_document",
+                "app.api.documents.emb_status_svc.get_embedding_status",
                 side_effect=[
-                    {
-                        "_key": "d1",
-                        "filename": "doc.pdf",
-                        "mime_type": "application/pdf",
-                        "status": "staged",
-                        "metadata": {"volume_relative_path": "uploads/d1/doc.pdf"},
-                    },
-                    {"_key": "d1", "status": "uploading", "metadata": {"volume_relative_path": "uploads/d1/doc.pdf"}},
+                    emb_row,
+                    {**emb_row, "status": "uploading"},
                 ],
             ),
+            patch("app.api.documents.emb_status_svc.update_embedding_status"),
             patch(
                 "app.api.documents.read_staged_document_bytes",
                 return_value=(b"%PDF", "doc.pdf", "application/pdf"),
             ),
-            patch("app.api.documents.documents_repo.delete_chunks_for_document"),
-            patch("app.api.documents.documents_repo.update_document_status"),
             patch("app.api.documents.asyncio.create_task", mock_create_task),
         ):
             result = await prepare_document("d1")
@@ -292,7 +288,7 @@ class TestPrepareDocument:
         mock_create_task.assert_called_once()
         assert result["doc_id"] == "d1"
         assert result["volume_path"] == "uploads/d1/doc.pdf"
-        assert result["schema"]["ok"] is True
+        assert result["schema"]["pipeline"] == "uc_embedding_status"
 
 
 class TestDocumentRoutes:

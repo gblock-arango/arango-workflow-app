@@ -233,7 +233,10 @@ async def process_document(doc_id: str, file_bytes: bytes, mime_type: str) -> No
 
 
 _VECTOR_INDEX_NAME = "idx_chunks_embedding_vector"
-_EMBEDDING_DIMENSION = 1536
+def _embedding_dimension() -> int:
+    from app.config import settings
+
+    return settings.effective_embedding_dimension
 
 
 def _ensure_vector_index() -> None:
@@ -272,7 +275,7 @@ def _ensure_vector_index() -> None:
         "fields": ["embedding"],
         "params": {
             "metric": "cosine",
-            "dimension": _EMBEDDING_DIMENSION,
+            "dimension": _embedding_dimension(),
             "nLists": n_lists,
             "defaultNProbe": n_probe,
             "trainingIterations": 25,

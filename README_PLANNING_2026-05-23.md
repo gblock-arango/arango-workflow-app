@@ -9,7 +9,7 @@ Reassessed migration phases based on work completed to date, env naming tweaks, 
 | Original phase | Original goal | Status today |
 |----------------|---------------|--------------|
 | **A** — Prove deployed ingest/extract | Deploy chain + E2E upload → chunk → extract | **Partially done** — stack is deployed; ingest UX and ops improved, but E2E “green path” is not fully proven |
-| **B** — Databricks LLM for LangGraph | Serving client + `_get_llm()` / embeddings | **Not started** — workflow still uses `OPENAI_API_KEY` + `text-embedding-3-small` / `gpt-4o-mini` |
+| **B** — Databricks LLM for LangGraph | Serving client + `_get_llm()` / embeddings | **In progress** — `app/llm/databricks_serving.py`, `AUTOGRAPH_*` env vars, wired in extractor/embedding/tasks |
 | **C** — OPTIONAL: MCP tool parity | Named wrappers beyond 4 tools | **Partial** — 4 tools + `aoe_workflow_api` escape hatch only to suit needs of extraction agent's current REST calls |
 | **D** — OPTIONAL: Allow LLM/user chat to initiate extraction processing steps using MCP tools (upload/parse/chunk/extract) via mcp-app | `ontoextract_mcp_orchestrator` | **Not started** |
 | **E** — Autograph Job | Migrate LangGraph compute to `arango-agent-autograph-job` | **Planned** (README exists); no runnable job yet |
@@ -143,28 +143,25 @@ Workflow-hosted orchestrator: serving LLM + HTTP MCP to `/mcp/aoe` (same auth pa
 
 ---
 
-## Embedding model choice (OpenAI → Databricks free tier)
+## Embedding model choice (OpenAI → Databricks FM APIs)
 
 **You use today:** `text-embedding-3-small` — **1536 dimensions**, English-first, general retrieval/RAG.
 
-**Among Databricks free list:**
+**Databricks (do not use Marketplace GTE/BGE — deprecated):** use **Foundation Model API** serving endpoints; models are in UC `system.ai` but Autograph invokes by **endpoint name**:
 
-| Model | Dims (typical) | Closest to `text-embedding-3-small`? |
-|-------|----------------|--------------------------------------|
-| `bge_large_en_v1_5` | 1024 | **Best English “peer”** — same family as common open benchmarks vs 3-small |
-| `gte_large_en_v1_5` | 1024 | **Strong alternative** — often slightly better MTEB, longer context |
-| `bge_base_en_v1_5` / `gte_base_en_v1_5` | 768 | Faster/cheaper, lower quality |
-| `bge_small_en_v1_5` | 384 | Not comparable |
-| `bge_m3` | 1024 | Use if you need **multilingual**; overkill for English-only corpora |
-| `qwen3-embedding-0-6b` | model-specific | Different lineage; validate in workspace before committing |
+| Serving endpoint | Dims | Notes |
+|------------------|------|--------|
+| `databricks-bge-large-en` | 1024 | **Autograph default** — normalized embeddings, good RAG peer vs 3-small |
+| `databricks-gte-large-en` | 1024 | Strong alternative; longer context (8192 tokens) |
+| `databricks-qwen3-embedding-0-6b` | model-specific | Validate in workspace before committing |
 
 **Recommendation:**
 
-1. **Default for Autograph:** `gte_large_en_v1_5` or `bge_large_en_v1_5` (pick one per workspace availability; Databricks documents both at **1024** dims).
-2. **Pilot:** run MTEB-style sanity on 50–100 chunk pairs from your healthcare/financial builtins before bulk re-embed.
+1. **Default:** `AUTOGRAPH_EMBEDDING_MODEL_NAME=databricks-bge-large-en`, `AUTOGRAPH_EMBEDDING_DIMENSION=1024`.
+2. **Pilot:** MTEB-style sanity on 50–100 chunk pairs from builtins before bulk re-embed.
 3. **Plan for 1536 → 1024:** update vector index `dimension`, re-embed all chunks, re-run ER if vector similarity is in use.
 
-`text-embedding-3-small` is **not** dimension-compatible with these models without re-embedding; there is no drop-in swap.
+`text-embedding-3-small` is **not** dimension-compatible without re-embedding.
 
 ---
 
@@ -212,7 +209,7 @@ Keep `GENIEMCP_FOUNDATION_MODEL_QUERY` → consider `ARANGOCHAT_LLM_RESOLVE_QUER
 
 ## Immediate decisions
 
-1. **Embedding pilot model:** `gte_large_en_v1_5` vs `bge_large_en_v1_5` (both reasonable; confirm which is READY in your workspace).
+1. **Embedding pilot model:** `databricks-gte-large-en` vs `databricks-bge-large-en` (both FM APIs; confirm READY in Serving UI).
 2. **Accept re-embed** when moving off `text-embedding-3-small`.
 3. **Extraction FM:** which workspace endpoint replaces `gpt-4o-mini` for JSON-heavy LangGraph nodes (may need stronger than Llama 70B — validate on one extraction run).
 

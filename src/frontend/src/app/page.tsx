@@ -10,6 +10,7 @@ import {
   useArangoConnectionStatus,
   type ArangoConnectionState,
 } from "@/lib/useArangoConnectionStatus";
+import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
 
 interface LibraryStats {
   total_count: number;
@@ -23,7 +24,7 @@ export default function Home() {
   const [statsError, setStatsError] = useState(false);
 
   useEffect(() => {
-    const delay = window.setTimeout(() => {
+    return scheduleAfterInitialPaint(() => {
       api
         .get<LibraryStats>(
           "/api/v1/ontology/library?limit=1&include_edge_counts=false",
@@ -34,8 +35,7 @@ export default function Home() {
         .catch(() => {
           setStatsError(true);
         });
-    }, 400);
-    return () => window.clearTimeout(delay);
+    }, 300);
   }, []);
 
   return (

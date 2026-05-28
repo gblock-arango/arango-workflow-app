@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
+import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
 
 export interface LlmStatusPayload {
   ok: boolean;
@@ -47,11 +48,10 @@ export default function LlmConnectivityBadge() {
   }, []);
 
   useEffect(() => {
-    // Defer probe so page paint and primary API calls are not queued behind LLM checks.
-    const defer = window.setTimeout(() => void refresh(), 2_000);
+    const cancelDeferred = scheduleAfterInitialPaint(() => void refresh(), 250);
     const id = window.setInterval(() => void refresh(), 300_000);
     return () => {
-      window.clearTimeout(defer);
+      cancelDeferred();
       window.clearInterval(id);
     };
   }, [refresh]);

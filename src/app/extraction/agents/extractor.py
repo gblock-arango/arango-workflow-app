@@ -33,13 +33,36 @@ def _get_llm(model_name: str) -> Any:
     instead of pinning an asyncio task forever. See
     ``Settings.llm_request_timeout_seconds`` for the rationale and
     incident history.
+
+    On Databricks (``AUTOGRAPH_LLM_PROVIDER=databricks_serving`` or ``auto`` with
+    ``AUTOGRAPH_LLM_MODEL_NAME``), uses workspace OAuth and ``/serving-endpoints``.
     """
+    from app.llm.databricks_serving import (
+        effective_extraction_model_name,
+        uses_databricks_serving_for_extraction,
+        workspace_openai_client,
+    )
+
     timeout = settings.llm_request_timeout_seconds
-    if "claude" in model_name.lower() or "anthropic" in model_name.lower():
+    if uses_databricks_serving_for_extraction():
+        from app.llm.chat_databricks_serving import DatabricksServingChatOpenAI
+
+        serving_model = effective_extraction_model_name(model_name)
+        client = workspace_openai_client()
+        return DatabricksServingChatOpenAI(
+            model=serving_model,
+            api_key=client.api_key,
+            base_url=str(client.base_url),
+            max_tokens=4096,
+            timeout=timeout,
+        )
+
+    resolved = model_name
+    if "claude" in resolved.lower() or "anthropic" in resolved.lower():
         from langchain_anthropic import ChatAnthropic
 
         return ChatAnthropic(
-            model=model_name,  # type: ignore[call-arg]
+            model=resolved,  # type: ignore[call-arg]
             api_key=settings.anthropic_api_key,  # type: ignore[arg-type]
             max_tokens=4096,
             timeout=timeout,
@@ -47,7 +70,7 @@ def _get_llm(model_name: str) -> Any:
     from langchain_openai import ChatOpenAI
 
     kwargs: dict[str, Any] = {
-        "model": model_name,
+        "model": resolved,
         "api_key": settings.openai_api_key,
         "max_tokens": 4096,
         "timeout": timeout,

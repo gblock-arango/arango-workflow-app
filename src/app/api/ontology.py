@@ -14,6 +14,7 @@ from app.api.auth import get_user_from_request
 from app.api.errors import ConflictError, NotFoundError, ValidationError
 from app.db import documents_repo, ontology_repo, registry_repo, releases_repo
 from app.db.client import get_db
+from app.db.gateway_errors import format_gateway_error
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, run_aql
 from app.models.curation import (
@@ -2578,7 +2579,7 @@ async def import_ontology_from_volume(body: ImportFromVolumeBody) -> dict[str, A
     except Exception as exc:
         log.exception("volume ontology import prep failed path=%s", rel)
         raise ValidationError(
-            f"Could not prepare ontology import for workflow-data/{rel}: {exc}",
+            f"Could not prepare ontology import for workflow-data/{rel}: {format_gateway_error(exc)}",
             details={"path": rel, "exception_type": type(exc).__name__},
         ) from exc
 

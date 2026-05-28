@@ -14,6 +14,7 @@ from app.api import (
     auth,
     curation,
     documents,
+    embedding,
     er,
     extraction,
     health,
@@ -70,7 +71,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     publish_self_workflow_url_to_uc_if_configured(workflow_config_dict())
 
+    from app.services.embedding_status import ensure_embedding_status_table
     from app.services.workflow_data import seed_builtin_if_configured
+
+    try:
+        await asyncio.to_thread(ensure_embedding_status_table)
+        log.info("embedding_status_table_ready")
+    except Exception as exc:
+        log.warning("embedding_status_table_failed", error=str(exc))
 
     try:
         from app.api.health import warm_ready_cache
@@ -148,6 +156,7 @@ if settings.service_url_path_prefix:
 app.include_router(auth.router)
 app.include_router(health.router)
 app.include_router(documents.router)
+app.include_router(embedding.router)
 app.include_router(extraction.router)
 app.include_router(admin.router)
 app.include_router(ontology.router)

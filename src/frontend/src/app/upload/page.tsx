@@ -10,6 +10,7 @@ import {
   VOLUME_BROWSE_TIMEOUT_MS,
 } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
+import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
 import { formatOperationError } from "@/lib/upload-errors";
 import AppHeader from "@/components/layout/AppHeader";
 import OperationErrorPanel from "@/components/upload/OperationErrorPanel";
@@ -181,27 +182,32 @@ export default function UploadPage() {
   const loadDocuments = useCallback(async () => {
     try {
       const res = await api.get<{ data: DocumentEntry[] }>("/api/v1/documents");
-      const docs = res.data ?? [];
-      setDocuments(docs);
-      setDocsLoaded(true);
-
-      const mapping: Record<string, { _key: string; name: string }[]> = {};
-      await Promise.all(
-        docs.map(async (doc) => {
-          try {
-            const ontRes = await api.get<{ ontologies: { _key: string; name: string }[] }>(
-              `/api/v1/documents/${doc._key}/ontologies`,
-            );
-            if (ontRes.ontologies?.length) {
-              mapping[doc._key] = ontRes.ontologies;
-            }
-          } catch { /* ignore */ }
-        }),
-      );
-      setDocOntologies(mapping);
+      setDocuments(res.data ?? []);
     } catch {
+      setDocuments([]);
+    } finally {
       setDocsLoaded(true);
     }
+  }, []);
+
+  const loadDocumentOntologies = useCallback(async (docs: DocumentEntry[]) => {
+    if (docs.length === 0) return;
+    const mapping: Record<string, { _key: string; name: string }[]> = {};
+    await Promise.all(
+      docs.map(async (doc) => {
+        try {
+          const ontRes = await api.get<{ ontologies: { _key: string; name: string }[] }>(
+            `/api/v1/documents/${doc._key}/ontologies`,
+          );
+          if (ontRes.ontologies?.length) {
+            mapping[doc._key] = ontRes.ontologies;
+          }
+        } catch {
+          /* optional enrichment */
+        }
+      }),
+    );
+    setDocOntologies(mapping);
   }, []);
 
   const loadOntologies = useCallback(async () => {
@@ -316,15 +322,37 @@ export default function UploadPage() {
   }, [fetchBuiltinBrowse]);
 
   useEffect(() => {
-    loadDocuments();
-    loadOntologies();
-    loadVolumeInfo();
-    const t = window.setTimeout(() => {
+    const cancelVolume = scheduleAfterInitialPaint(() => {
+      void loadVolumeInfo();
+    }, 0);
+    const cancelCatalog = scheduleAfterInitialPaint(() => {
+      void loadDocuments();
+      void loadOntologies();
+    }, 100);
+    const cancelBuiltin = scheduleAfterInitialPaint(() => {
       void loadBuiltinFiles();
       void loadBuiltinOntologies();
-    }, 400);
-    return () => window.clearTimeout(t);
-  }, [loadDocuments, loadOntologies, loadVolumeInfo, loadBuiltinFiles, loadBuiltinOntologies]);
+    }, 200);
+    return () => {
+      cancelVolume();
+      cancelCatalog();
+      cancelBuiltin();
+    };
+  }, [
+    loadDocuments,
+    loadOntologies,
+    loadVolumeInfo,
+    loadBuiltinFiles,
+    loadBuiltinOntologies,
+  ]);
+
+  useEffect(() => {
+    if (!docsLoaded || documents.length === 0) return;
+    const cancel = scheduleAfterInitialPaint(() => {
+      void loadDocumentOntologies(documents);
+    }, 50);
+    return () => cancel();
+  }, [docsLoaded, documents, loadDocumentOntologies]);
 
   const triggerExtraction = async (
     docId: string,
@@ -968,13 +996,15 @@ export default function UploadPage() {
           <OperationErrorPanel title="Upload failed" detail={errorMsg} />
         )}
 
-        {/* Document list */}
-        {docsLoaded && (
-          <section>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-              Recent Documents ({documents.length})
-            </h2>
-            {documents.length === 0 ? (
+        {/* Document list — list loads after first paint; ontology tags load later */}
+        <section>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
+            Recent Documents
+            {docsLoaded ? ` (${documents.length})` : ""}
+          </h2>
+          {!docsLoaded ? (
+            <p className="text-gray-400 text-sm">Loading recent documents…</p>
+          ) : documents.length === 0 ? (
               <p className="text-gray-400 text-sm">
                 No documents uploaded yet.
               </p>
@@ -1065,8 +1095,7 @@ export default function UploadPage() {
                 })}
               </div>
             )}
-          </section>
-        )}
+        </section>
       </div>
     </main>
   );

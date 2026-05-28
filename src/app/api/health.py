@@ -2,9 +2,7 @@ import asyncio
 import time
 from typing import Any
 
-from fastapi import APIRouter
-
-from app.db.gateway_connectivity import gateway_connectivity_status
+from fastapi import APIRouter, Query
 
 router = APIRouter(tags=["system"])
 
@@ -18,37 +16,33 @@ def invalidate_ready_cache() -> None:
     _ready_cache["payload"] = None
 
 
-def _arango_version_label(version: str | None) -> str:
-    if version:
-        return f"Arango {version}"
-    return "Arango cluster reachable"
-
-
 @router.get("/health")
 async def health() -> dict[str, Any]:
     return {"status": "ok"}
 
 
-def _ready_sync() -> dict[str, Any]:
+def _ready_sync(*, force: bool = False) -> dict[str, Any]:
     """
     Readiness for the home-page "Connection to Arango" widget.
 
-    Uses a single gateway connect (``GET /_api/version`` via the proxy) instead of
-    a separate ``GET /health`` plus ``get_db().version()`` plus database ensure —
-    that stacked 3–4 round trips and could take 30–45s on cold start.
-
-    Runs in a worker thread so sync gateway HTTP does not block other routes.
+    Calls ``{gateway}/api/debug/startup-status`` (with ``refresh=true`` when
+    ``force``) and treats the gateway as healthy when ``probe.status`` and
+    ``registry.status`` are both ``ok``.
     """
     now = time.monotonic()
-    cached = _ready_cache.get("payload")
-    if (
-        cached is not None
-        and now - float(_ready_cache.get("at") or 0.0) < _READY_CACHE_TTL_SEC
-    ):
-        return dict(cached)
+    if not force:
+        cached = _ready_cache.get("payload")
+        if (
+            cached is not None
+            and now - float(_ready_cache.get("at") or 0.0) < _READY_CACHE_TTL_SEC
+        ):
+            return dict(cached)
 
-    from app.db.client import _connect_gateway
     from app.db.gateway_config import effective_gateway_url
+    from app.services.gateway_startup_status import (
+        fetch_gateway_startup_status,
+        ready_payload_from_startup_status,
+    )
 
     base = effective_gateway_url()
     if not base:
@@ -59,6 +53,7 @@ def _ready_sync() -> dict[str, Any]:
                 "active row to ARANGO_GATEWAY_REGISTRY_TABLE."
             ),
             "database": "Gateway URL not configured",
+            "detail": "Gateway URL not configured",
             "gateway_url": "",
         }
         _ready_cache["at"] = now
@@ -66,21 +61,15 @@ def _ready_sync() -> dict[str, Any]:
         return payload
 
     try:
-        client = _connect_gateway()
-        payload = {
-            "status": "ready",
-            "gateway": "Gateway reachable",
-            "database": _arango_version_label(client.server_version),
-            "gateway_url": base,
-        }
+        startup = fetch_gateway_startup_status(gateway_base_url=base, refresh=force)
+        payload = ready_payload_from_startup_status(startup, gateway_base_url=base)
     except Exception as exc:
-        gw = gateway_connectivity_status()
-        gateway_msg = gw["gateway_message"] if not gw["gateway_ok"] else str(exc)
         payload = {
             "status": "not_ready",
-            "gateway": gateway_msg,
-            "database": gateway_msg,
-            "gateway_url": gw.get("gateway_url") or base,
+            "gateway": f"Gateway startup-status failed: {exc}",
+            "database": str(exc),
+            "detail": str(exc),
+            "gateway_url": base,
         }
 
     _ready_cache["at"] = now
@@ -89,8 +78,15 @@ def _ready_sync() -> dict[str, Any]:
 
 
 @router.get("/ready")
-async def ready() -> dict[str, Any]:
-    return await asyncio.to_thread(_ready_sync)
+async def ready(
+    refresh: bool = Query(
+        default=False,
+        description="When true, bypass cache and call gateway startup-status?refresh=true.",
+    ),
+) -> dict[str, Any]:
+    if refresh:
+        invalidate_ready_cache()
+    return await asyncio.to_thread(_ready_sync, force=refresh)
 
 
 async def warm_ready_cache() -> None:
