@@ -6,8 +6,9 @@ import dynamic from "next/dynamic";
 import { api } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import AppHeader from "@/components/layout/AppHeader";
-import LlmConnectivityBadge from "@/components/layout/LlmConnectivityBadge";
 import RunList from "@/components/pipeline/RunList";
+import StartExtractionPanel from "@/components/pipeline/StartExtractionPanel";
+import AppLink from "@/components/layout/AppLink";
 import RunMetrics from "@/components/pipeline/RunMetrics";
 import ErrorLog from "@/components/pipeline/ErrorLog";
 import RunTimeline from "@/components/pipeline/RunTimeline";
@@ -95,10 +96,10 @@ function PipelineMonitorInner() {
     <main className="min-h-screen bg-gray-50 text-gray-900">
       <AppHeader
         title="Run Extraction"
-        subtitle="Manage agentic extraction workflows using the real-time pipeline dashboard."
+        subtitle="Start extraction on ready documents, then monitor agent runs in real time."
+        showLlmConnectivity
         actions={
           <>
-            <LlmConnectivityBadge />
             {selectedRunId && (
               <div className="flex items-center gap-2 text-xs">
                 <span
@@ -164,6 +165,12 @@ function PipelineMonitorInner() {
         <aside
           className={`${sidebarOpen ? "block" : "hidden"} md:block w-full md:w-[350px] flex-shrink-0 bg-white border-r border-gray-200 md:min-h-[calc(100vh-73px)]`}
         >
+          <StartExtractionPanel
+            onRunStarted={(runId) => {
+              handleSelectRun(runId);
+              setRunListKey((k) => k + 1);
+            }}
+          />
           <RunList
             key={runListKey}
             onSelectRun={handleSelectRun}
@@ -186,10 +193,21 @@ function PipelineMonitorInner() {
                   {"\u2B50"}
                 </div>
                 <p className="text-gray-500 text-lg">
-                  Select an extraction run to view its pipeline
+                  Start extraction or select an existing run
                 </p>
-                <p className="text-gray-400 text-sm mt-1">
-                  Choose from the run list on the left
+                <p className="text-gray-400 text-sm mt-2 max-w-md mx-auto">
+                  Use <strong>Start extraction</strong> in the left sidebar for documents with
+                  status <code className="text-gray-600">ready</code>, or pick a run below the
+                  slider to view its agent DAG.
+                </p>
+                <p className="text-gray-400 text-sm mt-2">
+                  <AppLink href="/upload" className="text-indigo-600 underline">
+                    Upload
+                  </AppLink>
+                  {" · "}
+                  <AppLink href="/embedding" className="text-indigo-600 underline">
+                    Parse &amp; Chunk
+                  </AppLink>
                 </p>
               </div>
             </div>

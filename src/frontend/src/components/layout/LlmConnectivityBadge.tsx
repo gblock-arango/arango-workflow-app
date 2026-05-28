@@ -1,60 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { api } from "@/lib/api-client";
-import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
+import { useState } from "react";
+import {
+  useLlmConnectivityStatus,
+  type LlmStatusPayload,
+} from "@/lib/useLlmConnectivityStatus";
 
-export interface LlmStatusPayload {
-  ok: boolean;
-  provider: string;
-  embedding_model: string;
-  extraction_model: string;
-  openai_base_url?: string | null;
-  openai_api_key_configured?: boolean;
-  anthropic_api_key_configured?: boolean;
-  summary?: string;
-  hints?: string[];
-  curl_examples?: string[];
-  embedding: { ok: boolean; message: string; latency_ms?: number };
-  extraction: { ok: boolean; message: string; latency_ms?: number };
-}
+export type { LlmStatusPayload };
 
 export default function LlmConnectivityBadge() {
-  const [status, setStatus] = useState<LlmStatusPayload | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { status, loading, refresh } = useLlmConnectivityStatus();
   const [open, setOpen] = useState(false);
-
-  const refresh = useCallback(async (opts?: { force?: boolean }) => {
-    setLoading(true);
-    try {
-      const qs = opts?.force ? "?force=true" : "";
-      const data = await api.get<LlmStatusPayload>(`/api/v1/system/llm-status${qs}`);
-      setStatus(data);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setStatus({
-        ok: false,
-        provider: "error",
-        embedding_model: "",
-        extraction_model: "",
-        summary: `Probe request failed: ${msg}`,
-        hints: ["Check that the workflow-app API is reachable from the browser."],
-        embedding: { ok: false, message: msg },
-        extraction: { ok: false, message: "Probe request failed" },
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const cancelDeferred = scheduleAfterInitialPaint(() => void refresh(), 250);
-    const id = window.setInterval(() => void refresh(), 300_000);
-    return () => {
-      cancelDeferred();
-      window.clearInterval(id);
-    };
-  }, [refresh]);
 
   const connected = status?.ok === true;
   const dotClass = loading
@@ -190,7 +146,7 @@ export default function LlmConnectivityBadge() {
           <div className="mt-3 flex items-center gap-4">
             <button
               type="button"
-              onClick={() => void refresh({ force: true })}
+              onClick={() => refresh({ force: true })}
               className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
             >
               Re-test

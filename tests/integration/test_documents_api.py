@@ -34,22 +34,23 @@ def _make_mock_doc(
 
 
 class TestUploadDocument:
+    @patch("app.api.documents.secrets.token_hex", return_value="doc1")
+    @patch("app.api.documents.emb_status_svc.find_by_file_hash", return_value=None)
+    @patch("app.api.documents._register_embedding_row")
     @patch("app.api.documents.process_document", new_callable=AsyncMock)
-    @patch("app.api.documents.documents_repo")
     def test_upload_success(
         self,
-        mock_repo: MagicMock,
         mock_process: AsyncMock,
+        mock_register: MagicMock,
+        mock_find_hash: MagicMock,
+        mock_token: MagicMock,
         test_client,
     ):
-        mock_repo.find_document_by_hash.return_value = None
-        mock_repo.create_document.return_value = _make_mock_doc(status="staged")
-
         pdf_content = b"%PDF-1.4 fake content"
         files = {"file": ("test.pdf", io.BytesIO(pdf_content), "application/pdf")}
         with patch(
             "app.api.documents._persist_upload_metadata",
-            return_value={"volume_relative_path": "uploads/doc1/test.pdf", "volume_source": "upload"},
+            return_value={"volume_relative_path": "uploads/doc1/test.pdf"},
         ):
             response = test_client.post("/api/v1/documents/upload", files=files)
 
@@ -57,11 +58,15 @@ class TestUploadDocument:
         data = response.json()
         assert data["doc_id"] == "doc1"
         assert data["status"] == "staged"
-        mock_repo.create_document.assert_called_once()
+        mock_register.assert_called_once()
 
-    @patch("app.api.documents.documents_repo")
-    def test_upload_duplicate_returns_409(self, mock_repo: MagicMock, test_client):
-        mock_repo.find_document_by_hash.return_value = _make_mock_doc()
+    @patch("app.api.documents.emb_status_svc.find_by_file_hash")
+    def test_upload_duplicate_returns_409(self, mock_find_hash: MagicMock, test_client):
+        mock_find_hash.return_value = {
+            "doc_id": "doc1",
+            "status": "ready",
+            "file_hash": "abc123",
+        }
 
         pdf_content = b"%PDF-1.4 fake content"
         files = {"file": ("test.pdf", io.BytesIO(pdf_content), "application/pdf")}

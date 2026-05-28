@@ -8,12 +8,34 @@ import pytest
 
 from app.api.errors import ConflictError, ValidationError
 from app.services.embedding_status import (
+    _row_from_sql,
     assert_stage_allowed,
     find_by_file_hash,
     list_embedding_status,
     pipeline_flags,
     register_staged_document,
 )
+
+
+class TestSqlBoolParsing:
+    def test_string_false_is_not_true(self):
+        row = _row_from_sql(
+            {
+                "doc_id": "x",
+                "filename": "a.md",
+                "status": "staged",
+                "parsed": "false",
+                "chunked": "false",
+                "embedded": "false",
+                "chunk_count": 0,
+            }
+        )
+        assert row["parsed"] is False
+        assert row["chunked"] is False
+        assert row["embedded"] is False
+        flags = pipeline_flags(row)
+        assert flags["parsed"] is False
+        assert flags["chunked"] is False
 
 
 class TestPipelineFlags:
@@ -34,6 +56,12 @@ class TestAssertStageAllowed:
     def test_chunk_requires_parse(self):
         with pytest.raises(ValidationError):
             assert_stage_allowed({"status": "staged", "parsed": False}, "chunk")
+
+    def test_chunk_allowed_after_parse_status(self):
+        assert_stage_allowed(
+            {"status": "parsed", "parsed": True, "chunked": False, "embedded": False},
+            "chunk",
+        )
 
 
 class TestRegisterStagedDocument:
@@ -93,8 +121,8 @@ class TestDuplicateConflict:
     @patch("app.services.embedding_status.delete_embedding_status")
     @patch("app.services.embedding_status.find_by_file_hash")
     def test_ready_raises(self, mock_find, _mock_del):
-        from app.api.documents import _resolve_duplicate_hash_embedding
+        from app.api.documents import _resolve_duplicate_hash
 
         mock_find.return_value = {"doc_id": "d1", "status": "ready"}
         with pytest.raises(ConflictError):
-            _resolve_duplicate_hash_embedding("hash")
+            _resolve_duplicate_hash("hash")

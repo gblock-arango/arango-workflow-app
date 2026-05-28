@@ -73,6 +73,18 @@ env:
   - name: ARANGO_REGISTRY_TABLE
     description: "Arango connection registry (read-only here; gateway owns upstream cluster row)"
     value: "workspace.default.arango_connection_registry"
+  - name: ARANGO_PING_BASIC_AUTH_USER
+    description: "Basic auth user for /ready Arango probe (match arango-gateway-app)"
+    value: "root"
+  - name: ARANGO_PING_BASIC_AUTH_PASSWORD
+    description: "Arango basic-auth password for /ready probe (must match arango-gateway-app)"
+    value: "8c1bc9344c886819859534a5ac951412c650870662228617cfbb69023489afd2"
+  - name: ARANGO_PING_TIMEOUT_SECONDS
+    description: "Timeout seconds for /ready Arango HTTP probe"
+    value: "5"
+  - name: ARANGO_PING_TLS_VERIFY
+    description: "Set false to skip TLS verify on Arango probe (dev only)"
+    value: "true"
   - name: ARANGO_AGENT_BASE_URL
     description: "Optional override for mcp-arango-agent URL. When empty, resolved from ARANGO_AGENT_REGISTRY_TABLE"
     value: ""
@@ -122,6 +134,9 @@ env:
   - name: ARANGO_DB
     description: "Default Arango database name (via gateway)"
     value: "OntoExtract"
+  - name: BACKEND_WORKERS
+    description: "Uvicorn worker processes (use 4 on a 4 vCPU app VM; static UI is served from the same process tree)"
+    value: "4"
   - name: APP_ENV
     description: "production vs development — only affects JWT/WS when JWT_AUTH_ENABLED=true; safe to leave production on Databricks"
     value: "production"

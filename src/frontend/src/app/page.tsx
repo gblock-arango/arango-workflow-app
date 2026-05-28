@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
 import AppLink from "@/components/layout/AppLink";
+import AppHeaderLogo from "@/components/layout/AppHeaderLogo";
 import { withBasePath } from "@/lib/base-path";
 import { useActivePipelineAgents } from "@/lib/useActivePipelineAgents";
 import {
@@ -35,7 +36,7 @@ export default function Home() {
         .catch(() => {
           setStatsError(true);
         });
-    }, 300);
+    }, 900);
   }, []);
 
   return (
@@ -66,14 +67,7 @@ export default function Home() {
           </div>
 
           <div className="flex-shrink-0 flex flex-col items-center lg:items-end gap-2">
-            <Image
-              src={img("/images/arango-logo-transparent.png")}
-              alt="Arango"
-              width={200}
-              height={56}
-              className="h-10 sm:h-12 w-auto object-contain"
-              priority
-            />
+            <AppHeaderLogo />
             <HeroConnectionStatus health={health} healthDetail={healthDetail} />
           </div>
         </div>
@@ -151,7 +145,7 @@ export default function Home() {
                 {
                   label: "Run Extraction",
                   href: "/pipeline",
-                  description: "Manage agentic workflow for ontology creation",
+                  description: "Start extraction on ready docs; monitor agent runs",
                 },
                 {
                   label: "View Ontologies",

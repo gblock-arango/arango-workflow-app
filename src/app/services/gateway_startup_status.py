@@ -13,23 +13,51 @@ from app.workflow_platform.databricks_outbound_auth import outbound_databricks_a
 log = logging.getLogger(__name__)
 
 
-def fetch_gateway_startup_status(
+async def fetch_gateway_startup_status_async(
     *,
     gateway_base_url: str,
     refresh: bool = False,
-    timeout_sec: float = 20.0,
+    timeout_sec: float = 25.0,
+    auth_headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """GET gateway startup-status (same JSON as the gateway app debug endpoint)."""
+    """GET gateway startup-status (async; pass auth from the request handler thread)."""
     base = gateway_base_url.strip().rstrip("/")
     if not base:
         raise ValueError("Gateway base URL is empty")
     params = {"refresh": "true"} if refresh else {}
-    headers = outbound_databricks_auth_headers() or None
+    headers = auth_headers if auth_headers is not None else outbound_databricks_auth_headers()
+    async with httpx.AsyncClient(timeout=timeout_sec) as client:
+        response = await client.get(
+            f"{base}/api/debug/startup-status",
+            params=params,
+            headers=headers or None,
+        )
+    if not response.is_success:
+        preview = (response.text or "")[:800]
+        raise RuntimeError(
+            f"Gateway startup-status HTTP {response.status_code}: {preview or response.reason_phrase}"
+        )
+    return response.json() if response.content else {}
+
+
+def fetch_gateway_startup_status(
+    *,
+    gateway_base_url: str,
+    refresh: bool = False,
+    timeout_sec: float = 25.0,
+    auth_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Sync wrapper for tests and scripts."""
+    base = gateway_base_url.strip().rstrip("/")
+    if not base:
+        raise ValueError("Gateway base URL is empty")
+    params = {"refresh": "true"} if refresh else {}
+    headers = auth_headers if auth_headers is not None else outbound_databricks_auth_headers()
     with httpx.Client(timeout=timeout_sec) as client:
         response = client.get(
             f"{base}/api/debug/startup-status",
             params=params,
-            headers=headers,
+            headers=headers or None,
         )
     if not response.is_success:
         preview = (response.text or "")[:800]
@@ -92,10 +120,17 @@ def ready_payload_from_startup_status(
 
     err_parts: list[str] = []
     if probe_status != "ok":
-        err_parts.append(f"probe={probe_status or 'unknown'}")
+        probe_details = probe.get("details") if isinstance(probe.get("details"), dict) else {}
+        if probe_details.get("status_code") == 401:
+            err_parts.append(
+                "Arango basic auth failed — set ARANGO_PING_BASIC_AUTH_PASSWORD "
+                "(same value as arango-gateway-app)"
+            )
+        else:
+            err_parts.append(f"probe={probe_status or 'unknown'}")
     if registry_status != "ok":
         err_parts.append(f"registry={registry_status or 'unknown'}")
-    message = ", ".join(err_parts) or "Gateway startup-status reported failure"
+    message = ", ".join(err_parts) or "Arango connectivity check failed"
     return {
         "status": "not_ready",
         "gateway": message,

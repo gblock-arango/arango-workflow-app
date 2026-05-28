@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
+import AppHeaderLogo from "@/components/layout/AppHeaderLogo";
 import { api, ApiError, backendUrl, type PaginatedResponse } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import type {
@@ -342,7 +343,7 @@ function OntologyEditorPageInner() {
               >
                 Home
               </a>
-
+              <AppHeaderLogo />
             </div>
           </div>
         </div>

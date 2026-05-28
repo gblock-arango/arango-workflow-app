@@ -1,6 +1,8 @@
 "use client";
 
 import AppLink from "@/components/layout/AppLink";
+import AppHeaderLogo from "@/components/layout/AppHeaderLogo";
+import LlmConnectivityBadge from "@/components/layout/LlmConnectivityBadge";
 
 export function AppHeaderNav() {
   return (
@@ -18,6 +20,8 @@ interface AppHeaderProps {
   subtitle?: React.ReactNode;
   /** Toolbar controls shown before Home */
   actions?: React.ReactNode;
+  /** Shared cached LLM probe badge (Parse & Chunk, Pipeline, etc.) */
+  showLlmConnectivity?: boolean;
   /** Tabs or secondary row below the title (e.g. ontology-quality) */
   footer?: React.ReactNode;
   contentClassName?: string;
@@ -27,6 +31,7 @@ export default function AppHeader({
   title,
   subtitle,
   actions,
+  showLlmConnectivity = false,
   footer,
   contentClassName = "max-w-[1600px]",
 }: AppHeaderProps) {
@@ -42,7 +47,9 @@ export default function AppHeader({
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">
             {actions}
+            {showLlmConnectivity ? <LlmConnectivityBadge /> : null}
             <AppHeaderNav />
+            <AppHeaderLogo />
           </div>
         </div>
         {footer ? <div className="mt-3">{footer}</div> : null}

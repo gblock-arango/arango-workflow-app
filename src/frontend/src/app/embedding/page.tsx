@@ -5,9 +5,9 @@ import { useSearchParams } from "next/navigation";
 import { api, apiFetch, LONG_RUNNING_API_TIMEOUT_MS } from "@/lib/api-client";
 import AppHeader from "@/components/layout/AppHeader";
 import AppLink from "@/components/layout/AppLink";
-import LlmConnectivityBadge from "@/components/layout/LlmConnectivityBadge";
 import { getUploadFileKind } from "@/lib/fileAccept";
 import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
+import { sqlBool } from "@/lib/sqlBool";
 
 interface EmbeddingStatusRow {
   doc_id: string;
@@ -47,15 +47,18 @@ const ACTIVE_STATUSES = new Set([
 
 function rowFlags(row: EmbeddingStatusRow) {
   const status = row.status;
+  const parsedCol = sqlBool(row.parsed);
+  const chunkedCol = sqlBool(row.chunked);
+  const embeddedCol = sqlBool(row.embedded);
   return {
     parsed:
-      row.parsed ||
+      parsedCol ||
       ["parsed", "chunking", "chunked", "embedding", "ready"].includes(status),
     chunked:
-      row.chunked ||
+      chunkedCol ||
       ["chunked", "embedding", "ready"].includes(status) ||
       row.chunk_count > 0,
-    embedded: row.embedded || status === "ready",
+    embedded: embeddedCol || status === "ready",
   };
 }
 
@@ -114,7 +117,7 @@ function EmbeddingPageInner() {
     try {
       const res = await api.get<{ data: EmbeddingStatusRow[] }>(
         "/api/v1/embedding/status?limit=500",
-        { timeoutMs: LONG_RUNNING_API_TIMEOUT_MS },
+        { timeoutMs: 20_000 },
       );
       setStatusRows(res.data ?? []);
       setErrorMsg("");
@@ -198,9 +201,14 @@ function EmbeddingPageInner() {
           return row.status === "staged" || row.status === "failed" || !row.parsed;
         }
         if (stage === "chunk") {
-          return row.parsed && !row.chunked;
+          return (
+            (row.parsed || row.status === "parsed") &&
+            !row.chunked &&
+            row.status !== "chunked" &&
+            row.status !== "ready"
+          );
         }
-        return row.chunked && !row.embedded;
+        return (row.chunked || row.status === "chunked") && !row.embedded && row.status !== "ready";
       })
       .map((r) => r.docId as string);
   };
@@ -335,7 +343,7 @@ function EmbeddingPageInner() {
         title="Parse & Chunk"
         subtitle="Select staged uploads, then parse, chunk, and embed in separate steps."
         contentClassName="max-w-6xl"
-        actions={<LlmConnectivityBadge />}
+        showLlmConnectivity
       />
 
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">

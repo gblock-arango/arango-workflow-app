@@ -94,16 +94,12 @@ class TestDocumentHelpers:
 class TestUploadDocument:
     @pytest.mark.asyncio
     async def test_upload_document_raises_on_duplicate_hash_when_prior_is_ready(self):
-        # A duplicate of a fully-ingested doc (status=ready) should still
-        # 409 -- we don't want users to accidentally clobber a working doc
-        # by re-uploading identical content.
         file = _upload_file()
         with (
             patch("app.api.documents.compute_file_hash", return_value="hash"),
-            patch("app.api.documents._ensure_staging_store_ready", return_value=None),
             patch(
-                "app.api.documents.documents_repo.find_document_by_hash",
-                return_value={"_key": "d0", "status": "ready"},
+                "app.api.documents.emb_status_svc.find_by_file_hash",
+                return_value={"doc_id": "d0", "status": "ready"},
             ),
             pytest.raises(ConflictError),
         ):
@@ -111,16 +107,12 @@ class TestUploadDocument:
 
     @pytest.mark.asyncio
     async def test_upload_document_raises_on_duplicate_hash_when_status_unknown(self):
-        # Defensive: a record without an explicit status (legacy / partial
-        # write) is treated as a duplicate, not a retry. We only allow the
-        # retry path when status is explicitly FAILED.
         file = _upload_file()
         with (
             patch("app.api.documents.compute_file_hash", return_value="hash"),
-            patch("app.api.documents._ensure_staging_store_ready", return_value=None),
             patch(
-                "app.api.documents.documents_repo.find_document_by_hash",
-                return_value={"_key": "d0"},  # no status field
+                "app.api.documents.emb_status_svc.find_by_file_hash",
+                return_value={"doc_id": "d0", "status": "chunking"},
             ),
             pytest.raises(ConflictError),
         ):
@@ -128,50 +120,34 @@ class TestUploadDocument:
 
     @pytest.mark.asyncio
     async def test_upload_replaces_prior_failed_document(self):
-        # Re-uploading the same file after a FAILED ingestion is the user's
-        # natural recovery action -- discard the prior FAILED record and
-        # its orphaned chunks, then proceed as a fresh upload. Without this
-        # users hit an inscrutable 409 with no obvious next step.
         file = _upload_file()
-        task = MagicMock()
-        mock_create_task = MagicMock(side_effect=lambda coro: (coro.close(), task)[1])
-
         with (
             patch("app.api.documents.secrets.token_hex", return_value="new_doc00000001"),
             patch("app.api.documents.compute_file_hash", return_value="hash"),
             patch(
-                "app.api.documents.documents_repo.find_document_by_hash",
-                return_value={"_key": "old_doc", "status": "failed"},
+                "app.api.documents.emb_status_svc.find_by_file_hash",
+                return_value={
+                    "doc_id": "old_doc",
+                    "status": "failed",
+                    "volume_relative_path": "uploads/old_doc/doc.pdf",
+                },
             ),
-            patch(
-                "app.api.documents.documents_repo.delete_chunks_for_document",
-                return_value=16,
-            ) as mock_delete_chunks,
-            patch(
-                "app.api.documents.documents_repo.hard_delete_document",
-                return_value=True,
-            ) as mock_hard_delete,
-            patch("app.api.documents._ensure_staging_store_ready", return_value=None),
-            patch(
-                "app.api.documents.documents_repo.create_document",
-                return_value={"_key": "new_doc00000001", "filename": "doc.pdf", "status": "staged"},
-            ),
+            patch("app.api.documents.emb_status_svc.delete_embedding_status") as mock_del_emb,
+            patch("app.api.documents.embedding_artifacts.delete_pipeline_artifacts") as mock_del_art,
+            patch("app.api.documents.vol.delete_relative") as mock_del_vol,
             patch(
                 "app.api.documents._persist_upload_metadata",
                 return_value={
                     "volume_relative_path": "uploads/new_doc00000001/doc.pdf",
-                    "volume_source": "upload",
                 },
             ),
-            patch("app.api.documents.documents_repo.update_document_metadata"),
-            patch("app.api.documents.documents_repo.update_document_status"),
-            patch("app.api.documents.asyncio.create_task", mock_create_task),
+            patch("app.api.documents._register_embedding_row"),
         ):
             result = await upload_document(file)
 
-        mock_delete_chunks.assert_called_once_with("old_doc")
-        mock_hard_delete.assert_called_once_with("old_doc")
-        mock_create_task.assert_not_called()
+        mock_del_emb.assert_called_once_with("old_doc")
+        mock_del_art.assert_called_once_with("old_doc")
+        mock_del_vol.assert_called_once()
         assert result == {
             "doc_id": "new_doc00000001",
             "filename": "doc.pdf",
@@ -187,27 +163,19 @@ class TestUploadDocument:
         with (
             patch("app.api.documents.secrets.token_hex", return_value="d1" + "0" * 14),
             patch("app.api.documents.compute_file_hash", return_value="hash"),
-            patch("app.api.documents.documents_repo.find_document_by_hash", return_value=None),
-            patch("app.api.documents._ensure_staging_store_ready", return_value=None),
-            patch(
-                "app.api.documents.documents_repo.create_document",
-                return_value={"_key": "d1" + "0" * 14, "filename": "doc.pdf", "status": "staged"},
-            ),
+            patch("app.api.documents.emb_status_svc.find_by_file_hash", return_value=None),
             patch(
                 "app.api.documents._persist_upload_metadata",
                 return_value={
                     "volume_relative_path": f"uploads/d1{'0' * 14}/doc.pdf",
-                    "volume_source": "upload",
                 },
             ),
-            patch("app.api.documents.documents_repo.update_document_metadata"),
-            patch("app.api.documents.documents_repo.update_document_status") as mock_status,
+            patch("app.api.documents._register_embedding_row"),
             patch("app.api.documents.asyncio.create_task", mock_create_task),
         ):
             result = await upload_document(file, org_id="org1")
 
         mock_create_task.assert_not_called()
-        mock_status.assert_called_once()
         doc_id = "d1" + "0" * 14
         assert result == {
             "doc_id": doc_id,
@@ -224,24 +192,14 @@ class TestUploadDocument:
         with (
             patch("app.api.documents.secrets.token_hex", return_value="d1" + "0" * 14),
             patch("app.api.documents.compute_file_hash", return_value="hash"),
-            patch("app.api.documents.documents_repo.find_document_by_hash", return_value=None),
-            patch("app.api.documents._ensure_staging_store_ready", return_value=None),
-            patch(
-                "app.api.documents.documents_repo.create_document",
-                return_value={"_key": "d1" + "0" * 14, "filename": "doc.pdf", "status": "uploading"},
-            ),
+            patch("app.api.documents.emb_status_svc.find_by_file_hash", return_value=None),
             patch(
                 "app.api.documents._persist_upload_metadata",
                 return_value={
                     "volume_relative_path": f"uploads/d1{'0' * 14}/doc.pdf",
-                    "volume_source": "upload",
                 },
             ),
-            patch("app.api.documents.documents_repo.update_document_metadata"),
-            patch(
-                "app.api.documents.ensure_ontology_schema_async",
-                return_value={"ok": True, "migrations_applied": [], "migration_count": 0},
-            ),
+            patch("app.api.documents._register_embedding_row"),
             patch("app.api.documents.asyncio.create_task", mock_create_task),
         ):
             result = await upload_document(file, org_id="org1", process=True)
@@ -252,7 +210,7 @@ class TestUploadDocument:
         assert result["filename"] == "doc.pdf"
         assert result["status"] == "uploading"
         assert result["volume_path"] == f"uploads/{doc_id}/doc.pdf"
-        assert result["schema"]["ok"] is True
+        assert result["schema"]["pipeline"] == "uc_embedding_status"
 
 
 class TestPrepareDocument:

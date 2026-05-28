@@ -16,6 +16,24 @@ _DEFAULT_TABLE = "workspace.default.embedding_status"
 
 _ACTIVE_STATUSES = frozenset({"parsing", "chunking", "embedding", "uploading"})
 
+_table_ensured = False
+
+
+def _sql_bool(value: Any) -> bool:
+    """Parse UC/SQL boolean values (avoid ``bool('false')`` → True)."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    s = str(value).strip().lower()
+    if s in ("false", "0", "no", "off", "", "null"):
+        return False
+    if s in ("true", "1", "yes", "t"):
+        return True
+    return bool(value)
+
 
 def embedding_status_table_name() -> str:
     return (
@@ -45,9 +63,9 @@ def _row_from_sql(row: dict[str, Any]) -> dict[str, Any]:
         "file_size_bytes": int(row.get("file_size_bytes") or 0),
         "file_hash": str(row.get("file_hash") or ""),
         "status": str(row.get("status") or "staged"),
-        "parsed": bool(row.get("parsed")),
-        "chunked": bool(row.get("chunked")),
-        "embedded": bool(row.get("embedded")),
+        "parsed": _sql_bool(row.get("parsed")),
+        "chunked": _sql_bool(row.get("chunked")),
+        "embedded": _sql_bool(row.get("embedded")),
         "chunk_count": int(row.get("chunk_count") or 0),
         "error_message": row.get("error_message"),
         "created_at": row.get("created_at"),
@@ -56,7 +74,10 @@ def _row_from_sql(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def ensure_embedding_status_table() -> None:
-    """Create Delta table if missing (idempotent)."""
+    """Create Delta table if missing (idempotent; once per process)."""
+    global _table_ensured
+    if _table_ensured:
+        return
     ref = parse_fqn_table(embedding_status_table_name())
     warehouse = _warehouse_id()
     execute_sql(
@@ -92,6 +113,7 @@ def ensure_embedding_status_table() -> None:
         )
     except Exception as exc:
         log.info("Could not GRANT embedding_status to account users: %s", exc)
+    _table_ensured = True
 
 
 def register_staged_document(
@@ -267,14 +289,18 @@ def list_embedding_status(*, limit: int = 500) -> list[dict[str, Any]]:
 
 
 def pipeline_flags(row: dict[str, Any]) -> dict[str, bool]:
+    """Derive stage flags from stored booleans; infer from ``status`` only as fallback."""
     status = str(row.get("status") or "")
+    parsed_col = _sql_bool(row.get("parsed"))
+    chunked_col = _sql_bool(row.get("chunked"))
+    embedded_col = _sql_bool(row.get("embedded"))
     return {
-        "parsed": bool(row.get("parsed"))
+        "parsed": parsed_col
         or status in ("parsed", "chunking", "chunked", "embedding", "ready"),
-        "chunked": bool(row.get("chunked"))
+        "chunked": chunked_col
         or status in ("chunked", "embedding", "ready")
         or int(row.get("chunk_count") or 0) > 0,
-        "embedded": bool(row.get("embedded")) or status == "ready",
+        "embedded": embedded_col or status == "ready",
     }
 
 

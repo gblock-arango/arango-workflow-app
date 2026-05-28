@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+import time
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Header, Query, UploadFile
@@ -51,6 +52,9 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
 _background_tasks: set[asyncio.Task[None]] = set()  # prevent GC of fire-and-forget tasks
+
+_volume_browse_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_VOLUME_BROWSE_CACHE_TTL_SEC = 120.0
 
 _ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -134,8 +138,8 @@ def _register_embedding_row(
     )
 
 
-def _resolve_duplicate_hash_embedding(file_hash: str) -> None:
-    """Discard prior staged/failed UC embedding rows for the same content hash."""
+def _resolve_duplicate_hash(file_hash: str) -> None:
+    """Allow re-upload when the only existing UC row is staged/failed; else conflict."""
     existing = emb_status_svc.find_by_file_hash(file_hash)
     if not existing:
         return
@@ -144,6 +148,12 @@ def _resolve_duplicate_hash_embedding(file_hash: str) -> None:
         prior_id = existing["doc_id"]
         emb_status_svc.delete_embedding_status(prior_id)
         embedding_artifacts.delete_pipeline_artifacts(prior_id)
+        try:
+            rel = existing.get("volume_relative_path")
+            if rel:
+                vol.delete_relative(str(rel))
+        except OSError:
+            pass
         log.info(
             "discarded prior embedding_status %s doc %s (hash=%s)",
             prior_status,
@@ -158,36 +168,6 @@ def _resolve_duplicate_hash_embedding(file_hash: str) -> None:
             "existing_status": prior_status,
             "file_hash": file_hash,
             "catalog": "embedding_status",
-        },
-    )
-
-
-def _resolve_duplicate_hash(file_hash: str) -> None:
-    """Allow re-upload when the only existing record is FAILED; else raise ConflictError."""
-    _resolve_duplicate_hash_embedding(file_hash)
-    existing = documents_repo.find_document_by_hash(file_hash)
-    if not existing:
-        return
-    prior_status = existing.get("status")
-    if prior_status in (DocumentStatus.FAILED, DocumentStatus.STAGED):
-        prior_id = existing["_key"]
-        chunks_removed = documents_repo.delete_chunks_for_document(prior_id)
-        documents_repo.hard_delete_document(prior_id)
-        log.info(
-            "discarded prior %s document %s (chunks_removed=%d) "
-            "to allow re-upload of identical content (hash=%s)",
-            prior_status,
-            prior_id,
-            chunks_removed,
-            file_hash,
-        )
-        return
-    raise ConflictError(
-        "Duplicate document — a file with identical content already exists",
-        details={
-            "existing_doc_id": existing["_key"],
-            "existing_status": prior_status,
-            "file_hash": file_hash,
         },
     )
 
@@ -313,10 +293,8 @@ async def upload_document(
     mime = _validate_mime(filename=filename, content_type=file.content_type)
 
     file_hash = compute_file_hash(content)
-    await _ensure_staging_store_ready()
     await asyncio.to_thread(_resolve_duplicate_hash, file_hash)
 
-    initial_status = DocumentStatus.UPLOADING if process else DocumentStatus.STAGED
     doc_id = secrets.token_hex(8)
     volume_meta: dict[str, Any] = {}
     try:
@@ -326,32 +304,19 @@ async def upload_document(
             filename=filename,
             content=content,
         )
-        volume_meta["original_filename"] = filename
-        if file.filename and file.filename != filename:
-            volume_meta["multipart_filename"] = file.filename
-
         rel_path = volume_meta.get("volume_relative_path")
-        if rel_path:
-            await asyncio.to_thread(
-                _register_embedding_row,
-                doc_id=doc_id,
-                filename=filename,
-                mime_type=mime,
-                volume_relative_path=str(rel_path),
-                file_size_bytes=len(content),
-                file_hash=file_hash,
-                status=DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value,
-            )
-
-        doc = await asyncio.to_thread(
-            documents_repo.create_document,
+        if not rel_path:
+            raise ValidationError("Upload did not produce a volume path")
+        status = DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value
+        await asyncio.to_thread(
+            _register_embedding_row,
             doc_id=doc_id,
             filename=filename,
             mime_type=mime,
+            volume_relative_path=str(rel_path),
+            file_size_bytes=len(content),
             file_hash=file_hash,
-            org_id=org_id,
-            status=initial_status,
-            metadata=volume_meta,
+            status=status,
         )
     except ValidationError:
         rel = volume_meta.get("volume_relative_path")
@@ -359,23 +324,23 @@ async def upload_document(
             await asyncio.to_thread(vol.delete_relative, rel)
         raise
     except Exception as exc:
-        log.exception("create_document failed during upload doc_id=%s", doc_id)
+        log.exception("UC upload registration failed doc_id=%s", doc_id)
         rel = volume_meta.get("volume_relative_path")
         if rel:
             await asyncio.to_thread(vol.delete_relative, rel)
+        emb_status_svc.delete_embedding_status(doc_id)
         raise ValidationError(
-            f"Could not register document in Arango: {exc}",
+            f"Could not register document in embedding_status: {exc}",
             details={"exception_type": type(exc).__name__, "doc_id": doc_id},
         ) from exc
+
     schema_info: dict[str, Any] | None = None
     if process:
         schema_info = await _queue_processing(doc_id, content, mime)
-    else:
-        documents_repo.update_document_status(doc_id, DocumentStatus.STAGED)
 
     out: dict[str, Any] = {
         "doc_id": doc_id,
-        "filename": doc["filename"],
+        "filename": filename,
         "status": DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value,
     }
     if volume_meta.get("volume_relative_path"):
@@ -388,7 +353,7 @@ async def upload_document(
 @router.get("/volume/status")
 async def volume_status() -> dict[str, Any]:
     """UC workflow-data mount status (for UI and ops)."""
-    return workflow_data_status()
+    return await asyncio.to_thread(workflow_data_status)
 
 
 @router.get("/volume/browse")
@@ -403,13 +368,19 @@ async def volume_browse(
     """List ingestible files on the UC volume (built-in corpora and prior uploads)."""
     if file_kind not in ("all", "document", "ontology", "instance"):
         raise ValidationError("file_kind must be all, document, ontology, or instance")
+    cache_key = f"{prefix}:{limit}:{file_kind}"
+    now = time.monotonic()
+    cached = _volume_browse_cache.get(cache_key)
+    if cached is not None and now - cached[0] < _VOLUME_BROWSE_CACHE_TTL_SEC:
+        return {"prefix": prefix, "files": list(cached[1]), "cached": True}
     try:
         files = await asyncio.to_thread(
             browse_volume, prefix=prefix, limit=limit, file_kind=file_kind
         )
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
-    return {"prefix": prefix, "files": files, **workflow_data_status()}
+    _volume_browse_cache[cache_key] = (now, files)
+    return {"prefix": prefix, "files": files, "cached": False}
 
 
 def _ingest_from_volume_impl(
@@ -436,7 +407,6 @@ def _ingest_from_volume_impl(
         ) from exc
 
     file_hash = compute_file_hash(content)
-    _ensure_staging_store_ready_sync()
     try:
         _resolve_duplicate_hash(file_hash)
     except ConflictError as exc:
@@ -446,7 +416,7 @@ def _ingest_from_volume_impl(
         ) from exc
 
     source = "builtin" if rel.startswith("builtin/") else "upload"
-    initial_status = DocumentStatus.UPLOADING if process else DocumentStatus.STAGED
+    status = DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value
 
     doc_id = secrets.token_hex(8)
     try:
@@ -456,54 +426,27 @@ def _ingest_from_volume_impl(
             exc.message,
             details={**(exc.details or {}), "path": rel, "doc_id": doc_id},
         ) from exc
-    volume_meta = {
-        **upload_rel,
-        "volume_source_path": rel,
-        "volume_source": source,
-    }
 
     upload_rel_path = upload_rel.get("volume_relative_path")
-    if upload_rel_path:
-        _register_embedding_row(
-            doc_id=doc_id,
-            filename=filename,
-            mime_type=mime,
-            volume_relative_path=str(upload_rel_path),
-            file_size_bytes=len(content),
-            file_hash=file_hash,
-            status=DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value,
-        )
-
-    try:
-        doc = documents_repo.create_document(
-            doc_id=doc_id,
-            filename=filename,
-            mime_type=mime,
-            file_hash=file_hash,
-            org_id=org_id,
-            status=initial_status,
-            metadata=volume_meta,
-        )
-    except Exception as exc:
-        log.exception("create_document failed during ingest-from-volume path=%s", rel)
+    if not upload_rel_path:
         raise ValidationError(
-            f"Could not register document in Arango for {filename}: {exc}",
-            details={"path": rel, "doc_id": doc_id, "exception_type": type(exc).__name__},
-        ) from exc
-    if not process:
-        try:
-            documents_repo.update_document_status(doc_id, DocumentStatus.STAGED)
-        except Exception as exc:
-            log.exception("update_document_status failed path=%s", rel)
-            raise ValidationError(
-                f"Document saved but status update failed: {exc}",
-                details={"path": rel, "doc_id": doc_id, "exception_type": type(exc).__name__},
-            ) from exc
+            "Ingest did not produce a volume path",
+            details={"path": rel, "doc_id": doc_id},
+        )
+    _register_embedding_row(
+        doc_id=doc_id,
+        filename=filename,
+        mime_type=mime,
+        volume_relative_path=str(upload_rel_path),
+        file_size_bytes=len(content),
+        file_hash=file_hash,
+        status=status,
+    )
 
     out: dict[str, Any] = {
         "doc_id": doc_id,
-        "filename": doc["filename"],
-        "status": DocumentStatus.UPLOADING.value if process else DocumentStatus.STAGED.value,
+        "filename": filename,
+        "status": status,
         "volume_path": upload_rel.get("volume_relative_path"),
         "volume_source": source,
         "volume_source_path": rel,

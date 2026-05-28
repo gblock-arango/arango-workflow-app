@@ -2,15 +2,75 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, apiFetch } from "@/lib/api-client";
-import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
 
 export type ArangoConnectionState = "loading" | "connected" | "error";
 
 interface HealthStatus {
-  status: string;
+  status?: string;
   database?: string;
   gateway?: string;
   detail?: string;
+  probe?: {
+    status?: string;
+    details?: {
+      latency_ms?: number;
+      response_preview?: string;
+    };
+  };
+  registry?: {
+    status?: string;
+    cluster_name?: string;
+  };
+}
+
+function detailFromGatewayStartupJson(data: HealthStatus): string | null {
+  const probeOk = data.probe?.status === "ok";
+  const registryOk = data.registry?.status === "ok";
+  if (!probeOk || !registryOk) return null;
+  const parts: string[] = [];
+  const preview = data.probe?.details?.response_preview;
+  if (preview) {
+    try {
+      const parsed = JSON.parse(preview) as { version?: string };
+      if (parsed.version) parts.push(`Arango ${parsed.version}`);
+    } catch {
+      /* ignore */
+    }
+  }
+  const cluster = data.registry?.cluster_name;
+  if (cluster) parts.push(cluster);
+  const latency = data.probe?.details?.latency_ms;
+  if (latency != null) parts.push(`${latency}ms`);
+  return parts.length > 0 ? parts.join(" · ") : "Connected";
+}
+
+function parseReadyResponse(data: HealthStatus): {
+  health: ArangoConnectionState;
+  detail: string;
+} {
+  const gatewayDetail = detailFromGatewayStartupJson(data);
+  if (gatewayDetail) {
+    return { health: "connected", detail: gatewayDetail };
+  }
+  if (data.status === "ready") {
+    const detail =
+      (typeof data.detail === "string" && data.detail.trim()) ||
+      [data.database, data.gateway].filter(Boolean).join(" · ") ||
+      "connected";
+    return { health: "connected", detail };
+  }
+  if (data.status === "not_ready") {
+    const detail =
+      (typeof data.detail === "string" && data.detail.trim()) ||
+      [data.database, data.gateway].filter(Boolean).join(" · ") ||
+      "Database not ready";
+    return { health: "error", detail };
+  }
+  const fallback =
+    (typeof data.detail === "string" && data.detail.trim()) ||
+    [data.database, data.gateway].filter(Boolean).join(" · ") ||
+    "Database not ready";
+  return { health: "error", detail: fallback };
 }
 
 interface CachedStatus {
@@ -19,11 +79,13 @@ interface CachedStatus {
   at: number;
 }
 
-const CACHE_KEY = "aoe_arango_ready_v2";
-/** Browser fetch timeout for ``GET /ready`` (one gateway version probe; server caches ~45s). */
-export const ARANGO_READY_FETCH_TIMEOUT_MS = 15_000;
-/** Background re-check while staying on the home page (does not flash yellow). */
+const CACHE_KEY = "aoe_arango_ready_v4";
+/** Client timeout for ``GET /ready`` (server should answer from cache in under 1s). */
+export const ARANGO_READY_FETCH_TIMEOUT_MS = 12_000;
+/** Poll server cache while on the home page (no gateway ``refresh=true``). */
 export const ARANGO_READY_REFRESH_MS = 60_000;
+/** Occasional deep refresh (gateway re-probes Arango). */
+export const ARANGO_READY_DEEP_REFRESH_MS = 300_000;
 /** Reuse a successful connected status on remount for this long. */
 const CONNECTED_CACHE_MAX_AGE_MS = 120_000;
 
@@ -61,7 +123,7 @@ async function fetchReady(
   detail: string;
 }> {
   const path = refresh ? "/ready?refresh=true" : "/ready";
-  const res = await apiFetch(path, { signal });
+  const res = await apiFetch(path, { signal }, ARANGO_READY_FETCH_TIMEOUT_MS);
   const data = (await res.json().catch(() => ({}))) as HealthStatus;
   if (!res.ok) {
     const hint =
@@ -77,20 +139,7 @@ async function fetchReady(
     }
     throw new Error(hint);
   }
-  const detail =
-    (typeof data.detail === "string" && data.detail.trim()) ||
-    [data.database, data.gateway].filter(Boolean).join(" · ") ||
-    "connected";
-  if (data.status === "ready") {
-    return {
-      health: "connected",
-      detail,
-    };
-  }
-  return {
-    health: "error",
-    detail: detail || "Database not ready",
-  };
+  return parseReadyResponse(data);
 }
 
 /**
@@ -154,17 +203,18 @@ export function useArangoConnectionStatus(): {
   }, []);
 
   useEffect(() => {
-    const cancelDeferred = scheduleAfterInitialPaint(
-      () => void runCheck({ silent: Boolean(readConnectedCache()), refresh: true }),
-      200,
-    );
-    const id = window.setInterval(
+    void runCheck({ silent: Boolean(readConnectedCache()), refresh: false });
+    const pollId = window.setInterval(
       () => void runCheck({ silent: true, refresh: false }),
       ARANGO_READY_REFRESH_MS,
     );
+    const deepId = window.setInterval(
+      () => void runCheck({ silent: true, refresh: true }),
+      ARANGO_READY_DEEP_REFRESH_MS,
+    );
     return () => {
-      cancelDeferred();
-      window.clearInterval(id);
+      window.clearInterval(pollId);
+      window.clearInterval(deepId);
     };
   }, [runCheck]);
 

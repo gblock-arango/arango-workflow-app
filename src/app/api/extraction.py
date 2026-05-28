@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -11,6 +12,10 @@ from pydantic import BaseModel, Field
 from app.db.client import get_db
 from app.db.utils import doc_get, run_aql
 from app.services import extraction as extraction_service
+from app.services.extraction_materialize import (
+    materialize_embedding_document_for_extraction,
+    validate_embedding_documents_ready,
+)
 from app.services.schema_bootstrap import ensure_ontology_schema_async
 
 log = logging.getLogger(__name__)
@@ -65,7 +70,7 @@ async def start_extraction(
     as a background task so the HTTP response returns without waiting
     for the full extraction to complete.
     """
-    doc_ids = _resolve_doc_ids(body)
+    doc_ids = await _resolve_doc_ids(body)
     await ensure_ontology_schema_async()
     db = get_db()
 
@@ -98,13 +103,8 @@ async def start_extraction(
     )
 
 
-def _resolve_doc_ids(body: StartRunRequest) -> list[str]:
-    """Normalize document_id / document_ids into a single list.
-
-    Also validates that every referenced document exists and has finished
-    ingestion (status ``ready``).  Raises 422 if any document is missing
-    or not yet ready.
-    """
+async def _resolve_doc_ids(body: StartRunRequest) -> list[str]:
+    """Normalize document_id / document_ids and materialize UC rows into Arango for extraction."""
     ids: list[str] = []
     if body.document_ids:
         ids.extend(body.document_ids)
@@ -116,25 +116,18 @@ def _resolve_doc_ids(body: StartRunRequest) -> list[str]:
             detail="At least one of document_id or document_ids is required",
         )
 
-    db = get_db()
-    if db.has_collection("documents"):
-        docs_col = db.collection("documents")
-        for did in ids:
-            doc = doc_get(docs_col, did)
-            if doc is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Document '{did}' not found",
-                )
-            status = doc.get("status", "")
-            if status != "ready":
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        f"Document '{did}' is not ready for extraction "
-                        f"(current status: {status}). Wait for ingestion to complete."
-                    ),
-                )
+    try:
+        await asyncio.to_thread(validate_embedding_documents_ready, ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    for doc_id in ids:
+        try:
+            await asyncio.to_thread(materialize_embedding_document_for_extraction, doc_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return ids
 

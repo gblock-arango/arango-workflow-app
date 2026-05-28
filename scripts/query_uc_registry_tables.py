@@ -66,7 +66,7 @@ def main() -> int:
     _query(
         "Arango connection (active)",
         conn,
-        "SELECT protocol, host, port, database_name, cluster_name, is_active, updated_at "
+        "SELECT cluster_name, ip_address, port, protocol, is_active, updated_at "
         "FROM {fqn} WHERE is_active IS TRUE ORDER BY updated_at DESC LIMIT 3",
         wid,
     )
