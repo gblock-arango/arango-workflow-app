@@ -4,14 +4,17 @@ import AppLink from "@/components/layout/AppLink";
 import AppHeaderLogo from "@/components/layout/AppHeaderLogo";
 import LlmConnectivityBadge from "@/components/layout/LlmConnectivityBadge";
 
-export function AppHeaderNav() {
+export function AppHeaderBrand() {
   return (
-    <AppLink
-      href="/"
-      className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
-    >
-      Home
-    </AppLink>
+    <div className="flex flex-col items-end gap-1">
+      <AppHeaderLogo />
+      <AppLink
+        href="/"
+        className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
+      >
+        Home
+      </AppLink>
+    </div>
   );
 }
 
@@ -48,8 +51,7 @@ export default function AppHeader({
           <div className="flex items-center gap-3 flex-shrink-0">
             {actions}
             {showLlmConnectivity ? <LlmConnectivityBadge /> : null}
-            <AppHeaderNav />
-            <AppHeaderLogo />
+            <AppHeaderBrand />
           </div>
         </div>
         {footer ? <div className="mt-3">{footer}</div> : null}

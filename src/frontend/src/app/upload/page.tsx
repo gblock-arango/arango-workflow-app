@@ -908,15 +908,6 @@ export default function UploadPage() {
                           Parse &amp; chunk →
                         </a>
                       )}
-                      {isDocument &&
-                        (doc.status === "ready" || doc.status === "processed") && (
-                        <AppLink
-                          href="/pipeline"
-                          className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                        >
-                          Run extraction →
-                        </AppLink>
-                      )}
                       <span
                         className={`text-xs font-medium px-2.5 py-1 rounded-full ${
                           doc.status === "processed" || doc.status === "ready"

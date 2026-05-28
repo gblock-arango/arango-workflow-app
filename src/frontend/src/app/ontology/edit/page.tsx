@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import AppHeaderLogo from "@/components/layout/AppHeaderLogo";
+import { AppHeaderBrand } from "@/components/layout/AppHeader";
 import { api, ApiError, backendUrl, type PaginatedResponse } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import type {
@@ -337,13 +337,7 @@ function OntologyEditorPageInner() {
                 &larr; Library
               </Link>
               {/* Raw <a> so the trailing slash survives — Next <Link href="/"> drops it. */}
-              <a
-                href={withBasePath("/")}
-                className="text-sm text-gray-500 hover:text-gray-700"
-              >
-                Home
-              </a>
-              <AppHeaderLogo />
+              <AppHeaderBrand />
             </div>
           </div>
         </div>

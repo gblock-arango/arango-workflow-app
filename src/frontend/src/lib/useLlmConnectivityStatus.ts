@@ -28,6 +28,9 @@ type Snapshot = {
   loading: boolean;
 };
 
+/** Stable reference for useSyncExternalStore (new object each call causes render loops). */
+let snapshotCache: Snapshot = { status: null, loading: false };
+
 let cachedStatus: LlmStatusPayload | null = null;
 let lastFetchedAt = 0;
 let loading = false;
@@ -43,10 +46,12 @@ function emit() {
 }
 
 function getSnapshot(): Snapshot {
-  return {
-    status: cachedStatus,
-    loading: loading && cachedStatus === null,
-  };
+  const nextLoading = loading && cachedStatus === null;
+  if (snapshotCache.status === cachedStatus && snapshotCache.loading === nextLoading) {
+    return snapshotCache;
+  }
+  snapshotCache = { status: cachedStatus, loading: nextLoading };
+  return snapshotCache;
 }
 
 function subscribe(listener: () => void) {

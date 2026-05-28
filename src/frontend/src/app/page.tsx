@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
 import AppLink from "@/components/layout/AppLink";
-import AppHeaderLogo from "@/components/layout/AppHeaderLogo";
+import { AppHeaderBrand } from "@/components/layout/AppHeader";
 import { withBasePath } from "@/lib/base-path";
 import { useActivePipelineAgents } from "@/lib/useActivePipelineAgents";
 import {
@@ -67,7 +67,7 @@ export default function Home() {
           </div>
 
           <div className="flex-shrink-0 flex flex-col items-center lg:items-end gap-2">
-            <AppHeaderLogo />
+            <AppHeaderBrand />
             <HeroConnectionStatus health={health} healthDetail={healthDetail} />
           </div>
         </div>
