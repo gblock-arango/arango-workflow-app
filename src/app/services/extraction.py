@@ -869,12 +869,39 @@ def enrich_run_for_client(run: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def get_run_status_for_poll(run_id: str) -> dict[str, Any]:
-    """Return run snapshot for high-frequency UI polls; cache-first to avoid gateway stalls."""
-    cached = get_cached_run_progress(run_id)
-    if cached is not None:
-        return build_run_status_snapshot(cached)
+def build_preparing_status_stub(
+    run_id: str,
+    *,
+    message: str | None = None,
+) -> dict[str, Any]:
+    """Synthetic snapshot when the run is accepted but not yet in cache or Arango."""
+    now = time.time()
+    return build_run_status_snapshot(
+        {
+            "_key": run_id,
+            "status": "preparing",
+            "stats": {
+                "preparation_stage": "queued",
+                "preparation_message": message
+                or "Run accepted — waiting for gateway persist (poll again shortly)…",
+                "preparation_updated_at": now,
+                "errors": [],
+                "step_logs": [],
+            },
+        }
+    )
 
+
+def read_run_status_poll_fast(run_id: str) -> dict[str, Any] | None:
+    """File-cache read only — safe to call on the asyncio event loop (no gateway I/O)."""
+    cached = get_cached_run_progress(run_id)
+    if cached is None:
+        return None
+    return build_run_status_snapshot(cached)
+
+
+def fetch_run_status_from_gateway(run_id: str) -> dict[str, Any]:
+    """Best-effort Arango read with short timeout; never 404 while run may still be preparing."""
     timeout = float(os.environ.get("RUN_STATUS_GATEWAY_TIMEOUT_SECONDS", "8"))
 
     def _fetch() -> dict[str, Any]:
@@ -886,11 +913,30 @@ def get_run_status_for_poll(run_id: str) -> dict[str, Any]:
         try:
             run = future.result(timeout=timeout)
         except concurrent.futures.TimeoutError as exc:
+            cached = get_cached_run_progress(run_id)
+            if cached is not None:
+                return build_run_status_snapshot(cached)
             raise ServiceBusyError(
                 "Arango gateway busy — status poll will retry",
                 details={"run_id": run_id},
             ) from exc
+        except NotFoundError:
+            cached = get_cached_run_progress(run_id)
+            if cached is not None:
+                return build_run_status_snapshot(cached)
+            return build_preparing_status_stub(run_id)
     return build_run_status_snapshot(run)
+
+
+def get_run_status_for_poll(run_id: str) -> dict[str, Any]:
+    """Return run snapshot for UI polls — cache only, never blocks on Arango gateway."""
+    fast = read_run_status_poll_fast(run_id)
+    if fast is not None:
+        return fast
+    return build_preparing_status_stub(
+        run_id,
+        message="Run accepted — status cache warming (no gateway call on this poll)…",
+    )
 
 
 def build_run_status_snapshot(run: dict[str, Any]) -> dict[str, Any]:

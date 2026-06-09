@@ -95,7 +95,6 @@ def ready_payload_from_startup_status(
             log.debug("Could not parse probe response_preview as JSON")
 
     cluster = str(registry.get("cluster_name") or "")
-    latency_ms = details.get("latency_ms")
 
     ok = probe_status == "ok" and registry_status == "ok"
 
@@ -104,8 +103,6 @@ def ready_payload_from_startup_status(
         detail_parts.append(f"Arango {version}")
     if cluster:
         detail_parts.append(cluster)
-    if latency_ms is not None:
-        detail_parts.append(f"{latency_ms}ms")
 
     summary = " · ".join(detail_parts)
 

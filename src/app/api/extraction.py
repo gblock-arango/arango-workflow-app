@@ -218,11 +218,7 @@ async def get_run(run_id: str) -> dict[str, Any]:
 
 @router.get("/runs/{run_id}/status")
 async def get_run_status(run_id: str) -> dict[str, Any]:
-    """Lightweight run snapshot for frequent UI polls during long extractions."""
-    return await run_sync(_get_run_status_sync, run_id)
-
-
-def _get_run_status_sync(run_id: str) -> dict[str, Any]:
+    """Lightweight run snapshot for frequent UI polls — never blocks on Arango gateway."""
     return extraction_service.get_run_status_for_poll(run_id)
 
 

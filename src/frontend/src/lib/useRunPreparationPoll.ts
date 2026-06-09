@@ -15,15 +15,11 @@ import {
 
 export {
   ACTIVE_RUN_STATUSES,
-  RUN_PROGRESS_POLL_MS,
   RUN_STATUS_POLL_MS,
   PREPARATION_STATUS_POLL_MS,
   RUN_STATUS_REQUEST_TIMEOUT_MS,
 } from "@/lib/runStatusPoll";
 export type { RunProgressSnapshot, PreparationProgressDetail } from "@/lib/runStatusPoll";
-
-/** @deprecated use RUN_STATUS_POLL_MS */
-export const RUN_PROGRESS_POLL_MS = RUN_STATUS_POLL_MS;
 
 /**
  * Poll ``GET /extraction/runs/{id}/status`` every 1s while preparing, 2s while running.

@@ -36,7 +36,8 @@ def test_ready_when_probe_and_registry_ok():
     assert out["status"] == "ready"
     assert "Arango 3.12.4" in out["detail"]
     assert "local-minikube-dev" in out["detail"]
-    assert "198ms" in out["detail"]
+    assert out["detail"] == "Arango 3.12.4 · local-minikube-dev"
+    assert "198ms" not in out["detail"]
     assert out["database"] == "Arango 3.12.4"
 
 

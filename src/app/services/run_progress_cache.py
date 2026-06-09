@@ -49,9 +49,46 @@ _lock = threading.Lock()
 _l1: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
+def _use_volume_files_api() -> bool:
+    if (os.environ.get("RUN_PROGRESS_CACHE_DIR") or "").strip():
+        return False
+    try:
+        from app.workflow_platform.workflow_data_volume import use_files_api_for_io
+
+        return use_files_api_for_io()
+    except Exception:
+        return False
+
+
+def _cache_volume_rel(run_id: str) -> str:
+    _validate_run_id(run_id)
+    return f"instance_data/run-progress/{run_id}.json"
+
+
 def _cache_dir() -> Path:
-    raw = os.environ.get("RUN_PROGRESS_CACHE_DIR", "/tmp/aoe-run-progress")
-    return Path(raw)
+    if _use_volume_files_api():
+        # Production Databricks Apps: shared via UC Files API, not /Volumes mount.
+        try:
+            from app.workflow_platform.workflow_data_volume import workflow_data_root
+
+            return workflow_data_root() / "instance_data" / "run-progress"
+        except Exception:
+            return Path("/tmp/aoe-run-progress")
+    raw = (os.environ.get("RUN_PROGRESS_CACHE_DIR") or "").strip()
+    if raw:
+        return Path(raw)
+    try:
+        from app.workflow_platform.workflow_data_volume import workflow_data_root
+
+        root = workflow_data_root()
+        if root.is_dir():
+            return root / "instance_data" / "run-progress"
+    except Exception:
+        log.debug(
+            "workflow UC volume not mounted; using /tmp for run progress cache",
+            exc_info=True,
+        )
+    return Path("/tmp/aoe-run-progress")
 
 
 def _now() -> float:
@@ -69,6 +106,25 @@ def _path(run_id: str) -> Path:
 
 
 def _read_file(run_id: str) -> dict[str, Any] | None:
+    if _use_volume_files_api():
+        try:
+            from app.workflow_platform.workflow_data_volume import read_bytes
+
+            raw = read_bytes(_cache_volume_rel(run_id))
+            data = json.loads(raw.decode("utf-8"))
+            if not isinstance(data, dict):
+                return None
+            return data
+        except FileNotFoundError:
+            return None
+        except (OSError, json.JSONDecodeError, ValueError):
+            log.warning(
+                "could not read run progress cache from UC Files API",
+                extra={"run_id": run_id},
+                exc_info=True,
+            )
+            return None
+
     path = _path(run_id)
     try:
         if not path.is_file():
@@ -83,17 +139,35 @@ def _read_file(run_id: str) -> dict[str, Any] | None:
 
 
 def _write_file(run_id: str, entry: dict[str, Any]) -> None:
+    entry = {**entry, "cached_at": _now()}
+    payload = json.dumps(entry, separators=(",", ":")).encode("utf-8")
+
+    if _use_volume_files_api():
+        try:
+            from app.workflow_platform.workflow_data_volume import write_bytes
+
+            write_bytes(relative_path=_cache_volume_rel(run_id), content=payload)
+            with _lock:
+                _l1[run_id] = (_now(), dict(entry))
+            return
+        except OSError:
+            log.error(
+                "could not write run progress cache via UC Files API",
+                extra={"run_id": run_id},
+                exc_info=True,
+            )
+            return
+
     path = _path(run_id)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        entry = {**entry, "cached_at": _now()}
         tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(entry, separators=(",", ":")), encoding="utf-8")
+        tmp.write_bytes(payload)
         tmp.replace(path)
         with _lock:
             _l1[run_id] = (path.stat().st_mtime, dict(entry))
     except OSError:
-        log.warning(
+        log.error(
             "could not write run progress cache file",
             extra={"run_id": run_id, "path": str(path)},
             exc_info=True,
@@ -177,39 +251,52 @@ def update_run_progress_cache(
 
 
 def get_cached_run_progress(run_id: str) -> dict[str, Any] | None:
-    """Return cached run progress from L1 or shared file store."""
+    """Return cached run progress from L1 or shared store (local file or UC Files API)."""
     try:
-        path = _path(run_id)
+        _validate_run_id(run_id)
     except ValueError:
         return None
 
-    try:
-        mtime = path.stat().st_mtime if path.is_file() else 0.0
-    except OSError:
-        mtime = 0.0
-
+    now = _now()
     with _lock:
         l1 = _l1.get(run_id)
-        if l1 is not None and l1[0] >= mtime:
+        if l1 is not None and now - l1[0] < 1.0:
             return _snapshot(l1[1], run_id)
+
+    if not _use_volume_files_api():
+        try:
+            path = _path(run_id)
+            mtime = path.stat().st_mtime if path.is_file() else 0.0
+        except OSError:
+            mtime = 0.0
+        with _lock:
+            l1 = _l1.get(run_id)
+            if l1 is not None and l1[0] >= mtime:
+                return _snapshot(l1[1], run_id)
 
     entry = _read_file(run_id)
     if entry is None:
         return None
     with _lock:
-        _l1[run_id] = (mtime or _now(), dict(entry))
+        _l1[run_id] = (now, dict(entry))
     return _snapshot(entry, run_id)
 
 
 def drop_run_progress_cache(run_id: str) -> None:
     try:
-        path = _path(run_id)
+        _validate_run_id(run_id)
     except ValueError:
         return
     with _lock:
         _l1.pop(run_id, None)
+    if _use_volume_files_api():
+        with contextlib.suppress(Exception):
+            from app.workflow_platform.workflow_data_volume import delete_relative
+
+            delete_relative(_cache_volume_rel(run_id))
+        return
     with contextlib.suppress(OSError):
-        path.unlink(missing_ok=True)
+        _path(run_id).unlink(missing_ok=True)
 
 
 def preparation_stage_rank(stage: str | None) -> int:

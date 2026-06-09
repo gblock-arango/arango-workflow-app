@@ -26,7 +26,7 @@ def test_ready_when_gateway_and_arango_ok(mock_ready_async):
         "status": "ready",
         "gateway": "Gateway startup-status ok",
         "database": "Arango 3.12.4",
-        "detail": "Arango 3.12.4 · local-minikube-dev · 198ms",
+        "detail": "Arango 3.12.4 · local-minikube-dev",
         "gateway_url": "https://arango-gateway-app.example.aws.databricksapps.com",
     }
 
@@ -35,6 +35,7 @@ def test_ready_when_gateway_and_arango_ok(mock_ready_async):
     body = response.json()
     assert body["status"] == "ready"
     assert "Arango 3.12.4" in body["detail"]
+    assert "198ms" not in body["detail"]
 
 
 @patch("app.services.arango_connectivity.fetch_arango_startup_status")
@@ -51,6 +52,7 @@ async def test_ready_async_uses_uc_arango_probe(mock_gateway_url, mock_fetch):
     body = await _ready_async(force=True)
     assert body["status"] == "ready"
     assert "Arango 3.12.4" in body["detail"]
+    assert "198ms" not in body["detail"]
     mock_fetch.assert_called_once()
 
 

@@ -148,8 +148,10 @@ env:
       (RUN_PROGRESS_CACHE_DIR), not in-memory per worker.
     value: "4"
   - name: RUN_PROGRESS_CACHE_DIR
-    description: "Shared JSON progress files for extraction status polls (multi-worker safe)."
-    value: "/tmp/aoe-run-progress"
+    description: >-
+      Optional override for local dev (local_mount I/O). On Databricks Apps leave empty —
+      cache uses UC Files API at workflow-data/instance_data/run-progress/ (shared across workers).
+    value: ""
   - name: APP_ENV
     description: "production vs development — only affects JWT/WS when JWT_AUTH_ENABLED=true; safe to leave production on Databricks"
     value: "production"

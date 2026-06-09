@@ -267,6 +267,17 @@ class TestExtractionRoutes:
         assert result["current_step"] == "extractor"
 
     @pytest.mark.asyncio
+    async def test_get_run_status_never_calls_run_sync(self):
+        with patch(
+            "app.api.extraction.extraction_service.get_run_status_for_poll",
+            return_value={"_key": "r1", "status": "preparing", "stats": {}},
+        ) as mock_poll, patch("app.api.extraction.run_sync") as mock_run_sync:
+            result = await get_run_status("r1")
+        mock_poll.assert_called_once_with("r1")
+        mock_run_sync.assert_not_called()
+        assert result["status"] == "preparing"
+
+    @pytest.mark.asyncio
     async def test_delete_run_deletes_run_and_results(self):
         db = MagicMock()
         col = MagicMock()

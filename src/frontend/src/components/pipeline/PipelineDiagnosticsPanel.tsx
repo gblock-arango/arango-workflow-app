@@ -89,10 +89,7 @@ function progressDetailLine(progress: RunProgressSnapshot | null): string | null
     const parts: string[] = [];
     if (p.gateway_ok === true) parts.push("gateway OK");
     if (p.gateway_ok === false) parts.push("gateway failed");
-    if (p.latency_ms != null) parts.push(`${p.latency_ms}ms /health`);
-    if (p.connect_latency_ms != null) parts.push(`${p.connect_latency_ms}ms connect`);
     if (p.arango_verified) parts.push("run doc verified in Arango");
-    if (p.gateway_url) parts.push(p.gateway_url);
     if (parts.length > 0) return parts.join(" · ");
   }
   if (p.phase === "arango_insert" && p.total != null && p.inserted != null) {
@@ -335,11 +332,7 @@ export default function PipelineDiagnosticsPanel({
             </div>
           )}
         </div>
-      ) : (
-        <p className="text-[11px] text-gray-400">
-          Select or start a run to see UC → Arango materialization progress.
-        </p>
-      )}
+      ) : null}
     </section>
   );
 }
