@@ -69,6 +69,10 @@ async def _ready_async(*, force: bool = False) -> dict[str, Any]:
         startup = await asyncio.to_thread(fetch_arango_startup_status)
         payload = ready_payload_from_startup_status(startup, gateway_base_url="")
         payload["check"] = "uc_registry_direct"
+        if isinstance(startup.get("probe"), dict):
+            payload["probe"] = startup["probe"]
+        if isinstance(startup.get("registry"), dict):
+            payload["registry"] = startup["registry"]
     except Exception as exc:
         cached = _ready_cache.get("payload")
         cache_at = float(_ready_cache.get("at") or 0.0)
@@ -86,9 +90,12 @@ async def _ready_async(*, force: bool = False) -> dict[str, Any]:
             "gateway_url": "",
             "check": "uc_registry_direct",
         }
+        # Do not cache transient probe failures — next poll should retry.
+        return payload
 
-    _ready_cache["at"] = now
-    _ready_cache["payload"] = payload
+    if payload.get("status") == "ready":
+        _ready_cache["at"] = now
+        _ready_cache["payload"] = payload
     return payload
 
 

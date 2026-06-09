@@ -5,13 +5,14 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 
 from app.api.extraction import (
     StartRunRequest,
     _resolve_doc_ids,
     delete_run,
     get_run,
+    get_run_status,
     get_run_cost,
     get_run_results,
     get_run_steps,
@@ -22,49 +23,32 @@ from app.api.extraction import (
 
 
 class TestResolveDocIds:
-    def test_raises_when_no_document_ids(self):
+    @pytest.mark.asyncio
+    async def test_raises_when_no_document_ids(self):
         with pytest.raises(HTTPException) as exc:
-            _resolve_doc_ids(StartRunRequest())
+            await _resolve_doc_ids(StartRunRequest())
         assert exc.value.status_code == 422
 
-    def test_raises_when_document_missing(self):
-        db = MagicMock()
-        db.has_collection.return_value = True
-        docs = MagicMock()
-        db.collection.return_value = docs
+    @pytest.mark.asyncio
+    async def test_raises_when_not_ready(self):
         with (
-            patch("app.api.extraction.get_db", return_value=db),
-            patch("app.api.extraction.doc_get", return_value=None),
-            pytest.raises(HTTPException) as exc,
-        ):
-            _resolve_doc_ids(StartRunRequest(document_id="d1"))
-        assert "not found" in exc.value.detail
-
-    def test_raises_when_document_not_ready(self):
-        db = MagicMock()
-        db.has_collection.return_value = True
-        docs = MagicMock()
-        db.collection.return_value = docs
-        with (
-            patch("app.api.extraction.get_db", return_value=db),
             patch(
-                "app.api.extraction.doc_get", return_value={"_key": "d1", "status": "processing"}
+                "app.api.extraction.validate_embedding_documents_ready",
+                side_effect=ValueError("not ready"),
             ),
             pytest.raises(HTTPException) as exc,
         ):
-            _resolve_doc_ids(StartRunRequest(document_id="d1"))
+            await _resolve_doc_ids(StartRunRequest(document_id="d1"))
         assert "not ready" in exc.value.detail
 
-    def test_returns_unique_ready_ids(self):
-        db = MagicMock()
-        db.has_collection.return_value = True
-        docs = MagicMock()
-        db.collection.return_value = docs
-        with (
-            patch("app.api.extraction.get_db", return_value=db),
-            patch("app.api.extraction.doc_get", return_value={"_key": "d1", "status": "ready"}),
+    @pytest.mark.asyncio
+    async def test_returns_unique_ready_ids(self):
+        with patch(
+            "app.api.extraction.validate_embedding_documents_ready",
         ):
-            result = _resolve_doc_ids(StartRunRequest(document_id="d1", document_ids=["d1", "d2"]))
+            result = await _resolve_doc_ids(
+                StartRunRequest(document_id="d1", document_ids=["d1", "d2"])
+            )
         assert result == ["d1", "d2"]
 
 
@@ -72,20 +56,18 @@ class TestExtractionRoutes:
     @pytest.mark.asyncio
     async def test_start_extraction_creates_run_and_background_task(self):
         body = StartRunRequest(document_id="d1", config={"passes": 2}, target_ontology_id="onto1")
-        background_tasks = BackgroundTasks()
         with (
             patch("app.api.extraction._resolve_doc_ids", return_value=["d1"]),
-            patch("app.api.extraction.get_db", return_value=MagicMock()),
             patch(
-                "app.api.extraction.extraction_service.create_run_record",
-                return_value={"_key": "r1", "status": "queued"},
-            ) as mock_create,
+                "app.api.extraction.extraction_service.begin_extraction_run",
+                return_value={"_key": "r1", "status": "preparing", "doc_ids": ["d1"]},
+            ) as mock_begin,
         ):
-            result = await start_extraction(body, background_tasks)
-        mock_create.assert_called_once()
+            result = await start_extraction(body)
+        mock_begin.assert_called_once()
         assert result.run_id == "r1"
         assert result.doc_id == "d1"
-        assert len(background_tasks.tasks) == 1
+        assert result.status == "preparing"
 
     @pytest.mark.asyncio
     async def test_list_runs_enriches_documents_and_per_run_stats(self):
@@ -266,6 +248,23 @@ class TestExtractionRoutes:
         ):
             result = await get_run("r1")
         assert result is expected
+
+    @pytest.mark.asyncio
+    async def test_get_run_status_returns_lightweight_snapshot(self):
+        snapshot = {
+            "_key": "r1",
+            "status": "running",
+            "current_step": "extractor",
+            "stats": {"step_logs": [{"step": "strategy_selector", "status": "completed"}], "errors": []},
+        }
+        with patch(
+            "app.api.extraction.extraction_service.get_run_status_for_poll",
+            return_value=snapshot,
+        ) as mock_poll:
+            result = await get_run_status("r1")
+        mock_poll.assert_called_once_with("r1")
+        assert result["status"] == "running"
+        assert result["current_step"] == "extractor"
 
     @pytest.mark.asyncio
     async def test_delete_run_deletes_run_and_results(self):

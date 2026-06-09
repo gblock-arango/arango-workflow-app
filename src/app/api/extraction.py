@@ -6,17 +6,14 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.db.async_gateway import run_sync
 from app.db.client import get_db
 from app.db.utils import doc_get, run_aql
 from app.services import extraction as extraction_service
-from app.services.extraction_materialize import (
-    materialize_embedding_document_for_extraction,
-    validate_embedding_documents_ready,
-)
-from app.services.schema_bootstrap import ensure_ontology_schema_async
+from app.services.extraction_materialize import validate_embedding_documents_ready
 
 log = logging.getLogger(__name__)
 
@@ -60,19 +57,15 @@ class RetryResponse(BaseModel):
 
 
 @router.post("/run")
-async def start_extraction(
-    body: StartRunRequest,
-    background_tasks: BackgroundTasks,
-) -> StartRunResponse:
+async def start_extraction(body: StartRunRequest) -> StartRunResponse:
     """Trigger ontology extraction on one or more documents.
 
-    Creates the run record immediately and dispatches the pipeline
-    as a background task so the HTTP response returns without waiting
-    for the full extraction to complete.
+    Creates the run record immediately (status ``preparing``) and returns
+    ``run_id`` without waiting for UC→Arango materialization or schema
+    migrations. Progress is written to ``extraction_runs.stats`` and polled
+    via ``GET /runs/{run_id}``.
     """
     doc_ids = await _resolve_doc_ids(body)
-    await ensure_ontology_schema_async()
-    db = get_db()
 
     ontology_ids: list[str] = []
     if body.target_ontology_id:
@@ -80,16 +73,7 @@ async def start_extraction(
     if body.base_ontology_ids:
         ontology_ids.extend(oid for oid in body.base_ontology_ids if oid not in ontology_ids)
 
-    run_record = extraction_service.create_run_record(
-        db,
-        document_ids=doc_ids,
-        config_overrides=body.config,
-        domain_ontology_ids=ontology_ids or None,
-        target_ontology_id=body.target_ontology_id,
-    )
-    background_tasks.add_task(
-        extraction_service.execute_run,
-        run_id=run_record["_key"],
+    run_record = extraction_service.begin_extraction_run(
         document_ids=doc_ids,
         config_overrides=body.config,
         domain_ontology_ids=ontology_ids or None,
@@ -103,8 +87,26 @@ async def start_extraction(
     )
 
 
+def _create_preparing_run(
+    doc_ids: list[str],
+    config: dict[str, Any] | None,
+    domain_ontology_ids: list[str] | None,
+    target_ontology_id: str | None,
+) -> dict[str, Any]:
+    """Legacy sync create path (retry/tests). Prefer :func:`begin_extraction_run`."""
+    db = get_db()
+    return extraction_service.create_run_record(
+        db,
+        document_ids=doc_ids,
+        config_overrides=config,
+        domain_ontology_ids=domain_ontology_ids,
+        target_ontology_id=target_ontology_id,
+        initial_status="preparing",
+    )
+
+
 async def _resolve_doc_ids(body: StartRunRequest) -> list[str]:
-    """Normalize document_id / document_ids and materialize UC rows into Arango for extraction."""
+    """Normalize document_id / document_ids and verify UC embedding_status is ready."""
     ids: list[str] = []
     if body.document_ids:
         ids.extend(body.document_ids)
@@ -121,14 +123,6 @@ async def _resolve_doc_ids(body: StartRunRequest) -> list[str]:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    for doc_id in ids:
-        try:
-            await asyncio.to_thread(materialize_embedding_document_for_extraction, doc_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
     return ids
 
 
@@ -139,6 +133,14 @@ async def list_runs(
     status: str | None = Query(None, description="Filter by status"),
 ) -> dict[str, Any]:
     """List extraction runs with enriched metadata."""
+    return await run_sync(_list_runs_enriched, cursor, limit, status)
+
+
+def _list_runs_enriched(
+    cursor: str | None,
+    limit: int,
+    status: str | None,
+) -> dict[str, Any]:
     db = get_db()
     result = extraction_service.list_runs(
         db,
@@ -174,6 +176,9 @@ async def list_runs(
         run["classes_extracted"] = stats.get("classes_extracted", 0)
         run["properties_extracted"] = stats.get("properties_extracted", 0)
         run["error_count"] = len(stats.get("errors", []))
+        run["preparation_stage"] = stats.get("preparation_stage")
+        run["preparation_message"] = stats.get("preparation_message")
+        run["preparation_updated_at"] = stats.get("preparation_updated_at")
 
         started = run.get("started_at", 0)
         completed = run.get("completed_at", 0)
@@ -182,30 +187,6 @@ async def list_runs(
         else:
             run.setdefault("duration_ms", 0)
 
-        # Enrich with ontology_id only -- DO NOT overwrite the per-run
-        # counts above. Earlier versions of this block also re-counted
-        # live ``ontology_classes`` + ``ontology_properties`` for the
-        # target ontology and clobbered ``classes_extracted`` /
-        # ``properties_extracted`` with whole-ontology totals. Two bugs
-        # in one place:
-        #
-        #   1. Wrong semantic: ``*_extracted`` should reflect what THIS
-        #      run contributed (the Pipeline Monitor's mental model),
-        #      not the post-merge size of the target ontology. When 4
-        #      docs share a domain, the override made every run look
-        #      like it produced N classes (the running total), not its
-        #      actual delta.
-        #   2. Wrong collection: ``ontology_properties`` is the legacy
-        #      pre-PGT-split collection and is empty -- live properties
-        #      now live in ``ontology_object_properties`` and
-        #      ``ontology_datatype_properties``. The override silently
-        #      reported ``properties_extracted: 0`` for every run that
-        #      had a registry entry. (Older runs that pre-dated the
-        #      registry write kept the right value via the stats
-        #      passthrough above.)
-        #
-        # Per-run stats are already populated from ``run.stats`` higher
-        # up; here we only resolve the *which ontology* link.
         if db.has_collection("ontology_registry") and run.get("_key"):
             try:
                 oid_result = list(
@@ -232,6 +213,20 @@ async def list_runs(
 @router.get("/runs/{run_id}")
 async def get_run(run_id: str) -> dict[str, Any]:
     """Get extraction run status and stats."""
+    return await run_sync(_get_run_sync, run_id)
+
+
+@router.get("/runs/{run_id}/status")
+async def get_run_status(run_id: str) -> dict[str, Any]:
+    """Lightweight run snapshot for frequent UI polls during long extractions."""
+    return await run_sync(_get_run_status_sync, run_id)
+
+
+def _get_run_status_sync(run_id: str) -> dict[str, Any]:
+    return extraction_service.get_run_status_for_poll(run_id)
+
+
+def _get_run_sync(run_id: str) -> dict[str, Any]:
     db = get_db()
     return extraction_service.get_run(db, run_id=run_id)
 
@@ -239,6 +234,55 @@ async def get_run(run_id: str) -> dict[str, Any]:
 @router.delete("/runs/{run_id}")
 async def delete_run(run_id: str) -> dict[str, Any]:
     """Delete an extraction run and its results document."""
+    return await run_sync(_delete_run_sync, run_id)
+
+
+@router.get("/runs/{run_id}/steps")
+async def get_run_steps(run_id: str) -> dict[str, Any]:
+    """Get per-agent step detail: inputs, outputs, token usage, errors, duration."""
+    steps = await run_sync(_get_run_steps_sync, run_id)
+    return {"run_id": run_id, "steps": steps}
+
+
+def _get_run_steps_sync(run_id: str) -> list[dict[str, Any]]:
+    db = get_db()
+    return extraction_service.get_run_steps(db, run_id=run_id)
+
+
+@router.get("/runs/{run_id}/results")
+async def get_run_results(run_id: str) -> dict[str, Any]:
+    """Get extracted entities from a run."""
+    return await run_sync(_get_run_results_sync, run_id)
+
+
+def _get_run_results_sync(run_id: str) -> dict[str, Any]:
+    db = get_db()
+    return extraction_service.get_run_results(db, run_id=run_id)
+
+
+@router.post("/runs/{run_id}/retry")
+async def retry_run(run_id: str) -> RetryResponse:
+    """Retry a failed extraction run."""
+    new_run = await extraction_service.retry_run(get_db(), run_id=run_id)
+    return RetryResponse(
+        run_id=run_id,
+        new_run_id=new_run["_key"],
+        status=new_run["status"],
+    )
+
+
+@router.get("/runs/{run_id}/cost")
+async def get_run_cost(run_id: str) -> dict[str, Any]:
+    """Get LLM cost breakdown: tokens by model, estimated cost."""
+    return await run_sync(_get_run_cost_sync, run_id)
+
+
+def _get_run_cost_sync(run_id: str) -> dict[str, Any]:
+    db = get_db()
+    return extraction_service.get_run_cost(db, run_id=run_id)
+
+
+def _delete_run_sync(run_id: str) -> dict[str, Any]:
     db = get_db()
     if not db.has_collection("extraction_runs"):
         raise HTTPException(status_code=404, detail="No extraction runs collection")
@@ -251,37 +295,3 @@ async def delete_run(run_id: str) -> dict[str, Any]:
         col.delete(results_key)
     log.info("deleted extraction run %s", run_id)
     return {"deleted": True, "run_id": run_id}
-
-
-@router.get("/runs/{run_id}/steps")
-async def get_run_steps(run_id: str) -> dict[str, Any]:
-    """Get per-agent step detail: inputs, outputs, token usage, errors, duration."""
-    db = get_db()
-    steps = extraction_service.get_run_steps(db, run_id=run_id)
-    return {"run_id": run_id, "steps": steps}
-
-
-@router.get("/runs/{run_id}/results")
-async def get_run_results(run_id: str) -> dict[str, Any]:
-    """Get extracted entities from a run."""
-    db = get_db()
-    return extraction_service.get_run_results(db, run_id=run_id)
-
-
-@router.post("/runs/{run_id}/retry")
-async def retry_run(run_id: str) -> RetryResponse:
-    """Retry a failed extraction run."""
-    db = get_db()
-    new_run = await extraction_service.retry_run(db, run_id=run_id)
-    return RetryResponse(
-        run_id=run_id,
-        new_run_id=new_run["_key"],
-        status=new_run["status"],
-    )
-
-
-@router.get("/runs/{run_id}/cost")
-async def get_run_cost(run_id: str) -> dict[str, Any]:
-    """Get LLM cost breakdown: tokens by model, estimated cost."""
-    db = get_db()
-    return extraction_service.get_run_cost(db, run_id=run_id)

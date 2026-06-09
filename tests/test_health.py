@@ -90,3 +90,40 @@ async def test_ready_not_ready_when_probe_fails(mock_gateway_url, mock_fetch):
     invalidate_ready_cache()
     body = await _ready_async(force=True)
     assert body["status"] == "not_ready"
+    assert "unreachable" in body.get("gateway", "").lower() or "probe" in body.get("gateway", "")
+
+
+@patch("app.services.arango_connectivity.fetch_arango_startup_status")
+@pytest.mark.asyncio
+async def test_ready_does_not_cache_not_ready(mock_fetch):
+    from app.api.health import _ready_async, invalidate_ready_cache
+
+    invalidate_ready_cache()
+    mock_fetch.return_value = {
+        "checked_at": "2026-01-01T00:00:00+00:00",
+        "registry": {"status": "error", "error": "sql failed"},
+        "probe": {"status": "error", "error": "sql failed"},
+    }
+
+    first = await _ready_async(force=True)
+    assert first["status"] == "not_ready"
+
+    from tests.unit.test_gateway_startup_status import SAMPLE_OK
+
+    mock_fetch.return_value = SAMPLE_OK
+    second = await _ready_async(force=False)
+    assert second["status"] == "ready"
+
+
+@patch("app.services.arango_connectivity.fetch_arango_startup_status")
+@pytest.mark.asyncio
+async def test_ready_includes_probe_registry(mock_fetch):
+    from tests.unit.test_gateway_startup_status import SAMPLE_OK
+
+    from app.api.health import _ready_async, invalidate_ready_cache
+
+    invalidate_ready_cache()
+    mock_fetch.return_value = SAMPLE_OK
+    body = await _ready_async(force=True)
+    assert body["probe"]["status"] == "ok"
+    assert body["registry"]["status"] == "ok"

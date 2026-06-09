@@ -10,6 +10,10 @@ import type {
 import { PIPELINE_STEPS } from "@/types/pipeline";
 import { backendUrl, getApiOrigin } from "@/lib/api-client";
 import { getBasePath } from "@/lib/base-path";
+import {
+  RUN_STATUS_POLL_MS,
+  RUN_STATUS_REQUEST_TIMEOUT_MS,
+} from "@/lib/runStatusPoll";
 
 interface UseExtractionSocketReturn {
   steps: Map<string, StepStatus>;
@@ -24,6 +28,7 @@ const BACKEND_TO_FRONTEND_STEP: Record<string, PipelineStep> = {
   quality_judge: "quality_judge",
   er_agent: "entity_resolution_agent",
   filter: "pre_curation_filter",
+  belief_revision: "quality_judge",
 };
 
 function buildInitialSteps(): Map<string, StepStatus> {
@@ -34,14 +39,32 @@ function buildInitialSteps(): Map<string, StepStatus> {
   return map;
 }
 
+function toFrontendStep(backendStep: string): PipelineStep | string {
+  return BACKEND_TO_FRONTEND_STEP[backendStep] ?? backendStep;
+}
+
+function applyCurrentStepFallback(
+  map: Map<string, StepStatus>,
+  currentStep: string | null | undefined,
+): void {
+  if (!currentStep) return;
+  const frontendStep = toFrontendStep(currentStep);
+  const idx = PIPELINE_STEPS.indexOf(frontendStep as PipelineStep);
+  if (idx < 0) return;
+  for (let i = 0; i < PIPELINE_STEPS.length; i++) {
+    const step = PIPELINE_STEPS[i];
+    if (i < idx) {
+      map.set(step, { status: "completed" });
+    } else if (i === idx) {
+      map.set(step, { ...(map.get(step) ?? { status: "pending" }), status: "running" });
+    } else {
+      map.set(step, { status: "pending" });
+    }
+  }
+}
+
 /**
  * Build the WebSocket URL for an extraction run.
- *
- * Uses ``getApiOrigin()`` (origin only — see api-client) so we always get a real
- * ``ws://``/``wss://`` host even when ``NEXT_PUBLIC_API_URL`` is a relative path
- * like ``/api/v1`` (static export / same-origin deploy). Includes ``NEXT_PUBLIC_BASE_PATH`` so
- * deployments behind ``SERVICE_URL_PATH_PREFIX`` (Container Manager) reach the
- * backend's ``StripServicePrefixMiddleware``.
  */
 export function resolveWsUrl(runId: string): string {
   if (typeof window === "undefined") return "";
@@ -56,12 +79,21 @@ async function fetchStepsFromRest(
   runId: string,
 ): Promise<Map<string, StepStatus> | null> {
   try {
-    const res = await fetch(backendUrl(`/api/v1/extraction/runs/${runId}`));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RUN_STATUS_REQUEST_TIMEOUT_MS);
+    const res = await fetch(backendUrl(`/api/v1/extraction/runs/${runId}/status`), {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
     if (!res.ok) return null;
     const run = await res.json();
 
     const runStatus: string = run?.status ?? "unknown";
-    const isRunning = runStatus === "running";
+    const isRunning =
+      runStatus === "running" ||
+      runStatus === "preparing" ||
+      runStatus === "queued" ||
+      runStatus === "paused";
 
     const stepLogs: {
       step: string;
@@ -76,11 +108,10 @@ async function fetchStepsFromRest(
     if (stepLogs.length === 0 && !isRunning) return null;
 
     const map = buildInitialSteps();
-
     const completedFrontendSteps = new Set<string>();
 
     for (const log of stepLogs) {
-      const frontendStep = BACKEND_TO_FRONTEND_STEP[log.step] ?? log.step;
+      const frontendStep = String(toFrontendStep(log.step));
       if (!map.has(frontendStep)) continue;
 
       let status: StepStatusValue = "pending";
@@ -107,19 +138,16 @@ async function fetchStepsFromRest(
     }
 
     if (isRunning) {
-      let foundRunning = false;
-      for (const step of PIPELINE_STEPS) {
-        if (completedFrontendSteps.has(step)) continue;
-        if (!foundRunning) {
-          map.set(step, { ...map.get(step)!, status: "running" });
-          foundRunning = true;
-        }
-        break;
-      }
-      if (!foundRunning && completedFrontendSteps.size === 0 && stepLogs.length === 0) {
-        map.set(PIPELINE_STEPS[0], { status: "running" });
-      }
-    } else if (runStatus === "completed" || runStatus === "completed_with_errors" || runStatus === "failed") {
+      const currentStep =
+        run?.current_step ??
+        run?.stats?.current_step ??
+        (stepLogs.length > 0 ? stepLogs[stepLogs.length - 1]?.step : null);
+      applyCurrentStepFallback(map, currentStep);
+    } else if (
+      runStatus === "completed" ||
+      runStatus === "completed_with_errors" ||
+      runStatus === "failed"
+    ) {
       for (const step of PIPELINE_STEPS) {
         const current = map.get(step);
         if (current && current.status === "pending") {
@@ -136,24 +164,6 @@ async function fetchStepsFromRest(
 
 const MAX_WS_RETRIES = 5;
 
-/**
- * Run statuses for which there is no point opening a WebSocket.
- *
- * The pipeline broadcaster only emits events for in-flight runs;
- * for completed/failed/skipped runs the backend has nothing to
- * stream, the connection is held idle until heartbeat timeout, and
- * each retry burns one of the browser's per-origin TCP slots
- * (Chrome caps at six). Scrubbing the run-history slider through
- * a list of completed runs would otherwise open + retry up to
- * MAX_WS_RETRIES connections per visited run, saturate the
- * connection pool, and produce a "WebSocket is closed before the
- * connection is established" storm in the console -- with the
- * side effect of starving the page event loop badly enough that
- * the slider itself stops responding to drag events.
- *
- * The REST snapshot path (``fetchStepsFromRest``) populates the
- * step map for terminal runs without needing a socket.
- */
 export const TERMINAL_RUN_STATUSES = new Set([
   "completed",
   "completed_with_errors",
@@ -162,18 +172,14 @@ export const TERMINAL_RUN_STATUSES = new Set([
   "cancelled",
 ]);
 
-/**
- * Best-effort run-status probe used to gate WebSocket connection.
- *
- * Returns the run's ``status`` string if the backend responds,
- * otherwise ``null``. ``null`` does NOT short-circuit -- callers
- * should treat unknown status as "maybe active" and try the WS
- * anyway, so a transient REST blip doesn't deny a real-time view
- * of an in-flight pipeline.
- */
 export async function probeRunStatus(runId: string): Promise<string | null> {
   try {
-    const res = await fetch(backendUrl(`/api/v1/extraction/runs/${runId}`));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RUN_STATUS_REQUEST_TIMEOUT_MS);
+    const res = await fetch(backendUrl(`/api/v1/extraction/runs/${runId}/status`), {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
     if (!res.ok) return null;
     const run = await res.json();
     const status = run?.status;
@@ -194,9 +200,8 @@ export function useExtractionSocket(
   const retriesRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
-  const restFetchedRef = useRef(false);
-  /** Set to true once WS has replayed events; prevents REST from overwriting */
   const wsHasDeliveredRef = useRef(false);
+  const wsLastEventAtRef = useRef(0);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -206,15 +211,19 @@ export function useExtractionSocket(
   }, []);
 
   const applyEvent = useCallback((evt: WebSocketEvent) => {
-    // Mark that WS has delivered real step data — REST should not overwrite
-    if (evt.type === "step_started" || evt.type === "step_completed" || evt.type === "step_failed") {
+    if (
+      evt.type === "step_started" ||
+      evt.type === "step_completed" ||
+      evt.type === "step_failed"
+    ) {
       wsHasDeliveredRef.current = true;
+      wsLastEventAtRef.current = Date.now();
     }
     setSteps((prev) => {
       const next = new Map(prev);
       const rawStep = evt.step;
       if (!rawStep) return next;
-      const stepName = (BACKEND_TO_FRONTEND_STEP[rawStep] ?? rawStep) as PipelineStep;
+      const stepName = toFrontendStep(rawStep) as PipelineStep;
       if (!next.has(stepName)) return next;
 
       const current = next.get(stepName) ?? { status: "pending" as StepStatusValue };
@@ -267,17 +276,21 @@ export function useExtractionSocket(
     };
   }, []);
 
-  // REST API fallback: poll step data only when WS isn't connected
+  // REST fallback when WS is down or connected on a worker that never receives events.
   useEffect(() => {
     if (!runId) return;
-    restFetchedRef.current = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
 
     async function poll() {
       if (!mountedRef.current) return;
-      // Skip polling if WebSocket is connected or has delivered events
-      if (wsRef.current?.readyState === WebSocket.OPEN) return;
-      if (wsHasDeliveredRef.current) return;
+
+      const wsOpen = wsRef.current?.readyState === WebSocket.OPEN;
+      const wsSilent =
+        wsOpen &&
+        (!wsHasDeliveredRef.current ||
+          Date.now() - wsLastEventAtRef.current > 15_000);
+
+      if (wsOpen && wsHasDeliveredRef.current && !wsSilent) return;
 
       const restSteps = await fetchStepsFromRest(runId!);
       if (!restSteps || !mountedRef.current) return;
@@ -294,8 +307,8 @@ export function useExtractionSocket(
     }
 
     const initialTimer = setTimeout(() => {
-      poll();
-      intervalId = setInterval(poll, 5000);
+      void poll();
+      intervalId = setInterval(() => void poll(), RUN_STATUS_POLL_MS);
     }, 500);
 
     return () => {
@@ -312,9 +325,6 @@ export function useExtractionSocket(
       return;
     }
 
-    // Tracks the currently-mounted runId so a slow status probe that
-    // resolves AFTER the user has scrubbed to a different run doesn't
-    // open a stale WebSocket against the original run.
     let cancelled = false;
 
     function connect() {
@@ -365,17 +375,12 @@ export function useExtractionSocket(
     setSteps(buildInitialSteps());
     retriesRef.current = 0;
     wsHasDeliveredRef.current = false;
+    wsLastEventAtRef.current = 0;
 
-    // Probe run status before opening WS. For terminal runs the
-    // broadcaster has nothing to stream and the connection just
-    // burns a browser TCP slot until heartbeat timeout, so we skip
-    // WS entirely and let the REST poll path render the snapshot.
-    // See TERMINAL_RUN_STATUSES rationale for why this matters.
     (async () => {
       const status = await probeRunStatus(runId);
       if (cancelled || !mountedRef.current) return;
       if (status !== null && TERMINAL_RUN_STATUSES.has(status)) {
-        // Terminal run: REST poll has the data; no socket needed.
         return;
       }
       connect();

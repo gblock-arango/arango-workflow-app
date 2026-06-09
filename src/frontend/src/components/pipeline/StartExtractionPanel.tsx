@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, apiFetch } from "@/lib/api-client";
+import { api, apiFetchLongRunning, readApiErrorMessage } from "@/lib/api-client";
 import AppLink from "@/components/layout/AppLink";
 
 interface EmbeddingRow {
@@ -18,9 +18,14 @@ interface OntologyOption {
 
 interface StartExtractionPanelProps {
   onRunStarted: (runId: string) => void;
+  /** When true, the selected run is still preparing or running — block duplicate starts. */
+  extractionInProgress?: boolean;
 }
 
-export default function StartExtractionPanel({ onRunStarted }: StartExtractionPanelProps) {
+export default function StartExtractionPanel({
+  onRunStarted,
+  extractionInProgress = false,
+}: StartExtractionPanelProps) {
   const [docs, setDocs] = useState<EmbeddingRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -78,27 +83,28 @@ export default function StartExtractionPanel({ onRunStarted }: StartExtractionPa
       if (targetOntologyId) {
         payload.target_ontology_id = targetOntologyId;
       }
-      const res = await apiFetch("/api/v1/extraction/run", {
+      const res = await apiFetchLongRunning("/api/v1/extraction/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        const detail =
-          typeof body.detail === "string"
-            ? body.detail
-            : body.error?.message ?? `HTTP ${res.status}`;
-        throw new Error(detail);
+        throw new Error(await readApiErrorMessage(res));
       }
       const data = (await res.json()) as { run_id?: string };
       if (!data.run_id) {
         throw new Error("No run_id returned from extraction API");
       }
-      setSelected(new Set());
+      setError("");
       onRunStarted(data.run_id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const raw = err instanceof Error ? err.message : String(err);
+      const timedOut = /timed out|AbortError|signal timed out/i.test(raw);
+      setError(
+        timedOut
+          ? "Request timed out creating the run record (Arango gateway connect may be slow). Check Diagnostics below and Extraction Runs."
+          : raw,
+      );
     } finally {
       setBusy(false);
     }
@@ -110,7 +116,8 @@ export default function StartExtractionPanel({ onRunStarted }: StartExtractionPa
         <h2 className="text-sm font-semibold text-gray-800">Start extraction</h2>
         <p className="text-xs text-gray-500 mt-1 leading-relaxed">
           Documents must be <strong>ready</strong> (Parse &amp; Chunk → embed complete). This
-          launches a new run; select it below to watch the agent pipeline.
+          launches a new run; select it below to watch the agent pipeline. The first start may
+          take a few minutes while chunks are copied to Arango and schema migrations run.
         </p>
       </div>
 
@@ -175,11 +182,15 @@ export default function StartExtractionPanel({ onRunStarted }: StartExtractionPa
 
       <button
         type="button"
-        disabled={busy || selected.size === 0}
+        disabled={busy || selected.size === 0 || extractionInProgress}
         onClick={() => void startExtraction()}
         className="w-full text-sm font-medium px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-40 transition-colors"
       >
-        {busy ? "Starting…" : `Start extraction (${selected.size} selected)`}
+        {extractionInProgress
+          ? "Extraction in progress…"
+          : busy
+            ? "Starting… (preparing run)"
+            : `Start extraction (${selected.size} selected)`}
       </button>
     </section>
   );

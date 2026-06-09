@@ -13,11 +13,14 @@ export default function LlmConnectivityBadge() {
   const [open, setOpen] = useState(false);
 
   const connected = status?.ok === true;
+  const apiBusy = status?.provider === "busy";
   const dotClass = loading
     ? "bg-amber-400 animate-pulse"
     : connected
       ? "bg-emerald-500"
-      : "bg-red-500";
+      : apiBusy
+        ? "bg-amber-500"
+        : "bg-red-500";
 
   const hoverDetail = status
     ? [
@@ -52,7 +55,13 @@ export default function LlmConnectivityBadge() {
       >
         <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${dotClass}`} />
         <span className="text-gray-700 font-medium truncate">
-          {loading ? "Checking LLM…" : connected ? "LLM connected" : "LLM unavailable"}
+          {loading
+            ? "Checking LLM…"
+            : connected
+              ? "LLM connected"
+              : apiBusy
+                ? "API busy"
+                : "LLM unavailable"}
         </span>
       </button>
       {open && status && (

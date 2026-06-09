@@ -46,6 +46,11 @@ class RateLimitError(AOEError):
     code = "RATE_LIMITED"
 
 
+class ServiceBusyError(AOEError):
+    status_code = 503
+    code = "SERVICE_BUSY"
+
+
 class ForbiddenError(AOEError):
     status_code = 403
     code = "FORBIDDEN"

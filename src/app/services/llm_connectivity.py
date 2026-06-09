@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 
 _PROBE_TEXT = "connectivity probe"
 _PROBE_CACHE_TTL_SEC = 90.0
+_PROBE_LIVE_TIMEOUT_SEC = 20.0
 _probe_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
 
@@ -106,18 +107,33 @@ def _failure_summary(embedding: dict[str, Any], extraction: dict[str, Any]) -> s
 async def probe_llm_connectivity(*, force: bool = False) -> dict[str, Any]:
     """Run lightweight live checks against configured LLM providers."""
     now = time.monotonic()
-    if not force:
-        cached = _probe_cache.get("payload")
-        if (
-            cached is not None
-            and now - float(_probe_cache.get("at") or 0.0) < _PROBE_CACHE_TTL_SEC
-        ):
-            return dict(cached)
+    cached = _probe_cache.get("payload")
+    cache_age = now - float(_probe_cache.get("at") or 0.0)
+    if not force and cached is not None and cache_age < _PROBE_CACHE_TTL_SEC:
+        return dict(cached)
 
-    embedding, extraction = await asyncio.gather(
-        _probe_embedding(),
-        _probe_extraction(),
-    )
+    try:
+        embedding, extraction = await asyncio.wait_for(
+            asyncio.gather(
+                _probe_embedding(),
+                _probe_extraction(),
+            ),
+            timeout=_PROBE_LIVE_TIMEOUT_SEC,
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        log.warning(
+            "LLM connectivity live probe timed out after %.0fs",
+            _PROBE_LIVE_TIMEOUT_SEC,
+        )
+        if isinstance(cached, dict):
+            stale = dict(cached)
+            stale["stale"] = True
+            stale["summary"] = (
+                f"Live probe timed out after {_PROBE_LIVE_TIMEOUT_SEC:.0f}s "
+                "(API may be busy during extraction) — showing last result"
+            )
+            return stale
+        return _probe_busy_payload()
     overall_ok = bool(embedding.get("ok")) and bool(extraction.get("ok"))
 
     provider = _primary_provider_label()
@@ -163,6 +179,39 @@ async def probe_llm_connectivity(*, force: bool = False) -> dict[str, Any]:
     _probe_cache["at"] = now
     _probe_cache["payload"] = payload
     return payload
+
+
+def _probe_busy_payload() -> dict[str, Any]:
+    """Return when live probes cannot complete and no cache exists yet."""
+    return {
+        "ok": False,
+        "provider": "busy",
+        "embedding_model": (
+            effective_embedding_model_name()
+            if uses_databricks_serving_for_embeddings()
+            else settings.embedding_model
+        ),
+        "extraction_model": (
+            effective_extraction_model_name()
+            if uses_databricks_serving_for_extraction()
+            else settings.llm_extraction_model
+        ),
+        "embedding": {
+            "ok": False,
+            "message": "Probe skipped — workflow API busy",
+            "latency_ms": 0,
+        },
+        "extraction": {
+            "ok": False,
+            "message": "Probe skipped — workflow API busy",
+            "latency_ms": 0,
+        },
+        "summary": "LLM probe could not complete (workflow API may be busy during extraction)",
+        "hints": [
+            "Heavy gateway or extraction work can temporarily slow the app — try again when preparation finishes.",
+        ],
+        "curl_examples": _curl_examples(),
+    }
 
 
 def _curl_examples() -> list[str]:

@@ -127,9 +127,19 @@ def ready_payload_from_startup_status(
                 "(same value as arango-gateway-app)"
             )
         else:
-            err_parts.append(f"probe={probe_status or 'unknown'}")
+            probe_err = probe.get("error") or probe_details.get("error")
+            if probe_err:
+                err_parts.append(f"Arango probe: {probe_err}")
+            elif probe_status == "unreachable":
+                err_parts.append("Arango probe unreachable (tunnel or TLS)")
+            else:
+                err_parts.append(f"probe={probe_status or 'unknown'}")
     if registry_status != "ok":
-        err_parts.append(f"registry={registry_status or 'unknown'}")
+        registry_err = registry.get("error") or registry.get("message")
+        if registry_err:
+            err_parts.append(f"Registry: {registry_err}")
+        else:
+            err_parts.append(f"registry={registry_status or 'unknown'}")
     message = ", ".join(err_parts) or "Arango connectivity check failed"
     return {
         "status": "not_ready",

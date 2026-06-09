@@ -1,4 +1,10 @@
-export type RunStatus = "queued" | "running" | "completed" | "failed" | "paused";
+export type RunStatus =
+  | "preparing"
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "paused";
 
 export type StepStatusValue =
   | "pending"
@@ -33,6 +39,9 @@ export interface ExtractionRun {
   error_count?: number;
   model?: string;
   stats?: RunStats;
+  preparation_stage?: string | null;
+  preparation_message?: string | null;
+  preparation_updated_at?: number | null;
 }
 
 export interface RunStats {
@@ -43,7 +52,10 @@ export interface RunStats {
   classes_extracted?: number;
   properties_extracted?: number;
   pass_agreement_rate?: number;
-  errors?: RunError[];
+  errors?: RunError[] | string[];
+  preparation_stage?: string;
+  preparation_message?: string;
+  preparation_updated_at?: number;
 }
 
 export interface RunError {

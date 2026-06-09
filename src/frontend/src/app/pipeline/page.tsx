@@ -1,28 +1,24 @@
 "use client";
 
 import { useState, useEffect, useCallback, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
-import dynamic from "next/dynamic";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import AppHeader from "@/components/layout/AppHeader";
 import RunList from "@/components/pipeline/RunList";
 import StartExtractionPanel from "@/components/pipeline/StartExtractionPanel";
+import PipelineDiagnosticsPanel from "@/components/pipeline/PipelineDiagnosticsPanel";
 import AppLink from "@/components/layout/AppLink";
 import RunMetrics from "@/components/pipeline/RunMetrics";
 import ErrorLog from "@/components/pipeline/ErrorLog";
 import RunTimeline from "@/components/pipeline/RunTimeline";
 import PipelineHistorySlider from "@/components/pipeline/PipelineHistorySlider";
+import AgentDAG from "@/components/pipeline/AgentDAG";
 import { useExtractionSocket } from "@/lib/use-websocket";
-
-const AgentDAG = dynamic(() => import("@/components/pipeline/AgentDAG"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex items-center justify-center h-full text-gray-400 animate-pulse">
-      Loading pipeline graph…
-    </div>
-  ),
-});
+import {
+  useRunPreparationPoll,
+  ACTIVE_RUN_STATUSES,
+} from "@/lib/useRunPreparationPoll";
 
 type DetailTab = "metrics" | "errors" | "timeline";
 
@@ -42,17 +38,25 @@ export default function PipelineMonitor() {
 
 function PipelineMonitorInner() {
   const searchParams = useSearchParams();
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(() =>
+    searchParams.get("runId"),
+  );
 
-  // Sync from URL search params (runs after hydration, avoiding SSR mismatch)
+  // Deep-link / browser back-forward: apply runId from URL when present.
   useEffect(() => {
     const runIdParam = searchParams.get("runId");
-    if (runIdParam !== selectedRunId) {
+    if (runIdParam) {
       setSelectedRunId(runIdParam);
     }
-  }, [searchParams, selectedRunId]);
+  }, [searchParams]);
   const [activeTab, setActiveTab] = useState<DetailTab>("metrics");
   const { steps, isConnected, error: wsError } = useExtractionSocket(selectedRunId);
+  const runProgress = useRunPreparationPoll(selectedRunId);
+  const extractionInProgress =
+    runProgress.progress != null &&
+    ACTIVE_RUN_STATUSES.has(runProgress.progress.status);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [resetBusy, setResetBusy] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
@@ -69,6 +73,7 @@ function PipelineMonitorInner() {
       const result = await api.post<{ reset: boolean; collections_truncated: string[] }>(endpoint);
       alert(`Reset complete. Truncated: ${result.collections_truncated.join(", ")}`);
       setSelectedRunId(null);
+      router.replace(pathname, { scroll: false });
       setRunListKey((k) => k + 1);
     } catch (err) {
       alert(`Reset failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -81,10 +86,16 @@ function PipelineMonitorInner() {
   // see a new reference on every parent render — which would re-fire their
   // dependent effects and (combined with bidirectional sync) used to spin the
   // page into a render loop.
-  const handleSelectRun = useCallback((id: string) => {
-    setSelectedRunId(id);
-    setSidebarOpen(false);
-  }, []);
+  const handleSelectRun = useCallback(
+    (id: string) => {
+      setSelectedRunId(id);
+      setSidebarOpen(false);
+      const qs = new URLSearchParams(searchParams.toString());
+      qs.set("runId", id);
+      router.replace(`${pathname}?${qs.toString()}`, { scroll: false });
+    },
+    [router, pathname, searchParams],
+  );
 
   const tabs: { key: DetailTab; label: string }[] = [
     { key: "metrics", label: "Metrics" },
@@ -170,6 +181,15 @@ function PipelineMonitorInner() {
               handleSelectRun(runId);
               setRunListKey((k) => k + 1);
             }}
+            extractionInProgress={extractionInProgress}
+          />
+          <PipelineDiagnosticsPanel
+            selectedRunId={selectedRunId}
+            progress={runProgress.progress}
+            pollError={runProgress.pollError}
+            pollBusy={runProgress.pollBusy}
+            lastPolledAt={runProgress.lastPolledAt}
+            pollAttempt={runProgress.pollAttempt}
           />
           <RunList
             key={runListKey}

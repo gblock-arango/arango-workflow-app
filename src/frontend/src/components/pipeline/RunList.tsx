@@ -13,6 +13,7 @@ interface RunListProps {
 
 const STATUS_OPTIONS: { value: RunStatus | "all"; label: string }[] = [
   { value: "all", label: "All Statuses" },
+  { value: "preparing", label: "Preparing" },
   { value: "queued", label: "Queued" },
   { value: "running", label: "Running" },
   { value: "completed", label: "Completed" },
@@ -102,7 +103,10 @@ export default function RunList({ onSelectRun, selectedRunId }: RunListProps) {
 
   useEffect(() => {
     const hasActiveRuns = runs.some(
-      (r) => r.status === "running" || r.status === "queued",
+      (r) =>
+        r.status === "preparing" ||
+        r.status === "running" ||
+        r.status === "queued",
     );
     if (hasActiveRuns) {
       refreshTimerRef.current = setInterval(() => fetchRuns(false), AUTO_REFRESH_MS);
@@ -179,6 +183,11 @@ export default function RunList({ onSelectRun, selectedRunId }: RunListProps) {
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-[11px] text-gray-500">
+                    {run.status === "preparing" && run.preparation_message && (
+                      <span className="text-violet-600 truncate max-w-[220px]" title={run.preparation_message}>
+                        {run.preparation_message}
+                      </span>
+                    )}
                     {run.chunk_count != null && run.chunk_count > 0 && (
                       <span title="Chunks processed">{run.chunk_count} chunks</span>
                     )}

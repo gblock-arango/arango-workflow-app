@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     arango_endpoint: str = ""
     arango_verify_ssl: bool = True
     arango_timeout: int = 30
+    #: Chunk documents per Arango bulk-insert HTTP call (UC → Arango materialization).
+    arango_chunk_insert_batch_size: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+        validation_alias=AliasChoices("ARANGO_CHUNK_INSERT_BATCH_SIZE"),
+    )
 
     # -- ArangoDB (AMP / managed platform — future ArangoDB 4.0) -----------
     arango_graph_api_key_id: str = ""

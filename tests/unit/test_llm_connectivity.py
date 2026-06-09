@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -69,6 +70,37 @@ async def test_probe_extraction_uses_llm():
         result = await llm_connectivity._probe_extraction()
     assert result["ok"] is True
     mock_llm.ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_probe_llm_connectivity_timeout_returns_stale_cache():
+    stale = {
+        "ok": True,
+        "provider": "openai",
+        "embedding": {"ok": True, "message": "emb ok"},
+        "extraction": {"ok": True, "message": "ext ok"},
+    }
+    llm_connectivity._probe_cache["at"] = 0.0
+    llm_connectivity._probe_cache["payload"] = stale
+
+    async def _slow(*_args, **_kwargs):
+        await asyncio.sleep(60)
+
+    with (
+        patch(
+            "app.services.llm_connectivity._probe_embedding",
+            side_effect=_slow,
+        ),
+        patch(
+            "app.services.llm_connectivity._probe_extraction",
+            side_effect=_slow,
+        ),
+        patch.object(llm_connectivity, "_PROBE_LIVE_TIMEOUT_SEC", 0.01),
+    ):
+        payload = await llm_connectivity.probe_llm_connectivity(force=True)
+
+    assert payload.get("stale") is True
+    assert payload["ok"] is True
 
 
 @pytest.mark.asyncio

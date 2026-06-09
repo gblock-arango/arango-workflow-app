@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import concurrent.futures
 import logging
+import os
+import threading
 import time
 import uuid
 from typing import Any, cast
@@ -16,7 +19,7 @@ from typing import Any, cast
 from typing import Any as StandardCollection  # gateway collection handle
 from app.db.types import StandardDatabase
 
-from app.api.errors import NotFoundError
+from app.api.errors import NotFoundError, ServiceBusyError
 from app.config import settings
 from app.db.client import get_db
 from app.db.pagination import paginate
@@ -27,9 +30,23 @@ from app.extraction.pipeline import run_pipeline
 from app.models.common import PaginatedResponse
 from app.services.confidence import compute_class_confidence
 from app.services.edge_repair import resolve_range_class
+from app.services.run_progress_cache import (
+    drop_run_progress_cache,
+    get_cached_run_progress,
+    seed_run_progress,
+    update_run_progress_cache,
+)
 
 log = logging.getLogger(__name__)
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
+
+PREPARATION_STAGE_GATEWAY_HEALTH = "gateway_health"
+PREPARATION_STAGE_GATEWAY_ARANGO = "gateway_arango"
+PREPARATION_STAGE_RUN_PERSISTED = "run_persisted"
+PREPARATION_STAGE_STARTING = "starting"  # legacy
+PREPARATION_STAGE_MATERIALIZING = "materializing_arango"
+PREPARATION_STAGE_SCHEMA = "schema_migrations"
+PREPARATION_STAGE_LAUNCHING = "launching_pipeline"
 
 _MODEL_TOKEN_RATES_PER_MILLION: dict[str, dict[str, float]] = {
     "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
@@ -49,46 +66,152 @@ def _get_collection(db: StandardDatabase, name: str) -> StandardCollection:
     return db.collection(name)
 
 
-def create_run_record(
-    db: StandardDatabase | None = None,
+def mark_run_preparation_failed(run_id: str, message: str) -> None:
+    """Best-effort failure marker when the prepare thread crashes before inner handlers run."""
+    update_run_progress_cache(
+        run_id,
+        status="failed",
+        message=message,
+        stats_patch={"errors": [message]},
+    )
+    try:
+        db = get_db()
+        col = _get_collection(db, "extraction_runs")
+        run = doc_get(col, run_id) or {}
+        stats = dict(run.get("stats") or {})
+        errors = list(stats.get("errors") or [])
+        errors.append(message)
+        stats["errors"] = errors
+        stats["preparation_message"] = message
+        stats["preparation_updated_at"] = time.time()
+        col.update(
+            {
+                "_key": run_id,
+                "status": "failed",
+                "completed_at": time.time(),
+                "stats": stats,
+            }
+        )
+    except Exception:
+        log.exception("could not mark extraction run failed", extra={"run_id": run_id})
+
+
+def schedule_prepare_and_execute_run(
+    *,
+    run_id: str,
+    document_ids: list[str],
+    config_overrides: dict[str, Any] | None = None,
+    domain_ontology_ids: list[str] | None = None,
+    target_ontology_id: str | None = None,
+    run_record: dict[str, Any] | None = None,
+) -> None:
+    """Start UC→Arango prepare + extraction on a daemon thread.
+
+    ``asyncio.create_task`` is unreliable under uvicorn multi-worker: the prepare
+    coroutine may never run after the HTTP response returns. A dedicated thread with
+    its own event loop keeps preparation alive independent of the request worker.
+    """
+    kwargs: dict[str, Any] = {
+        "run_id": run_id,
+        "document_ids": document_ids,
+        "config_overrides": config_overrides,
+        "domain_ontology_ids": domain_ontology_ids,
+        "target_ontology_id": target_ontology_id,
+        "run_record": run_record,
+    }
+
+    def _runner() -> None:
+        seed_run_progress(
+            run_id,
+            status="preparing",
+            stage=PREPARATION_STAGE_GATEWAY_HEALTH,
+            message="Worker scheduled — probing gateway /health…",
+        )
+        try:
+            asyncio.run(prepare_and_execute_run(**kwargs))
+        except Exception as exc:
+            log.exception("prepare_and_execute_run thread failed", extra={"run_id": run_id})
+            mark_run_preparation_failed(run_id, str(exc))
+        finally:
+            with contextlib.suppress(Exception):
+                cached = get_cached_run_progress(run_id)
+                if cached and cached.get("status") in ("completed", "failed", "cancelled"):
+                    drop_run_progress_cache(run_id)
+
+    thread = threading.Thread(
+        target=_runner,
+        name=f"extract-prepare-{run_id[:16]}",
+        daemon=True,
+    )
+    thread.start()
+    log.info("scheduled prepare_and_execute_run thread", extra={"run_id": run_id})
+
+
+def update_run_preparation(
+    db: StandardDatabase,
+    run_id: str,
+    *,
+    stage: str,
+    message: str,
+    progress: dict[str, Any] | None = None,
+) -> None:
+    """Persist low-overhead preparation progress on the run record (polled by UI)."""
+    update_run_progress_cache(
+        run_id,
+        stage=stage,
+        message=message,
+        progress=progress,
+    )
+    try:
+        col = _get_collection(db, "extraction_runs")
+        run = doc_get(col, run_id)
+        if run is None:
+            return
+        stats = dict(run.get("stats") or {})
+        stats["preparation_stage"] = stage
+        stats["preparation_message"] = message
+        stats["preparation_updated_at"] = time.time()
+        if progress is not None:
+            stats["preparation_progress"] = progress
+        col.update({"_key": run_id, "stats": stats})
+    except Exception:
+        log.warning(
+            "arango preparation update failed (file cache already updated)",
+            extra={"run_id": run_id, "stage": stage},
+            exc_info=True,
+        )
+
+
+def build_run_record(
     *,
     document_id: str | None = None,
     document_ids: list[str] | None = None,
     config_overrides: dict[str, Any] | None = None,
     domain_ontology_ids: list[str] | None = None,
     target_ontology_id: str | None = None,
+    initial_status: str = "running",
+    run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Create an extraction run record (synchronous).
-
-    Returns the run record immediately so the HTTP response can be sent
-    before the pipeline starts executing.
-
-    Accepts either ``document_id`` (single, backward compat) or
-    ``document_ids`` (multi-doc).  Both are normalized into
-    ``doc_ids: list[str]`` on the stored record.
-    """
-    if db is None:
-        db = get_db()
-
+    """Build an extraction run document without touching the gateway."""
     doc_ids = _normalize_doc_ids(document_id=document_id, document_ids=document_ids)
     if not doc_ids:
         raise ValueError("At least one document ID is required")
 
-    run_id = _generate_run_id()
+    resolved_run_id = run_id or _generate_run_id()
     now = time.time()
 
     is_tier2 = bool(domain_ontology_ids)
     prompt_version = "tier2_standard" if is_tier2 else "tier1_standard"
 
     run_record: dict[str, Any] = {
-        "_key": run_id,
+        "_key": resolved_run_id,
         "doc_id": doc_ids[0],
         "doc_ids": doc_ids,
         "model": settings.llm_extraction_model,
         "prompt_version": prompt_version,
         "started_at": now,
         "completed_at": None,
-        "status": "running",
+        "status": initial_status,
         "stats": {
             "passes": settings.extraction_passes,
             "consistency_threshold": settings.extraction_consistency_threshold,
@@ -98,6 +221,13 @@ def create_run_record(
         },
     }
 
+    if initial_status == "preparing":
+        run_record["stats"]["preparation_stage"] = "queued"
+        run_record["stats"]["preparation_message"] = (
+            "Queued — gateway health check, persist run in Arango, then UC chunks via proxy"
+        )
+        run_record["stats"]["preparation_updated_at"] = now
+
     if domain_ontology_ids:
         run_record["domain_ontology_ids"] = domain_ontology_ids
     if target_ontology_id:
@@ -106,16 +236,215 @@ def create_run_record(
     if config_overrides:
         run_record["stats"].update(config_overrides)
 
+    return run_record
+
+
+def begin_extraction_run(
+    *,
+    document_ids: list[str],
+    config_overrides: dict[str, Any] | None = None,
+    domain_ontology_ids: list[str] | None = None,
+    target_ontology_id: str | None = None,
+) -> dict[str, Any]:
+    """Return run metadata immediately; persist to Arango in the prepare thread.
+
+    Seeds the shared file progress cache so Diagnostics can poll before gateway insert.
+    """
+    run_record = build_run_record(
+        document_ids=document_ids,
+        config_overrides=config_overrides,
+        domain_ontology_ids=domain_ontology_ids,
+        target_ontology_id=target_ontology_id,
+        initial_status="preparing",
+    )
+    run_id = str(run_record["_key"])
+    seed_run_progress(
+        run_id,
+        status="preparing",
+        stage="queued",
+        message=str(run_record["stats"]["preparation_message"]),
+        stats=run_record["stats"],
+    )
+    schedule_prepare_and_execute_run(
+        run_id=run_id,
+        document_ids=document_ids,
+        config_overrides=config_overrides,
+        domain_ontology_ids=domain_ontology_ids,
+        target_ontology_id=target_ontology_id,
+        run_record=run_record,
+    )
+    log.info(
+        "extraction run scheduled (fast start)",
+        extra={"run_id": run_id, "doc_ids": document_ids, "status": "preparing"},
+    )
+    return run_record
+
+
+def create_run_record(
+    db: StandardDatabase | None = None,
+    *,
+    document_id: str | None = None,
+    document_ids: list[str] | None = None,
+    config_overrides: dict[str, Any] | None = None,
+    domain_ontology_ids: list[str] | None = None,
+    target_ontology_id: str | None = None,
+    initial_status: str = "running",
+) -> dict[str, Any]:
+    """Create an extraction run record (synchronous gateway insert).
+
+    Accepts either ``document_id`` (single, backward compat) or
+    ``document_ids`` (multi-doc).  Both are normalized into
+    ``doc_ids: list[str]`` on the stored record.
+    """
+    if db is None:
+        db = get_db()
+
+    run_record = build_run_record(
+        document_id=document_id,
+        document_ids=document_ids,
+        config_overrides=config_overrides,
+        domain_ontology_ids=domain_ontology_ids,
+        target_ontology_id=target_ontology_id,
+        initial_status=initial_status,
+    )
+    doc_ids = list(run_record.get("doc_ids") or [])
+    run_id = str(run_record["_key"])
+
     col = _get_collection(db, "extraction_runs")
     col.insert(run_record)
 
-    total_chunks = sum(len(_load_document_chunks(db, did)) for did in doc_ids)
+    if initial_status == "preparing":
+        seed_run_progress(
+            run_id,
+            status="preparing",
+            stage="queued",
+            message=str(run_record["stats"]["preparation_message"]),
+            stats=run_record["stats"],
+        )
+
+    chunk_count = 0
+    if initial_status != "preparing":
+        chunk_count = sum(len(_load_document_chunks(db, did)) for did in doc_ids)
     log.info(
         "extraction run created",
-        extra={"run_id": run_id, "doc_ids": doc_ids, "chunk_count": total_chunks},
+        extra={
+            "run_id": run_id,
+            "doc_ids": doc_ids,
+            "chunk_count": chunk_count,
+            "status": initial_status,
+        },
     )
 
     return run_record
+
+
+async def prepare_and_execute_run(
+    run_id: str,
+    *,
+    document_ids: list[str],
+    config_overrides: dict[str, Any] | None = None,
+    domain_ontology_ids: list[str] | None = None,
+    target_ontology_id: str | None = None,
+    run_record: dict[str, Any] | None = None,
+) -> None:
+    """Materialize UC artifacts into Arango, apply schema, then run the agent pipeline."""
+    from app.services.extraction_gateway_checkpoints import (
+        connect_arango_checkpoint,
+        persist_run_record_checkpoint,
+        probe_gateway_health_checkpoint,
+    )
+    from app.services.extraction_materialize import materialize_embedding_document_for_extraction
+    from app.services.schema_bootstrap import ensure_ontology_schema_async
+
+    def _materialize_one_document(doc_id: str, index: int, total: int) -> dict[str, Any]:
+        assert db is not None
+
+        def on_progress(message: str, progress: dict[str, Any] | None = None) -> None:
+            merged: dict[str, Any] = {
+                "doc_id": doc_id,
+                "doc_index": index,
+                "doc_total": total,
+            }
+            if progress:
+                merged.update(progress)
+            update_run_preparation(
+                db,
+                run_id,
+                stage=PREPARATION_STAGE_MATERIALIZING,
+                message=f"({index}/{total}) {message}",
+                progress=merged,
+            )
+
+        on_progress(f"Starting UC → Arango materialization for {doc_id}")
+        return materialize_embedding_document_for_extraction(doc_id, on_progress=on_progress)
+
+    db: StandardDatabase | None = None
+    col: StandardCollection | None = None
+    try:
+        await asyncio.to_thread(probe_gateway_health_checkpoint, run_id)
+        db, col = await asyncio.to_thread(connect_arango_checkpoint, run_id)
+        await asyncio.to_thread(
+            persist_run_record_checkpoint,
+            db,
+            col,
+            run_id,
+            run_record,
+        )
+
+        total = len(document_ids)
+        for index, doc_id in enumerate(document_ids, start=1):
+            await asyncio.to_thread(_materialize_one_document, doc_id, index, total)
+
+        update_run_preparation(
+            db,
+            run_id,
+            stage=PREPARATION_STAGE_SCHEMA,
+            message=(
+                "Applying ontology schema migrations through gateway "
+                "(first extraction may take several minutes)"
+            ),
+            progress={"phase": "schema_migrations"},
+        )
+        await ensure_ontology_schema_async()
+
+        update_run_preparation(
+            db,
+            run_id,
+            stage=PREPARATION_STAGE_LAUNCHING,
+            message="Chunks confirmed in Arango — starting LangGraph agent pipeline",
+        )
+        col.update({"_key": run_id, "status": "running"})
+        update_run_progress_cache(run_id, status="running", stage=PREPARATION_STAGE_LAUNCHING)
+
+        await execute_run(
+            run_id=run_id,
+            document_ids=document_ids,
+            config_overrides=config_overrides,
+            domain_ontology_ids=domain_ontology_ids,
+            target_ontology_id=target_ontology_id,
+        )
+    except Exception as exc:
+        log.exception("prepare_and_execute_run failed", extra={"run_id": run_id})
+        if db is None or col is None:
+            mark_run_preparation_failed(run_id, str(exc))
+            return
+        run = doc_get(col, run_id) or {}
+        stats = dict(run.get("stats") or {})
+        errors = list(stats.get("errors") or [])
+        errors.append(str(exc))
+        stats["errors"] = errors
+        stats["preparation_message"] = str(exc)
+        stats["preparation_updated_at"] = time.time()
+        if stats.get("preparation_stage"):
+            stats["preparation_failed_stage"] = stats.get("preparation_stage")
+        col.update(
+            {
+                "_key": run_id,
+                "status": "failed",
+                "completed_at": time.time(),
+                "stats": stats,
+            }
+        )
 
 
 def _normalize_doc_ids(
@@ -216,6 +545,49 @@ async def execute_run(
 
     primary_doc_id = doc_ids[0] if doc_ids else "unknown"
 
+    if not chunks:
+        raise ValueError(
+            f"No chunks found in Arango for document(s) {doc_ids} — materialization may have failed"
+        )
+
+    publish = event_callback
+    if event_callback is not None:
+
+        async def _persisting_event_callback(**kwargs: Any) -> None:
+            await event_callback(**kwargs)
+            event_type = kwargs.get("event_type")
+            step = kwargs.get("step")
+            if not step or event_type not in (
+                "step_started",
+                "step_completed",
+                "step_failed",
+            ):
+                return
+            step_str = str(step)
+            if event_type == "step_started":
+                await asyncio.to_thread(
+                    update_run_current_step,
+                    run_id,
+                    step_str,
+                    message=f"Agent step: {step_str}",
+                )
+            await asyncio.to_thread(
+                record_run_step_event,
+                run_id,
+                event_type=str(event_type),
+                step=step_str,
+                error=str(kwargs["error"]) if kwargs.get("error") else None,
+            )
+
+        publish = _persisting_event_callback
+
+    await asyncio.to_thread(
+        update_run_current_step,
+        run_id,
+        "strategy_selector",
+        message=f"LangGraph pipeline running ({len(chunks)} chunks)",
+    )
+
     final_state: dict[str, Any] = {}
     try:
         final_state = cast(
@@ -224,7 +596,7 @@ async def execute_run(
                 run_id=run_id,
                 document_id=primary_doc_id,
                 chunks=chunks,
-                event_callback=event_callback,
+                event_callback=publish,
                 domain_context=domain_context,
                 domain_ontology_ids=domain_ontology_ids or [],
             ),
@@ -474,7 +846,173 @@ def get_run(
     run = doc_get(col, run_id)
     if run is None:
         raise NotFoundError(f"Extraction run '{run_id}' not found")
-    return run
+    return enrich_run_for_client(run)
+
+
+def enrich_run_for_client(run: dict[str, Any]) -> dict[str, Any]:
+    """Flatten ``stats`` preparation fields for polling UIs."""
+    out = dict(run)
+    stats = out.get("stats")
+    if not isinstance(stats, dict):
+        return out
+    for key in (
+        "preparation_stage",
+        "preparation_message",
+        "preparation_updated_at",
+        "preparation_progress",
+    ):
+        if key not in out and stats.get(key) is not None:
+            out[key] = stats[key]
+    errors = stats.get("errors")
+    if isinstance(errors, list) and errors and "preparation_errors" not in out:
+        out["preparation_errors"] = errors
+    return out
+
+
+def get_run_status_for_poll(run_id: str) -> dict[str, Any]:
+    """Return run snapshot for high-frequency UI polls; cache-first to avoid gateway stalls."""
+    cached = get_cached_run_progress(run_id)
+    if cached is not None:
+        return build_run_status_snapshot(cached)
+
+    timeout = float(os.environ.get("RUN_STATUS_GATEWAY_TIMEOUT_SECONDS", "8"))
+
+    def _fetch() -> dict[str, Any]:
+        db = get_db()
+        return get_run(db, run_id=run_id)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_fetch)
+        try:
+            run = future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError as exc:
+            raise ServiceBusyError(
+                "Arango gateway busy — status poll will retry",
+                details={"run_id": run_id},
+            ) from exc
+    return build_run_status_snapshot(run)
+
+
+def build_run_status_snapshot(run: dict[str, Any]) -> dict[str, Any]:
+    """Small payload for high-frequency UI polls (diagnostics + agent DAG fallback)."""
+    enriched = enrich_run_for_client(run)
+    stats = enriched.get("stats") if isinstance(enriched.get("stats"), dict) else {}
+    step_logs = stats.get("step_logs")
+    if not isinstance(step_logs, list):
+        step_logs = []
+    errors = stats.get("errors")
+    if not isinstance(errors, list):
+        errors = []
+    return {
+        "_key": enriched.get("_key"),
+        "status": enriched.get("status"),
+        "started_at": enriched.get("started_at"),
+        "completed_at": enriched.get("completed_at"),
+        "ontology_id": enriched.get("ontology_id"),
+        "preparation_stage": enriched.get("preparation_stage"),
+        "preparation_message": enriched.get("preparation_message"),
+        "preparation_updated_at": enriched.get("preparation_updated_at"),
+        "preparation_progress": enriched.get("preparation_progress"),
+        "preparation_errors": enriched.get("preparation_errors"),
+        "current_step": stats.get("current_step"),
+        "stats": {
+            "step_logs": step_logs[-40:],
+            "errors": errors[:20],
+            "preparation_stage": stats.get("preparation_stage"),
+            "preparation_message": stats.get("preparation_message"),
+            "preparation_updated_at": stats.get("preparation_updated_at"),
+            "preparation_progress": stats.get("preparation_progress"),
+        },
+    }
+
+
+def update_run_current_step(run_id: str, step: str, *, message: str | None = None) -> None:
+    """Best-effort progress marker while LangGraph runs (polled by UI)."""
+    try:
+        db = get_db()
+        col = _get_collection(db, "extraction_runs")
+        run = doc_get(col, run_id)
+        if run is None:
+            return
+        stats = dict(run.get("stats") or {})
+        stats["current_step"] = step
+        if message:
+            stats["preparation_message"] = message
+        stats["preparation_updated_at"] = time.time()
+        col.update({"_key": run_id, "stats": stats})
+        update_run_progress_cache(
+            run_id,
+            status="running",
+            message=message or stats.get("preparation_message"),
+            stats_patch={"current_step": step, "step_logs": stats.get("step_logs", [])},
+        )
+    except Exception:
+        log.debug("could not update run current_step", extra={"run_id": run_id, "step": step})
+
+
+def record_run_step_event(
+    run_id: str,
+    *,
+    event_type: str,
+    step: str,
+    error: str | None = None,
+) -> None:
+    """Persist incremental step_logs so REST polls can drive the agent DAG."""
+    try:
+        db = get_db()
+        col = _get_collection(db, "extraction_runs")
+        run = doc_get(col, run_id)
+        if run is None:
+            return
+        stats = dict(run.get("stats") or {})
+        logs: list[dict[str, Any]] = [
+            dict(entry) for entry in (stats.get("step_logs") or []) if isinstance(entry, dict)
+        ]
+        now = time.time()
+        idx = next((i for i, entry in enumerate(logs) if entry.get("step") == step), None)
+
+        if event_type == "step_started":
+            patch: dict[str, Any] = {"step": step, "status": "running", "started_at": now}
+            if idx is not None:
+                logs[idx] = {**logs[idx], **patch}
+            else:
+                logs.append(patch)
+            stats["current_step"] = step
+        elif event_type == "step_completed":
+            patch = {"step": step, "status": "completed", "completed_at": now}
+            if idx is not None:
+                merged = {**logs[idx], **patch}
+                merged.setdefault("started_at", now)
+                logs[idx] = merged
+            else:
+                logs.append({**patch, "started_at": now})
+        elif event_type == "step_failed":
+            patch = {
+                "step": step,
+                "status": "failed",
+                "completed_at": now,
+                "error": error or "step failed",
+            }
+            if idx is not None:
+                logs[idx] = {**logs[idx], **patch}
+            else:
+                logs.append({**patch, "started_at": now})
+        else:
+            return
+
+        stats["step_logs"] = logs[-60:]
+        stats["preparation_updated_at"] = now
+        col.update({"_key": run_id, "stats": stats})
+        update_run_progress_cache(
+            run_id,
+            status="running",
+            stats_patch={"current_step": stats.get("current_step"), "step_logs": stats["step_logs"]},
+        )
+    except Exception:
+        log.debug(
+            "could not record run step event",
+            extra={"run_id": run_id, "step": step, "event_type": event_type},
+        )
 
 
 def list_runs(

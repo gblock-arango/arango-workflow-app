@@ -1978,6 +1978,27 @@ class TestGetRun:
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
     @patch("app.services.extraction.get_db")
+    def test_enriches_preparation_fields_from_stats(self, mock_get_db, mock_get_col, mock_doc_get):
+        from app.services.extraction import get_run
+
+        mock_doc_get.return_value = {
+            "_key": "run_1",
+            "status": "preparing",
+            "stats": {
+                "preparation_stage": "materializing_arango",
+                "preparation_message": "inserting",
+                "preparation_updated_at": 123.0,
+                "errors": ["boom"],
+            },
+        }
+        result = get_run(run_id="run_1")
+        assert result["preparation_stage"] == "materializing_arango"
+        assert result["preparation_message"] == "inserting"
+        assert result["preparation_errors"] == ["boom"]
+
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
     def test_raises_when_not_found(self, mock_get_db, mock_get_col, mock_doc_get):
         from app.api.errors import NotFoundError
         from app.services.extraction import get_run

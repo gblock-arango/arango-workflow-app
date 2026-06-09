@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from app.db import documents_repo
@@ -12,6 +13,8 @@ from app.services import embedding_status as emb_status_svc
 from app.services.schema_bootstrap import ensure_ontology_schema, ensure_staging_schema
 
 log = logging.getLogger(__name__)
+
+MaterializeProgressFn = Callable[[str, dict[str, Any] | None], None]
 
 
 def validate_embedding_documents_ready(doc_ids: list[str]) -> None:
@@ -36,12 +39,21 @@ def validate_embedding_documents_ready(doc_ids: list[str]) -> None:
         )
 
 
-def materialize_embedding_document_for_extraction(doc_id: str) -> dict[str, Any]:
+def materialize_embedding_document_for_extraction(
+    doc_id: str,
+    *,
+    on_progress: MaterializeProgressFn | None = None,
+) -> dict[str, Any]:
     """
     Copy embedding_status + UC volume chunks/embeddings into Arango ``documents``/``chunks``.
 
     Called at extraction start; upload/parse/chunk/embed never touch Arango.
     """
+
+    def report(message: str, progress: dict[str, Any] | None = None) -> None:
+        if on_progress:
+            on_progress(message, progress)
+
     row = emb_status_svc.get_embedding_status(doc_id)
     if not row:
         raise ValueError(f"Document {doc_id} not found in embedding_status")
@@ -54,6 +66,11 @@ def materialize_embedding_document_for_extraction(doc_id: str) -> dict[str, Any]
     chunk_rows = embedding_artifacts.read_chunks(doc_id)
     if not chunk_rows:
         raise ValueError(f"No UC chunks for document {doc_id}")
+
+    report(
+        f"Loaded {len(chunk_rows)} chunks from UC volume",
+        {"phase": "read_uc", "chunk_count": len(chunk_rows)},
+    )
 
     emb_by_index: dict[int, list[float]] = {}
     for item in embedding_artifacts.read_embeddings(doc_id):
@@ -104,7 +121,25 @@ def materialize_embedding_document_for_extraction(doc_id: str) -> dict[str, Any]
             entry["embedding"] = emb_by_index[idx]
         chunk_dicts.append(entry)
 
-    stored = documents_repo.create_chunks(chunk_dicts)
+    def _on_batch_progress(inserted: int, total: int, batch_size: int) -> None:
+        report(
+            f"Arango bulk insert {inserted}/{total} chunks (batch size {batch_size})",
+            {
+                "phase": "arango_insert",
+                "inserted": inserted,
+                "total": total,
+                "batch_size": batch_size,
+            },
+        )
+
+    report(
+        f"Inserting {len(chunk_dicts)} chunks into Arango",
+        {"phase": "arango_insert", "inserted": 0, "total": len(chunk_dicts)},
+    )
+    stored = documents_repo.create_chunks(
+        chunk_dicts,
+        on_batch_progress=_on_batch_progress,
+    )
     if not stored:
         raise RuntimeError(f"Failed to materialize chunks for document {doc_id} in Arango")
     documents_repo.update_document_chunk_count(doc_id, len(stored))

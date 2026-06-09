@@ -22,6 +22,13 @@ const STATUS_CONFIG: Record<
     text: "text-gray-700",
     dot: "bg-gray-400",
   },
+  preparing: {
+    label: "Preparing",
+    bg: "bg-violet-50",
+    text: "text-violet-800",
+    dot: "bg-violet-500",
+    pulse: true,
+  },
   running: {
     label: "Running",
     bg: "bg-blue-50",

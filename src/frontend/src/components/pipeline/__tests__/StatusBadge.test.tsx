@@ -4,6 +4,7 @@ import type { RunStatus } from "@/types/pipeline";
 
 describe("StatusBadge", () => {
   const statuses: RunStatus[] = [
+    "preparing",
     "queued",
     "running",
     "completed",
@@ -19,6 +20,7 @@ describe("StatusBadge", () => {
 
   it("displays the correct label for each status", () => {
     const expectedLabels: Record<RunStatus, string> = {
+      preparing: "Preparing",
       queued: "Queued",
       running: "Running",
       completed: "Completed",

@@ -18,7 +18,10 @@ export function useActivePipelineAgents(): {
 
   const refresh = useCallback(async () => {
     try {
-      const [running, queued] = await Promise.all([
+      const [preparing, running, queued] = await Promise.all([
+        api.get<PaginatedResponse<ExtractionRun>>(
+          "/api/v1/extraction/runs?status=preparing&limit=1",
+        ),
         api.get<PaginatedResponse<ExtractionRun>>(
           "/api/v1/extraction/runs?status=running&limit=1",
         ),
@@ -26,7 +29,11 @@ export function useActivePipelineAgents(): {
           "/api/v1/extraction/runs?status=queued&limit=1",
         ),
       ]);
-      setCount((running.total_count ?? 0) + (queued.total_count ?? 0));
+      setCount(
+        (preparing.total_count ?? 0) +
+          (running.total_count ?? 0) +
+          (queued.total_count ?? 0),
+      );
       setError(false);
     } catch {
       setError(true);

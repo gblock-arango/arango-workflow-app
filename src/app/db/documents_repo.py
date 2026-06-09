@@ -6,11 +6,13 @@ All AQL is encapsulated here — no raw queries in routes or services.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from time import time
 from typing import Any, cast
 
 from app.db.types import StandardDatabase
 
+from app.config import settings
 from app.db.client import get_db
 from app.db.pagination import paginate
 from app.db.utils import doc_get, run_aql
@@ -317,21 +319,114 @@ def update_chunk_embeddings(
     return count
 
 
+def _chunk_insert_batch_size(batch_size: int | None) -> int:
+    if batch_size is not None:
+        return max(1, batch_size)
+    return max(1, int(settings.arango_chunk_insert_batch_size))
+
+
+def _parse_insert_many_result(
+    body: Any,
+    batch: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalize Arango bulk-insert response into document dicts with ``_key``."""
+    if isinstance(body, list):
+        items = body
+    elif isinstance(body, dict):
+        raw = body.get("result") or body.get("documents")
+        items = raw if isinstance(raw, list) else [body]
+    else:
+        items = []
+
+    inserted: list[dict[str, Any]] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        if item.get("error") is True:
+            log.warning(
+                "chunk bulk insert item failed: %s",
+                item.get("errorMessage", item),
+            )
+            continue
+        merged = dict(batch[i]) if i < len(batch) else {}
+        for key in ("_key", "_id", "_rev"):
+            if key in item:
+                merged[key] = item[key]
+        if "new" in item and isinstance(item["new"], dict):
+            merged.update(item["new"])
+        if merged.get("_key") or merged.get("_id"):
+            inserted.append(merged)
+    return inserted
+
+
 def create_chunks(
     chunks: list[dict[str, Any]],
     *,
     db: StandardDatabase | None = None,
+    batch_size: int | None = None,
+    on_batch_progress: Callable[[int, int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """Bulk-insert chunk documents.  Returns inserted docs with ``_key``."""
+    """Bulk-insert chunk documents via Arango multi-document API.
+
+    Uses ``insert_many`` in configurable batches (``ARANGO_CHUNK_INSERT_BATCH_SIZE``,
+    default 50) instead of one HTTP round-trip per chunk.
+    """
+    if not chunks:
+        return []
+
     db = db or get_db()
+    size = _chunk_insert_batch_size(batch_size)
 
     if not db.has_collection(CHUNKS_COLLECTION):
         log.warning("chunks collection missing — creating it now")
         db.create_collection(CHUNKS_COLLECTION)
 
     col = db.collection(CHUNKS_COLLECTION)
+    insert_many = getattr(col, "insert_many", None)
+    if not callable(insert_many):
+        return _create_chunks_one_by_one(col, chunks)
 
-    inserted = []
+    inserted: list[dict[str, Any]] = []
+    first_error: Exception | None = None
+    for start in range(0, len(chunks), size):
+        batch = chunks[start : start + size]
+        try:
+            body = insert_many(batch)
+            batch_inserted = _parse_insert_many_result(body, batch)
+            inserted.extend(batch_inserted)
+            if on_batch_progress:
+                on_batch_progress(len(inserted), len(chunks), size)
+            if len(batch_inserted) < len(batch):
+                log.warning(
+                    "chunk bulk insert partial success: %d/%d in batch starting at %d",
+                    len(batch_inserted),
+                    len(batch),
+                    start,
+                )
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+            log.warning(
+                "chunk bulk insert failed for batch starting at %d: %s",
+                start,
+                exc,
+            )
+
+    if not inserted and first_error is not None:
+        raise first_error
+
+    log.info(
+        "inserted %d/%d chunks in batches of up to %d",
+        len(inserted),
+        len(chunks),
+        size,
+    )
+    return inserted
+
+
+def _create_chunks_one_by_one(col: Any, chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fallback when the collection handle lacks ``insert_many``."""
+    inserted: list[dict[str, Any]] = []
     first_error: Exception | None = None
     for i, chunk in enumerate(chunks):
         try:
@@ -347,7 +442,6 @@ def create_chunks(
 
     if not inserted and first_error is not None:
         raise first_error
-
     return inserted
 
 

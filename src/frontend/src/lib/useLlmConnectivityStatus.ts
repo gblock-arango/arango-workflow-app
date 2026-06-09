@@ -21,6 +21,9 @@ export interface LlmStatusPayload {
 
 export const LLM_STATUS_POLL_OK_MS = 10_000;
 export const LLM_STATUS_POLL_FAIL_MS = 1_000;
+/** When the API times out (often during extraction), poll less aggressively. */
+export const LLM_STATUS_POLL_BUSY_MS = 5_000;
+export const LLM_STATUS_REQUEST_TIMEOUT_MS = 90_000;
 
 type Snapshot = {
   status: LlmStatusPayload | null;
@@ -69,23 +72,40 @@ function clearPollTimer() {
 function schedulePoll() {
   clearPollTimer();
   if (subscriberCount === 0) return;
-  const delay =
-    cachedStatus?.ok === true ? LLM_STATUS_POLL_OK_MS : LLM_STATUS_POLL_FAIL_MS;
+  const delay = pollDelayMs(cachedStatus);
   pollTimer = setTimeout(() => {
     void runProbe({ force: false });
   }, delay);
 }
 
+function pollDelayMs(status: LlmStatusPayload | null): number {
+  if (status?.ok === true) return LLM_STATUS_POLL_OK_MS;
+  if (status?.provider === "busy") return LLM_STATUS_POLL_BUSY_MS;
+  return LLM_STATUS_POLL_FAIL_MS;
+}
+
+function isRequestTimeoutMessage(message: string): boolean {
+  return /timed out|AbortError|signal timed out/i.test(message);
+}
+
 function errorPayload(message: string): LlmStatusPayload {
+  const timedOut = isRequestTimeoutMessage(message);
   return {
     ok: false,
-    provider: "error",
+    provider: timedOut ? "busy" : "error",
     embedding_model: "",
     extraction_model: "",
-    summary: `Probe request failed: ${message}`,
-    hints: ["Check that the workflow-app API is reachable from the browser."],
-    embedding: { ok: false, message },
-    extraction: { ok: false, message: "Probe request failed" },
+    summary: timedOut
+      ? "Workflow API did not respond in time (may be busy during extraction)"
+      : `Probe request failed: ${message}`,
+    hints: timedOut
+      ? [
+          "Heavy extraction or gateway work can temporarily slow the API.",
+          "Diagnostics and LLM status usually recover when preparation finishes.",
+        ]
+      : ["Check that the workflow-app API is reachable from the browser."],
+    embedding: { ok: false, message: timedOut ? "API request timed out" : message },
+    extraction: { ok: false, message: timedOut ? "API request timed out" : "Probe request failed" },
   };
 }
 
@@ -99,7 +119,9 @@ async function runProbe(opts: { force: boolean }) {
 
   try {
     const qs = opts.force ? "?force=true" : "";
-    cachedStatus = await api.get<LlmStatusPayload>(`/api/v1/system/llm-status${qs}`);
+    cachedStatus = await api.get<LlmStatusPayload>(`/api/v1/system/llm-status${qs}`, {
+      timeoutMs: LLM_STATUS_REQUEST_TIMEOUT_MS,
+    });
     lastFetchedAt = Date.now();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -120,7 +142,7 @@ function cacheAgeMs(): number {
 function shouldProbeNow(force: boolean): boolean {
   if (force) return true;
   if (!cachedStatus) return true;
-  const maxAge = cachedStatus.ok ? LLM_STATUS_POLL_OK_MS : LLM_STATUS_POLL_FAIL_MS;
+  const maxAge = pollDelayMs(cachedStatus);
   return cacheAgeMs() >= maxAge;
 }
 
@@ -130,7 +152,7 @@ function startPollingLoop() {
     if (shouldProbeNow(false)) {
       void runProbe({ force: false });
     } else {
-      const maxAge = cachedStatus?.ok ? LLM_STATUS_POLL_OK_MS : LLM_STATUS_POLL_FAIL_MS;
+      const maxAge = pollDelayMs(cachedStatus);
       const remaining = Math.max(0, maxAge - cacheAgeMs());
       clearPollTimer();
       pollTimer = setTimeout(() => void runProbe({ force: false }), remaining);
