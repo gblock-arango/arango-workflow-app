@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar, Token
 from typing import Any
 
 from app.workflow_platform.runtime import current_request
 
 logger = logging.getLogger(__name__)
+
+_outbound_bearer_override: ContextVar[str | None] = ContextVar(
+    "outbound_bearer_override",
+    default=None,
+)
+_outbound_force_service_principal: ContextVar[bool] = ContextVar(
+    "outbound_force_service_principal",
+    default=False,
+)
 
 
 def _user_access_token_from_request() -> str | None:
@@ -30,13 +40,37 @@ def _authorization_from_incoming_request() -> dict[str, str] | None:
     return None
 
 
-def outbound_databricks_auth_headers() -> dict[str, str]:
+def capture_outbound_bearer_from_request() -> str | None:
+    """Snapshot user/OBO bearer from the inbound HTTP request for background workers."""
     ut = _user_access_token_from_request()
     if ut:
-        return {"Authorization": f"Bearer {ut}"}
+        return ut
     fwd = _authorization_from_incoming_request()
     if fwd:
-        return fwd
+        auth = fwd.get("Authorization", "")
+        if auth.lower().startswith("bearer ") and len(auth) > 7:
+            return auth[7:].strip()
+    return None
+
+
+def set_outbound_bearer_override(token: str | None) -> Token[str | None]:
+    return _outbound_bearer_override.set((token or "").strip() or None)
+
+
+def reset_outbound_bearer_override(token: Token[str | None]) -> None:
+    _outbound_bearer_override.reset(token)
+
+
+def set_outbound_service_principal_mode(enabled: bool = True) -> Token[bool]:
+    """Force outbound peer calls to use this app's service principal (app.yaml CAN_USE)."""
+    return _outbound_force_service_principal.set(enabled)
+
+
+def reset_outbound_service_principal_mode(token: Token[bool]) -> None:
+    _outbound_force_service_principal.reset(token)
+
+
+def _service_principal_auth_headers() -> dict[str, str]:
     try:
         from databricks.sdk import WorkspaceClient
 
@@ -45,6 +79,21 @@ def outbound_databricks_auth_headers() -> dict[str, str]:
     except Exception:
         logger.exception("WorkspaceClient().config.authenticate() failed")
         return {}
+
+
+def outbound_databricks_auth_headers() -> dict[str, str]:
+    if _outbound_force_service_principal.get():
+        return _service_principal_auth_headers()
+    override = (_outbound_bearer_override.get() or "").strip()
+    if override:
+        return {"Authorization": f"Bearer {override}"}
+    ut = _user_access_token_from_request()
+    if ut:
+        return {"Authorization": f"Bearer {ut}"}
+    fwd = _authorization_from_incoming_request()
+    if fwd:
+        return fwd
+    return _service_principal_auth_headers()
 
 
 def outbound_auth_diagnostics() -> dict[str, Any]:
@@ -60,15 +109,13 @@ def outbound_auth_diagnostics() -> dict[str, Any]:
             sp_ok = False
     if has_user:
         tip = (
-            "User token from x-forwarded-access-token will be forwarded. If APIs still return 401, "
-            "confirm this user has CAN USE on mcp-arango-agent / arango-gateway-app (app resources) "
-            "and that deployed app names match app.yaml."
+            "User token from x-forwarded-access-token will be forwarded on request-bound calls. "
+            "Background workers use the app service principal via app.yaml app-resource CAN_USE."
         )
     elif sp_ok:
         tip = (
-            "Only the app service principal token is available (no x-forwarded-access-token). "
-            "Many workspaces reject that token at another App's ingress (401). Enable **User "
-            "authorization** on this workflow app per Databricks Apps auth docs."
+            "App service principal token is available for peer app calls (arango-gateway-app-invoke "
+            "in app.yaml). Request-bound calls may still forward the user token when present."
         )
     else:
         tip = (

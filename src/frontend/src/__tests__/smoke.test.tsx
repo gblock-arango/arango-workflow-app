@@ -20,6 +20,17 @@ function stubHealthy() {
             status: "ready",
             database: "Arango 3.12.4",
             gateway: "Gateway reachable",
+            probe: {
+              status: "ok",
+              details: {
+                response_preview:
+                  '{"license":"community","server":"arango","version":"3.12.4"}',
+              },
+            },
+            registry: {
+              status: "ok",
+              cluster_name: "local-minikube-dev",
+            },
           }),
       });
     }
@@ -48,6 +59,43 @@ describe("Home page", () => {
     expect(
       screen.getByText(/RBAC-compliant graph knowledge/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows Connected with Arango detail when backend is healthy", async () => {
+    stubHealthy();
+    render(<Home />);
+    await waitFor(() => {
+      expect(screen.getByText("Connected")).toBeInTheDocument();
+      expect(screen.getByText(/Arango 3\.12\.4 · local-minikube-dev/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows Unavailable when backend is down", async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (typeof url === "string" && url.endsWith("/ready")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              status: "not_ready",
+              database: "Gateway health HTTP 401",
+              gateway: "Gateway health HTTP 401",
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({ data: [], total_count: 0, has_more: false, cursor: null }),
+        headers: new Headers({ "content-type": "application/json" }),
+      });
+    });
+    render(<Home />);
+    await waitFor(() => {
+      expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    });
   });
 
   it("displays ontology count from library endpoint", async () => {

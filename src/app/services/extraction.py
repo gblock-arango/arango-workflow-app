@@ -30,6 +30,10 @@ from app.extraction.pipeline import run_pipeline
 from app.models.common import PaginatedResponse
 from app.services.confidence import compute_class_confidence
 from app.services.edge_repair import resolve_range_class
+from app.workflow_platform.databricks_outbound_auth import (
+    reset_outbound_service_principal_mode,
+    set_outbound_service_principal_mode,
+)
 from app.services.run_progress_cache import (
     drop_run_progress_cache,
     get_cached_run_progress,
@@ -119,24 +123,33 @@ def schedule_prepare_and_execute_run(
         "target_ontology_id": target_ontology_id,
         "run_record": run_record,
     }
-
     def _runner() -> None:
-        seed_run_progress(
-            run_id,
-            status="preparing",
-            stage=PREPARATION_STAGE_GATEWAY_HEALTH,
-            message="Worker scheduled — probing gateway /health…",
-        )
+        # Peer gateway calls use the workflow app SP (app.yaml CAN_USE), not the
+        # inbound user token copied into this thread's context.
+        sp_mode = set_outbound_service_principal_mode(True)
         try:
-            asyncio.run(prepare_and_execute_run(**kwargs))
-        except Exception as exc:
-            log.exception("prepare_and_execute_run thread failed", extra={"run_id": run_id})
-            mark_run_preparation_failed(run_id, str(exc))
+            seed_run_progress(
+                run_id,
+                status="preparing",
+                stage=PREPARATION_STAGE_GATEWAY_HEALTH,
+                message="Worker scheduled — probing gateway /health…",
+            )
+            try:
+                asyncio.run(prepare_and_execute_run(**kwargs))
+            except Exception as exc:
+                log.exception("prepare_and_execute_run thread failed", extra={"run_id": run_id})
+                mark_run_preparation_failed(run_id, str(exc))
+            finally:
+                with contextlib.suppress(Exception):
+                    cached = get_cached_run_progress(run_id)
+                    if cached and cached.get("status") in (
+                        "completed",
+                        "failed",
+                        "cancelled",
+                    ):
+                        drop_run_progress_cache(run_id)
         finally:
-            with contextlib.suppress(Exception):
-                cached = get_cached_run_progress(run_id)
-                if cached and cached.get("status") in ("completed", "failed", "cancelled"):
-                    drop_run_progress_cache(run_id)
+            reset_outbound_service_principal_mode(sp_mode)
 
     thread = threading.Thread(
         target=_runner,

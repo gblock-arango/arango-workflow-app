@@ -7,6 +7,10 @@ import AppLink from "@/components/layout/AppLink";
 import AppHeaderLogo from "@/components/layout/AppHeaderLogo";
 import { withBasePath } from "@/lib/base-path";
 import { useActivePipelineAgents } from "@/lib/useActivePipelineAgents";
+import {
+  useArangoConnectionStatus,
+  type ArangoConnectionState,
+} from "@/lib/useArangoConnectionStatus";
 import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
 
 interface LibraryStats {
@@ -16,6 +20,7 @@ interface LibraryStats {
 const img = (path: string) => withBasePath(path);
 
 export default function Home() {
+  const { health, healthDetail } = useArangoConnectionStatus();
   const [ontologyCount, setOntologyCount] = useState<number | null>(null);
   const [statsError, setStatsError] = useState(false);
 
@@ -63,6 +68,7 @@ export default function Home() {
 
           <div className="flex-shrink-0 flex flex-col items-center lg:items-end gap-2">
             <AppHeaderLogo />
+            <HeroConnectionStatus health={health} healthDetail={healthDetail} />
           </div>
         </div>
       </header>
@@ -198,6 +204,53 @@ export default function Home() {
         </section>
       </div>
     </main>
+  );
+}
+
+function HeroConnectionStatus({
+  health,
+  healthDetail,
+}: {
+  health: ArangoConnectionState;
+  healthDetail: string;
+}) {
+  const statusLabel =
+    health === "loading"
+      ? "Checking…"
+      : health === "connected"
+        ? "Connected"
+        : "Unavailable";
+
+  return (
+    <div className="text-center lg:text-right -translate-x-[5px]">
+      <div className="flex items-center justify-center lg:justify-end gap-2">
+        <span
+          className={`inline-block h-2 w-2 rounded-full shrink-0 ${
+            health === "loading"
+              ? "bg-yellow-400 animate-pulse"
+              : health === "connected"
+                ? "bg-emerald-500"
+                : "bg-red-500"
+          }`}
+        />
+        <span
+          className={`text-sm font-medium ${
+            health === "connected" ? "text-emerald-600" : "text-gray-600"
+          }`}
+        >
+          {statusLabel}
+        </span>
+      </div>
+      {healthDetail && (
+        <p
+          className={`mt-1 text-xs max-w-[220px] line-clamp-2 ${
+            health === "error" ? "text-red-600" : "text-gray-500"
+          }`}
+        >
+          {healthDetail}
+        </p>
+      )}
+    </div>
   );
 }
 
