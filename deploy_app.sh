@@ -412,6 +412,18 @@ else
   echo "NOTE: ${SET_USER_SCOPES_SCRIPT} missing or not executable; skip user_api_scopes." >&2
 fi
 
+GRANT_PEER_APPS_SCRIPT="${SCRIPT_DIR}/scripts/grant_peer_app_can_use.py"
+if [[ -f "${GRANT_PEER_APPS_SCRIPT}" ]]; then
+  echo "Granting CAN_USE on peer apps (arango-gateway-app, mcp-arango-agent) to workflow app SP…"
+  _peer_grant_args=(--app-name "${APP_NAME}" --service-principal-id "${APP_SERVICE_PRINCIPAL_CLIENT_ID}")
+  if ! "${PYTHON_BIN}" "${GRANT_PEER_APPS_SCRIPT}" "${_peer_grant_args[@]}"; then
+    echo "NOTE: grant_peer_app_can_use.py failed — extraction prepare thread may 401 on gateway /health until fixed." >&2
+    echo "  Re-run: PYTHONPATH=src ${PYTHON_BIN} ${GRANT_PEER_APPS_SCRIPT} ${_peer_grant_args[*]}" >&2
+  fi
+else
+  echo "NOTE: ${GRANT_PEER_APPS_SCRIPT} missing; skip peer-app CAN_USE grants." >&2
+fi
+
 if [[ -z "${WAREHOUSE_ID// }" ]]; then
   echo "ERROR: DATABRICKS_SQL_WAREHOUSE_ID is not set. Set value in app.yaml or export / pass as deploy_app.sh arg 7." >&2
   exit 1

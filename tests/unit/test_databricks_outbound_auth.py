@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from app.workflow_platform.databricks_outbound_auth import (
+    _bearer_from_workspace_auth,
     capture_outbound_bearer_from_request,
     outbound_databricks_auth_headers,
     reset_outbound_bearer_override,
@@ -35,6 +36,14 @@ def test_outbound_bearer_override_used_without_request():
         assert headers == {"Authorization": "Bearer thread-token"}
     finally:
         reset_outbound_bearer_override(token)
+
+
+def test_bearer_from_workspace_auth_accepts_token_key():
+    assert _bearer_from_workspace_auth({"token": "m2m-token"}) == "m2m-token"
+    assert (
+        _bearer_from_workspace_auth({"Authorization": "Bearer m2m-token"})
+        == "m2m-token"
+    )
 
 
 def test_force_service_principal_skips_copied_user_token():

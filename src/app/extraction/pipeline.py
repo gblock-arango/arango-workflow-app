@@ -8,6 +8,7 @@ Human-in-the-loop breakpoint after pre-curation filter.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any, cast
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -181,6 +182,7 @@ async def run_pipeline(
     event_callback: Any | None = None,
     domain_context: str = "",
     domain_ontology_ids: list[str] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> ExtractionPipelineState:
     """Execute the extraction pipeline end-to-end.
 
@@ -242,6 +244,10 @@ async def run_pipeline(
             )
 
         async for event in compiled.astream(initial_state, config=config):
+            if cancel_check and cancel_check():
+                from app.services.extraction import ExtractionCancelled
+
+                raise ExtractionCancelled(f"Extraction run {run_id} cancelled")
             for node_name, node_output in event.items():
                 log.info(
                     "pipeline node completed",

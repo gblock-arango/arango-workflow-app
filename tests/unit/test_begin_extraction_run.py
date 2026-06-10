@@ -32,3 +32,4 @@ class TestBeginExtractionRun:
         assert cached is not None
         assert cached["status"] == "preparing"
         assert cached["stats"]["preparation_stage"] == "queued"
+

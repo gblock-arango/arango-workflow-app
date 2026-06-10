@@ -50,9 +50,7 @@ class TestMaterializeEmbeddingDocument:
             ),
             patch(
                 "app.services.extraction_materialize.ensure_staging_schema",
-            ),
-            patch(
-                "app.services.extraction_materialize.ensure_ontology_schema",
+                return_value={"ok": True, "collections_created": []},
             ),
             patch(
                 "app.services.extraction_materialize.embedding_artifacts.read_chunks",

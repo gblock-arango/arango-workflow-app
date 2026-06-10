@@ -1,8 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiFetchLongRunning, readApiErrorMessage } from "@/lib/api-client";
+import type { RunProgressSnapshot } from "@/lib/runStatusPoll";
+import { ACTIVE_RUN_STATUSES } from "@/lib/runStatusPoll";
 import AppLink from "@/components/layout/AppLink";
+
+const SELECTION_STORAGE_KEY = "aoe-pipeline-extraction-selection";
 
 interface EmbeddingRow {
   doc_id: string;
@@ -16,23 +20,72 @@ interface OntologyOption {
   name: string;
 }
 
+interface SavedExtractionSelection {
+  runId: string;
+  docIds: string[];
+  targetOntologyId?: string;
+  arangoDatabase?: string;
+}
+
 interface StartExtractionPanelProps {
   onRunStarted: (runId: string) => void;
   /** When true, the selected run is still preparing or running — block duplicate starts. */
   extractionInProgress?: boolean;
+  selectedRunId?: string | null;
+  runProgress?: RunProgressSnapshot | null;
+  onRunCancelled?: () => void;
+}
+
+function readSavedSelection(runId: string): SavedExtractionSelection | null {
+  try {
+    const raw = localStorage.getItem(SELECTION_STORAGE_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as SavedExtractionSelection;
+    if (saved.runId !== runId || !Array.isArray(saved.docIds) || saved.docIds.length === 0) {
+      return null;
+    }
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
+function writeSavedSelection(selection: SavedExtractionSelection): void {
+  try {
+    localStorage.setItem(SELECTION_STORAGE_KEY, JSON.stringify(selection));
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function docIdsFromProgress(progress: RunProgressSnapshot | null | undefined): string[] {
+  if (!progress) return [];
+  if (Array.isArray(progress.doc_ids) && progress.doc_ids.length > 0) {
+    return progress.doc_ids;
+  }
+  if (progress.doc_id) return [progress.doc_id];
+  return [];
 }
 
 export default function StartExtractionPanel({
   onRunStarted,
   extractionInProgress = false,
+  selectedRunId = null,
+  runProgress = null,
+  onRunCancelled,
 }: StartExtractionPanelProps) {
   const [docs, setDocs] = useState<EmbeddingRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [ontologies, setOntologies] = useState<OntologyOption[]>([]);
   const [targetOntologyId, setTargetOntologyId] = useState("");
+  const [arangoDatabase, setArangoDatabase] = useState("");
+  const [defaultDatabaseLoaded, setDefaultDatabaseLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
   const [error, setError] = useState("");
+  const [cancelError, setCancelError] = useState("");
+  const restoredForRunRef = useRef<string | null>(null);
 
   const loadDocs = useCallback(async () => {
     try {
@@ -58,7 +111,81 @@ export default function StartExtractionPanel({
       .get<{ data: OntologyOption[] }>("/api/v1/ontology/library?limit=100")
       .then((res) => setOntologies(res.data ?? []))
       .catch(() => setOntologies([]));
+    api
+      .get<{ name?: string }>("/api/v1/extraction/default-database-name")
+      .then((res) => {
+        if (res.name) setArangoDatabase(res.name);
+      })
+      .catch(() => {
+        if (!arangoDatabase) setArangoDatabase("AutoGraph_1");
+      })
+      .finally(() => setDefaultDatabaseLoaded(true));
   }, [loadDocs]);
+
+  useEffect(() => {
+    restoredForRunRef.current = null;
+  }, [selectedRunId]);
+
+  useEffect(() => {
+    if (!selectedRunId || !loaded) return;
+    if (restoredForRunRef.current === selectedRunId) return;
+
+    const applySelection = (
+      ids: string[],
+      targetOntology?: string,
+      databaseName?: string,
+    ): boolean => {
+      if (ids.length === 0) return false;
+      setSelected(new Set(ids));
+      if (targetOntology) setTargetOntologyId(targetOntology);
+      if (databaseName) setArangoDatabase(databaseName);
+      restoredForRunRef.current = selectedRunId;
+      return true;
+    };
+
+    const fromProgress = docIdsFromProgress(runProgress);
+    if (
+      applySelection(
+        fromProgress,
+        runProgress?.target_ontology_id ?? undefined,
+        runProgress?.arango_database ?? undefined,
+      )
+    ) {
+      return;
+    }
+
+    const saved = readSavedSelection(selectedRunId);
+    if (
+      saved &&
+      applySelection(saved.docIds, saved.targetOntologyId, saved.arangoDatabase)
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    api
+      .get<{
+        doc_id?: string;
+        doc_ids?: string[];
+        target_ontology_id?: string;
+        arango_database?: string;
+      }>(`/api/v1/extraction/runs/${selectedRunId}`)
+      .then((run) => {
+        if (cancelled || restoredForRunRef.current === selectedRunId) return;
+        const ids =
+          Array.isArray(run.doc_ids) && run.doc_ids.length > 0
+            ? run.doc_ids
+            : run.doc_id
+              ? [run.doc_id]
+              : [];
+        applySelection(ids, run.target_ontology_id, run.arango_database);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRunId, loaded, runProgress]);
 
   const toggle = (docId: string) => {
     setSelected((prev) => {
@@ -75,11 +202,17 @@ export default function StartExtractionPanel({
       setError("Select at least one document with status ready.");
       return;
     }
+    const dbName = arangoDatabase.trim();
+    if (!dbName) {
+      setError("Enter an Arango database name (created automatically when extraction starts).");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
       const payload: Record<string, unknown> =
         ids.length === 1 ? { document_id: ids[0] } : { document_ids: ids };
+      payload.arango_database = dbName;
       if (targetOntologyId) {
         payload.target_ontology_id = targetOntologyId;
       }
@@ -95,6 +228,12 @@ export default function StartExtractionPanel({
       if (!data.run_id) {
         throw new Error("No run_id returned from extraction API");
       }
+      writeSavedSelection({
+        runId: data.run_id,
+        docIds: ids,
+        targetOntologyId: targetOntologyId || undefined,
+        arangoDatabase: dbName,
+      });
       setError("");
       onRunStarted(data.run_id);
     } catch (err) {
@@ -109,6 +248,30 @@ export default function StartExtractionPanel({
       setBusy(false);
     }
   };
+
+  const canCancel =
+    Boolean(selectedRunId) &&
+    Boolean(runProgress?.status) &&
+    ACTIVE_RUN_STATUSES.has(runProgress!.status);
+
+  async function handleCancelExtraction() {
+    if (!selectedRunId || cancelBusy) return;
+    if (!confirm("Cancel this extraction run? The worker will stop at the next checkpoint.")) {
+      return;
+    }
+    setCancelBusy(true);
+    setCancelError("");
+    try {
+      await api.post<{ run_id: string; status: string }>(
+        `/api/v1/extraction/runs/${selectedRunId}/cancel`,
+      );
+      onRunCancelled?.();
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCancelBusy(false);
+    }
+  }
 
   return (
     <section className="border-b border-gray-200 bg-slate-50/80 p-4 space-y-3">
@@ -159,6 +322,23 @@ export default function StartExtractionPanel({
       )}
 
       <label className="block text-xs text-gray-600">
+        Arango database
+        <input
+          type="text"
+          value={arangoDatabase}
+          onChange={(e) => setArangoDatabase(e.target.value)}
+          placeholder={defaultDatabaseLoaded ? "AutoGraph_1" : "Loading suggestion…"}
+          className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm font-mono"
+          spellCheck={false}
+        />
+        <span className="mt-1 block text-[11px] text-gray-500 leading-relaxed">
+          Created automatically in Arango when extraction starts (empty graph database).
+          Each run can use its own database; default is the next{" "}
+          <code className="text-[10px]">AutoGraph_&lt;n&gt;</code> name.
+        </span>
+      </label>
+
+      <label className="block text-xs text-gray-600">
         Target ontology (optional)
         <select
           value={targetOntologyId}
@@ -172,6 +352,9 @@ export default function StartExtractionPanel({
             </option>
           ))}
         </select>
+        <span className="mt-1 block text-[11px] text-gray-500 leading-relaxed">
+          Which ontology in the graph to merge into — not the Arango database name.
+        </span>
       </label>
 
       {error && (
@@ -182,7 +365,9 @@ export default function StartExtractionPanel({
 
       <button
         type="button"
-        disabled={busy || selected.size === 0 || extractionInProgress}
+        disabled={
+          busy || selected.size === 0 || extractionInProgress || !arangoDatabase.trim()
+        }
         onClick={() => void startExtraction()}
         className="w-full text-sm font-medium px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-40 transition-colors"
       >
@@ -192,6 +377,23 @@ export default function StartExtractionPanel({
             ? "Starting… (preparing run)"
             : `Start extraction (${selected.size} selected)`}
       </button>
+
+      {canCancel && (
+        <button
+          type="button"
+          onClick={() => void handleCancelExtraction()}
+          disabled={cancelBusy}
+          className="w-full text-sm font-medium px-3 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-40 transition-colors"
+        >
+          {cancelBusy ? "Cancelling…" : "Cancel extraction"}
+        </button>
+      )}
+
+      {cancelError && (
+        <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded px-2 py-1">
+          Cancel failed: {cancelError}
+        </p>
+      )}
     </section>
   );
 }

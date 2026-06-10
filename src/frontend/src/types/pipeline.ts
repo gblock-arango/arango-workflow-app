@@ -3,7 +3,9 @@ export type RunStatus =
   | "queued"
   | "running"
   | "completed"
+  | "completed_with_errors"
   | "failed"
+  | "cancelled"
   | "paused";
 
 export type StepStatusValue =

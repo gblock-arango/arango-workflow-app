@@ -176,13 +176,17 @@ def _write_file(run_id: str, entry: dict[str, Any]) -> None:
 
 def _snapshot(entry: dict[str, Any], run_id: str) -> dict[str, Any]:
     stats = entry.get("stats")
-    return {
+    out: dict[str, Any] = {
         "_key": entry.get("_key", run_id),
         "status": entry.get("status"),
         "started_at": entry.get("started_at"),
         "completed_at": entry.get("completed_at"),
         "stats": dict(stats) if isinstance(stats, dict) else {},
     }
+    for key in ("doc_id", "doc_ids", "target_ontology_id", "arango_database"):
+        if entry.get(key) is not None:
+            out[key] = entry[key]
+    return out
 
 
 def seed_run_progress(
@@ -193,6 +197,10 @@ def seed_run_progress(
     message: str,
     progress: dict[str, Any] | None = None,
     stats: dict[str, Any] | None = None,
+    doc_id: str | None = None,
+    doc_ids: list[str] | None = None,
+    target_ontology_id: str | None = None,
+    arango_database: str | None = None,
 ) -> None:
     """Insert or refresh cache when a run is created or the prepare thread starts."""
     base_stats: dict[str, Any] = {
@@ -206,15 +214,21 @@ def seed_run_progress(
         base_stats["preparation_progress"] = progress
     if stats:
         base_stats.update(stats)
+    entry: dict[str, Any] = {
+        "_key": run_id,
+        "status": status,
+        "stats": base_stats,
+    }
+    if doc_id:
+        entry["doc_id"] = doc_id
+    if doc_ids:
+        entry["doc_ids"] = doc_ids
+    if target_ontology_id:
+        entry["target_ontology_id"] = target_ontology_id
+    if arango_database:
+        entry["arango_database"] = arango_database
     try:
-        _write_file(
-            run_id,
-            {
-                "_key": run_id,
-                "status": status,
-                "stats": base_stats,
-            },
-        )
+        _write_file(run_id, entry)
     except ValueError:
         log.warning("skipped seed_run_progress for invalid run_id", extra={"run_id": run_id})
 

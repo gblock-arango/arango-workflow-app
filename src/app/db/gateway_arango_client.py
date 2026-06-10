@@ -10,6 +10,7 @@ from typing import Any, Optional
 from urllib import error, request
 
 from app.db.gateway_config import GatewaySettings
+from app.db.gateway_errors import format_gateway_error
 from app.workflow_platform.databricks_outbound_auth import outbound_databricks_auth_headers
 
 
@@ -87,9 +88,14 @@ class GatewayArangoClient:
         self._proxy_url = f"{base}/api/arango/http"
         result = self.request("GET", "/_api/version", json_body=None)
         if not result.get("ok"):
+            detail = str(result.get("error") or result.get("body") or "unknown")
             raise RuntimeError(
-                f"Gateway Arango probe failed: {result.get('error')!r} "
-                f"status={result.get('status_code')} body={result.get('body')}"
+                format_gateway_error(
+                    RuntimeError(
+                        f"Gateway Arango probe failed: {detail} "
+                        f"status={result.get('status_code')} body={result.get('body')}"
+                    )
+                )
             )
         body = result.get("body")
         if isinstance(body, dict):

@@ -70,23 +70,63 @@ def reset_outbound_service_principal_mode(token: Token[bool]) -> None:
     _outbound_force_service_principal.reset(token)
 
 
+def _bearer_from_workspace_auth(auth: dict[str, Any]) -> str:
+    """Normalize ``WorkspaceClient().config.authenticate()`` to a bare bearer token."""
+    if not auth:
+        return ""
+    lower = {str(k).lower(): str(v or "").strip() for k, v in auth.items()}
+    authorization = lower.get("authorization") or ""
+    if authorization.lower().startswith("bearer ") and len(authorization) > 7:
+        return authorization[7:].strip()
+    if authorization:
+        return authorization
+    return lower.get("token") or ""
+
+
 def _service_principal_auth_headers() -> dict[str, str]:
     try:
         from databricks.sdk import WorkspaceClient
 
-        h = WorkspaceClient().config.authenticate()
-        return dict(h) if h else {}
+        raw = WorkspaceClient().config.authenticate() or {}
+        bearer = _bearer_from_workspace_auth(dict(raw))
+        if bearer:
+            return {"Authorization": f"Bearer {bearer}"}
+        if raw:
+            return {str(k): str(v) for k, v in raw.items() if v}
+        logger.warning("WorkspaceClient().config.authenticate() returned no bearer token")
+        return {}
     except Exception:
         logger.exception("WorkspaceClient().config.authenticate() failed")
         return {}
 
 
+def service_principal_bearer_token() -> str:
+    """Bare M2M bearer for this app's service principal (empty when auth fails)."""
+    return _bearer_from_workspace_auth(_service_principal_auth_headers())
+
+
+def pin_outbound_service_principal_bearer() -> tuple[Token[str | None], Token[bool]]:
+    """Pin app SP bearer for a background thread (M2M; ``app.yaml`` ``CAN_USE`` on peer apps)."""
+    bearer = service_principal_bearer_token()
+    bearer_tok = set_outbound_bearer_override(bearer or None)
+    sp_tok = set_outbound_service_principal_mode(True)
+    return bearer_tok, sp_tok
+
+
+def release_outbound_service_principal_bearer(
+    tokens: tuple[Token[str | None], Token[bool]],
+) -> None:
+    bearer_tok, sp_tok = tokens
+    reset_outbound_bearer_override(bearer_tok)
+    reset_outbound_service_principal_mode(sp_tok)
+
+
 def outbound_databricks_auth_headers() -> dict[str, str]:
-    if _outbound_force_service_principal.get():
-        return _service_principal_auth_headers()
     override = (_outbound_bearer_override.get() or "").strip()
     if override:
         return {"Authorization": f"Bearer {override}"}
+    if _outbound_force_service_principal.get():
+        return _service_principal_auth_headers()
     ut = _user_access_token_from_request()
     if ut:
         return {"Authorization": f"Bearer {ut}"}
@@ -109,13 +149,15 @@ def outbound_auth_diagnostics() -> dict[str, Any]:
             sp_ok = False
     if has_user:
         tip = (
-            "User token from x-forwarded-access-token will be forwarded on request-bound calls. "
-            "Background workers use the app service principal via app.yaml app-resource CAN_USE."
+            "User token from x-forwarded-access-token is forwarded on request-bound browser calls. "
+            "Background workers (extraction prepare thread) use this app's service principal (M2M) "
+            "via app.yaml arango-gateway-app-invoke CAN_USE."
         )
     elif sp_ok:
         tip = (
             "App service principal token is available for peer app calls (arango-gateway-app-invoke "
-            "in app.yaml). Request-bound calls may still forward the user token when present."
+            "CAN_USE in app.yaml). If peer calls return 401, redeploy after adding the app resource "
+            "or check the gateway app grants CAN_USE to arango-workflow-app's SP."
         )
     else:
         tip = (

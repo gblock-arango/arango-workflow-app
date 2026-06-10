@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from app.db.gateway_connectivity import gateway_connectivity_status
+from app.db.gateway_errors import format_gateway_error
 from app.db.types import StandardDatabase
 from app.services.run_progress_cache import get_cached_run_progress, update_run_progress_cache
 
@@ -102,7 +103,22 @@ def probe_gateway_health_checkpoint(run_id: str) -> None:
         progress={"phase": "gateway_health"},
     )
     started = time.perf_counter()
-    status = gateway_connectivity_status()
+
+    def on_health_attempt(attempt: int, total: int, _phase: str) -> None:
+        if attempt == 1:
+            return
+        record_checkpoint_cache(
+            run_id,
+            stage=STAGE_GATEWAY_HEALTH,
+            message=f"Probing gateway /health (attempt {attempt}/{total})…",
+            progress={
+                "phase": "gateway_health",
+                "health_attempt": attempt,
+                "health_attempt_total": total,
+            },
+        )
+
+    status = gateway_connectivity_status(on_health_attempt=on_health_attempt)
     latency_ms = int((time.perf_counter() - started) * 1000)
     ok = bool(status.get("gateway_ok"))
     gateway_url = str(status.get("gateway_url") or "")
@@ -115,14 +131,27 @@ def probe_gateway_health_checkpoint(run_id: str) -> None:
         "latency_ms": latency_ms,
     }
     if not ok:
+        hint = detail
+        if "401" in detail:
+            hint = (
+                f"{detail} — prepare thread uses this app's service principal (M2M). "
+                "Grant CAN_USE on arango-gateway-app for the workflow SP: "
+                "scripts/grant_peer_app_can_use.py (see EXTRACTION_VERIFY_STEPS.md Step −1)."
+            )
+        elif "timed out" in detail.lower() or "timeout" in detail.lower():
+            hint = (
+                f"{detail} — gateway app is RUNNING but /health did not answer in time "
+                "(workers likely busy on Arango proxy traffic; not a CAN_USE/auth failure). "
+                "Wait a minute and retry extraction, or restart arango-gateway-app to clear the queue."
+            )
         record_checkpoint_cache(
             run_id,
             stage=STAGE_GATEWAY_HEALTH,
-            message=f"Gateway /health failed ({latency_ms}ms): {detail}",
+            message=f"Gateway /health failed ({latency_ms}ms): {hint}",
             ok=False,
             progress=progress,
         )
-        raise RuntimeError(f"Gateway /health failed: {detail}")
+        raise RuntimeError(f"Gateway /health failed: {hint}")
 
     record_checkpoint_cache(
         run_id,
@@ -134,17 +163,61 @@ def probe_gateway_health_checkpoint(run_id: str) -> None:
 
 def connect_arango_checkpoint(run_id: str) -> tuple[Any, Any]:
     """``get_db()`` through gateway proxy; surfaces connect latency to UI."""
-    from app.services.extraction import _get_collection
-    from app.db.client import get_db
+    from app.config import settings as app_settings
+    from app.db.client import (
+        _is_missing_database_error,
+        get_db,
+        recover_missing_arango_database,
+    )
+    from app.db.gateway_database import GatewayAPIError
+    from app.services.extraction import _apply_run_arango_database, _get_collection
 
+    _apply_run_arango_database(run_id)
     started = time.perf_counter()
-    db = get_db()
+    db = None
+    col = None
+    last_exc: BaseException | None = None
+    for attempt in range(2):
+        try:
+            db = get_db()
+            col = _get_collection(db, "extraction_runs")
+            break
+        except (GatewayAPIError, RuntimeError) as exc:
+            last_exc = exc
+            if (
+                attempt == 0
+                and app_settings.can_create_databases
+                and _is_missing_database_error(exc)
+            ):
+                recover_missing_arango_database()
+                continue
+            message = format_gateway_error(exc)
+            if not app_settings.can_create_databases and _is_missing_database_error(exc):
+                message = (
+                    f"{message} — recreate database {app_settings.arango_db!r} in Arango "
+                    "(auto-create is disabled on managed_platform)."
+                )
+            record_checkpoint_cache(
+                run_id,
+                stage=STAGE_GATEWAY_ARANGO,
+                message=f"Arango session failed ({message[:200]})",
+                ok=False,
+                progress={"phase": "gateway_arango", "gateway_ok": True, "arango_ok": False},
+            )
+            raise RuntimeError(message) from exc
+    if db is None or col is None:
+        assert last_exc is not None
+        raise last_exc
     latency_ms = int((time.perf_counter() - started) * 1000)
-    col = _get_collection(db, "extraction_runs")
+    from app.services.run_progress_cache import get_cached_run_progress
+
+    db_label = (get_cached_run_progress(run_id) or {}).get("arango_database") or "Arango"
     record_checkpoint_cache(
         run_id,
         stage=STAGE_RUN_PERSISTED,
-        message=f"Arango session ready ({latency_ms}ms) — persisting run record…",
+        message=(
+            f"Arango session ready on {db_label} ({latency_ms}ms) — persisting run record…"
+        ),
         progress={
             "phase": "gateway_arango",
             "gateway_ok": True,
@@ -174,7 +247,19 @@ def persist_run_record_checkpoint(
                 ok=False,
             )
             raise ValueError(f"Run {run_id} not found in Arango and no run_record supplied")
+        record_checkpoint_cache(
+            run_id,
+            stage=STAGE_RUN_PERSISTED,
+            message="Inserting run record into Arango via gateway…",
+            progress={"phase": "run_persisted", "step": "insert"},
+        )
         col.insert(run_record)
+        record_checkpoint_cache(
+            run_id,
+            stage=STAGE_RUN_PERSISTED,
+            message="Run record inserted — verifying read-back via gateway…",
+            progress={"phase": "run_persisted", "step": "read_back"},
+        )
     stored = doc_get(col, run_id)
     latency_ms = int((time.perf_counter() - started) * 1000)
     if stored is None:

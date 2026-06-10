@@ -8,7 +8,9 @@ describe("StatusBadge", () => {
     "queued",
     "running",
     "completed",
+    "completed_with_errors",
     "failed",
+    "cancelled",
     "paused",
   ];
 
@@ -24,7 +26,9 @@ describe("StatusBadge", () => {
       queued: "Queued",
       running: "Running",
       completed: "Completed",
+      completed_with_errors: "Completed (warnings)",
       failed: "Failed",
+      cancelled: "Cancelled",
       paused: "Paused",
     };
 

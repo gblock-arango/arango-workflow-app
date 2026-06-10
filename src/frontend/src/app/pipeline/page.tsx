@@ -182,6 +182,9 @@ function PipelineMonitorInner() {
               setRunListKey((k) => k + 1);
             }}
             extractionInProgress={extractionInProgress}
+            selectedRunId={selectedRunId}
+            runProgress={runProgress.progress}
+            onRunCancelled={() => setRunListKey((k) => k + 1)}
           />
           <PipelineDiagnosticsPanel
             selectedRunId={selectedRunId}

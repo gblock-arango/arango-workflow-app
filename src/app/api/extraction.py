@@ -9,7 +9,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.api.errors import ConflictError, NotFoundError
 from app.db.async_gateway import run_sync
+from app.db.arango_database_names import (
+    suggest_auto_graph_database_name,
+    validate_arango_database_name,
+)
 from app.db.client import get_db
 from app.db.utils import doc_get, run_aql
 from app.services import extraction as extraction_service
@@ -37,6 +42,13 @@ class StartRunRequest(BaseModel):
         default=None,
         description="Existing ontology to merge results into (incremental extraction)",
     )
+    arango_database: str | None = Field(
+        default=None,
+        description=(
+            "ArangoDB database for this run (created automatically if missing). "
+            "Defaults to the next AutoGraph_<n> name when omitted."
+        ),
+    )
     base_ontology_ids: list[str] | None = Field(
         default=None,
         description="Multiple base ontologies for Tier 2 context-aware extraction",
@@ -56,6 +68,19 @@ class RetryResponse(BaseModel):
     status: str
 
 
+class CancelRunResponse(BaseModel):
+    run_id: str
+    status: str
+    already_cancelled: bool = False
+
+
+@router.get("/default-database-name")
+async def default_database_name() -> dict[str, str]:
+    """Suggest the next ``AutoGraph_<n>`` database name for a new extraction run."""
+    name = await run_sync(suggest_auto_graph_database_name)
+    return {"name": name}
+
+
 @router.post("/run")
 async def start_extraction(body: StartRunRequest) -> StartRunResponse:
     """Trigger ontology extraction on one or more documents.
@@ -73,11 +98,18 @@ async def start_extraction(body: StartRunRequest) -> StartRunResponse:
     if body.base_ontology_ids:
         ontology_ids.extend(oid for oid in body.base_ontology_ids if oid not in ontology_ids)
 
+    try:
+        if body.arango_database:
+            validate_arango_database_name(body.arango_database)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     run_record = extraction_service.begin_extraction_run(
         document_ids=doc_ids,
         config_overrides=body.config,
         domain_ontology_ids=ontology_ids or None,
         target_ontology_id=body.target_ontology_id,
+        arango_database=body.arango_database,
     )
     return StartRunResponse(
         run_id=run_record["_key"],
@@ -141,9 +173,7 @@ def _list_runs_enriched(
     limit: int,
     status: str | None,
 ) -> dict[str, Any]:
-    db = get_db()
     result = extraction_service.list_runs(
-        db,
         cursor=cursor,
         limit=limit,
         status=status,
@@ -155,57 +185,67 @@ def _list_runs_enriched(
         legacy_id = run.get("doc_id")
         if legacy_id and legacy_id not in run_doc_ids:
             run_doc_ids = [legacy_id, *run_doc_ids]
-        if run_doc_ids and db.has_collection("documents"):
-            names: list[str] = []
-            total_chunks = 0
-            for did in run_doc_ids:
+        run_db_name = run.get("arango_database")
+        if run_db_name:
+            from app.db.client import clear_active_arango_database, set_active_arango_database
+
+            set_active_arango_database(str(run_db_name))
+        try:
+            db = get_db()
+            if run_doc_ids and db.has_collection("documents"):
+                names: list[str] = []
+                total_chunks = 0
+                for did in run_doc_ids:
+                    try:
+                        doc = doc_get(db.collection("documents"), did)
+                        if doc:
+                            names.append(doc.get("filename", did))
+                            total_chunks += doc.get("chunk_count", 0)
+                    except Exception:
+                        log.debug("Could not fetch document %s for run enrichment", did)
+                if names:
+                    run["document_name"] = ", ".join(names)
+                    run["chunk_count"] = total_chunks
+            run.setdefault("document_name", legacy_id or "Unknown")
+            run.setdefault("chunk_count", 0)
+
+            stats = run.get("stats", {})
+            run["classes_extracted"] = stats.get("classes_extracted", 0)
+            run["properties_extracted"] = stats.get("properties_extracted", 0)
+            run["error_count"] = len(stats.get("errors", []))
+            run["preparation_stage"] = stats.get("preparation_stage")
+            run["preparation_message"] = stats.get("preparation_message")
+            run["preparation_updated_at"] = stats.get("preparation_updated_at")
+
+            started = run.get("started_at", 0)
+            completed = run.get("completed_at", 0)
+            if started and completed:
+                run["duration_ms"] = int((completed - started) * 1000)
+            else:
+                run.setdefault("duration_ms", 0)
+
+            if db.has_collection("ontology_registry") and run.get("_key"):
                 try:
-                    doc = doc_get(db.collection("documents"), did)
-                    if doc:
-                        names.append(doc.get("filename", did))
-                        total_chunks += doc.get("chunk_count", 0)
-                except Exception:
-                    log.debug("Could not fetch document %s for run enrichment", did)
-            if names:
-                run["document_name"] = ", ".join(names)
-                run["chunk_count"] = total_chunks
-        run.setdefault("document_name", legacy_id or "Unknown")
-        run.setdefault("chunk_count", 0)
-
-        stats = run.get("stats", {})
-        run["classes_extracted"] = stats.get("classes_extracted", 0)
-        run["properties_extracted"] = stats.get("properties_extracted", 0)
-        run["error_count"] = len(stats.get("errors", []))
-        run["preparation_stage"] = stats.get("preparation_stage")
-        run["preparation_message"] = stats.get("preparation_message")
-        run["preparation_updated_at"] = stats.get("preparation_updated_at")
-
-        started = run.get("started_at", 0)
-        completed = run.get("completed_at", 0)
-        if started and completed:
-            run["duration_ms"] = int((completed - started) * 1000)
-        else:
-            run.setdefault("duration_ms", 0)
-
-        if db.has_collection("ontology_registry") and run.get("_key"):
-            try:
-                oid_result = list(
-                    run_aql(
-                        db,
-                        "FOR o IN ontology_registry "
-                        "FILTER o.extraction_run_id == @rid LIMIT 1 RETURN o._key",
-                        bind_vars={"rid": run["_key"]},
+                    oid_result = list(
+                        run_aql(
+                            db,
+                            "FOR o IN ontology_registry "
+                            "FILTER o.extraction_run_id == @rid LIMIT 1 RETURN o._key",
+                            bind_vars={"rid": run["_key"]},
+                        )
                     )
-                )
-                if oid_result:
-                    run["ontology_id"] = oid_result[0]
-            except Exception:
-                log.debug(
-                    "Could not resolve ontology_id for run enrichment",
-                    exc_info=True,
-                )
-        if "ontology_id" not in run and run.get("target_ontology_id"):
-            run["ontology_id"] = run["target_ontology_id"]
+                    if oid_result:
+                        run["ontology_id"] = oid_result[0]
+                except Exception:
+                    log.debug(
+                        "Could not resolve ontology_id for run enrichment",
+                        exc_info=True,
+                    )
+            if "ontology_id" not in run and run.get("target_ontology_id"):
+                run["ontology_id"] = run["target_ontology_id"]
+        finally:
+            if run_db_name:
+                clear_active_arango_database()
 
     return payload
 
@@ -222,9 +262,20 @@ async def get_run_status(run_id: str) -> dict[str, Any]:
     return extraction_service.get_run_status_for_poll(run_id)
 
 
+@router.post("/runs/{run_id}/cancel")
+async def cancel_run(run_id: str) -> CancelRunResponse:
+    """Request cooperative cancellation of a preparing or running extraction."""
+    try:
+        result = await run_sync(extraction_service.cancel_extraction_run, run_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return CancelRunResponse(**result)
+
+
 def _get_run_sync(run_id: str) -> dict[str, Any]:
-    db = get_db()
-    return extraction_service.get_run(db, run_id=run_id)
+    return extraction_service.get_run(run_id=run_id)
 
 
 @router.delete("/runs/{run_id}")
@@ -241,7 +292,7 @@ async def get_run_steps(run_id: str) -> dict[str, Any]:
 
 
 def _get_run_steps_sync(run_id: str) -> list[dict[str, Any]]:
-    db = get_db()
+    db = extraction_service.db_for_run(run_id)
     return extraction_service.get_run_steps(db, run_id=run_id)
 
 
@@ -252,14 +303,17 @@ async def get_run_results(run_id: str) -> dict[str, Any]:
 
 
 def _get_run_results_sync(run_id: str) -> dict[str, Any]:
-    db = get_db()
+    db = extraction_service.db_for_run(run_id)
     return extraction_service.get_run_results(db, run_id=run_id)
 
 
 @router.post("/runs/{run_id}/retry")
 async def retry_run(run_id: str) -> RetryResponse:
     """Retry a failed extraction run."""
-    new_run = await extraction_service.retry_run(get_db(), run_id=run_id)
+    new_run = await extraction_service.retry_run(
+        extraction_service.db_for_run(run_id),
+        run_id=run_id,
+    )
     return RetryResponse(
         run_id=run_id,
         new_run_id=new_run["_key"],
@@ -274,12 +328,12 @@ async def get_run_cost(run_id: str) -> dict[str, Any]:
 
 
 def _get_run_cost_sync(run_id: str) -> dict[str, Any]:
-    db = get_db()
+    db = extraction_service.db_for_run(run_id)
     return extraction_service.get_run_cost(db, run_id=run_id)
 
 
 def _delete_run_sync(run_id: str) -> dict[str, Any]:
-    db = get_db()
+    db = extraction_service.db_for_run(run_id)
     if not db.has_collection("extraction_runs"):
         raise HTTPException(status_code=404, detail="No extraction runs collection")
     col = db.collection("extraction_runs")

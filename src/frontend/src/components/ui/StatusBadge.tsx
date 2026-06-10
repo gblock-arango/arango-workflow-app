@@ -54,6 +54,12 @@ const STATUS_CONFIG: Record<
     text: "text-red-700",
     dot: "bg-red-500",
   },
+  cancelled: {
+    label: "Cancelled",
+    bg: "bg-gray-100",
+    text: "text-gray-600",
+    dot: "bg-gray-400",
+  },
   paused: {
     label: "Paused",
     bg: "bg-yellow-50",

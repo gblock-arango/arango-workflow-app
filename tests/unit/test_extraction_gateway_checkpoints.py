@@ -121,3 +121,18 @@ class TestExtractionGatewayCheckpoints:
         assert col is mock_col
         cached = get_cached_run_progress(self.run_id)
         assert cached["stats"]["preparation_stage"] == STAGE_RUN_PERSISTED
+
+    def test_connect_arango_dns_error_includes_registry_hint(self, progress_cache_dir) -> None:
+        with patch(
+            "app.db.client.get_db",
+            side_effect=RuntimeError(
+                "Gateway Arango probe failed: [Errno -2] Name or service not known"
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="ARANGO_REGISTRY_TABLE"):
+                connect_arango_checkpoint(self.run_id)
+
+        cached = get_cached_run_progress(self.run_id)
+        assert cached is not None
+        assert cached["status"] == "failed"
+        assert cached["stats"]["preparation_stage"] == STAGE_GATEWAY_ARANGO

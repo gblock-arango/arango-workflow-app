@@ -10,16 +10,24 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from app.db.types import StandardDatabase
 
 log = logging.getLogger(__name__)
 
+MigrationProgressFn = Callable[[str, dict[str, Any] | None], None]
+
 _MIGRATIONS_PACKAGE = Path(__file__).resolve().parent.parent.parent / "migrations"
 
 
-def init_schema(db: StandardDatabase) -> list[str]:
+def init_schema(
+    db: StandardDatabase,
+    *,
+    on_progress: MigrationProgressFn | None = None,
+) -> list[str]:
     """Apply all pending database migrations. Returns newly applied migration names."""
     migrations_parent = str(_MIGRATIONS_PACKAGE.parent)
     if migrations_parent not in sys.path:
@@ -27,7 +35,7 @@ def init_schema(db: StandardDatabase) -> list[str]:
 
     from migrations.runner import apply_all
 
-    applied = apply_all(db)
+    applied = apply_all(db, on_progress=on_progress)
     if applied:
         log.info("schema init applied %d migration(s)", len(applied))
     else:

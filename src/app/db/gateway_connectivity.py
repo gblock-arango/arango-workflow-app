@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import ssl
+import time
+from collections.abc import Callable
 from typing import Any
 from urllib import error, request
 
@@ -15,12 +17,32 @@ from app.workflow_platform.databricks_outbound_auth import outbound_databricks_a
 logger = logging.getLogger(__name__)
 
 
-def probe_gateway_health(base_url: str) -> tuple[bool, str]:
-    """
-    Return ``(ok, message)`` for ``GET {base_url}/health``.
+def _health_probe_timeout_seconds() -> float:
+    settings = get_gateway_settings()
+    health_timeout = float(os.environ.get("ARANGO_GATEWAY_HEALTH_TIMEOUT_SECONDS", "30"))
+    return min(float(settings.timeout_seconds), max(2.0, health_timeout))
 
-    Uses the same outbound Databricks auth as :class:`GatewayArangoClient`.
-    """
+
+def _health_probe_retries() -> int:
+    return max(1, int(os.environ.get("ARANGO_GATEWAY_HEALTH_PROBE_RETRIES", "2")))
+
+
+def _health_probe_retry_delay_seconds() -> float:
+    return max(0.0, float(os.environ.get("ARANGO_GATEWAY_HEALTH_RETRY_DELAY_SECONDS", "2")))
+
+
+def _is_transient_health_failure(message: str) -> bool:
+    lower = message.lower()
+    return (
+        "timed out" in lower
+        or "timeout" in lower
+        or "temporarily unavailable" in lower
+        or "connection reset" in lower
+    )
+
+
+def _probe_gateway_health_once(base_url: str) -> tuple[bool, str]:
+    """Single ``GET /health`` attempt using outbound Databricks auth (M2M or user)."""
     base = (base_url or "").strip().rstrip("/")
     if not base:
         return False, "Gateway URL is not configured"
@@ -38,10 +60,7 @@ def probe_gateway_health(base_url: str) -> tuple[bool, str]:
         ssl_ctx.verify_mode = ssl.CERT_NONE
 
     req = request.Request(url=url, method="GET", headers=headers)
-    health_timeout = float(os.environ.get("ARANGO_GATEWAY_HEALTH_TIMEOUT_SECONDS", "8"))
-    open_kw: dict[str, Any] = {
-        "timeout": min(float(settings.timeout_seconds), max(2.0, health_timeout)),
-    }
+    open_kw: dict[str, Any] = {"timeout": _health_probe_timeout_seconds()}
     if ssl_ctx is not None:
         open_kw["context"] = ssl_ctx
 
@@ -71,7 +90,48 @@ def probe_gateway_health(base_url: str) -> tuple[bool, str]:
         return False, str(exc)
 
 
-def gateway_connectivity_status() -> dict[str, Any]:
+def probe_gateway_health(
+    base_url: str,
+    *,
+    on_attempt: Callable[[int, int, str], None] | None = None,
+) -> tuple[bool, str]:
+    """
+    Return ``(ok, message)`` for ``GET {base_url}/health``.
+
+    Retries transient timeouts — gateway workers can queue ``/health`` behind long
+    Arango proxy calls (especially right after a gateway or workflow redeploy).
+    """
+    attempts = _health_probe_retries()
+    delay = _health_probe_retry_delay_seconds()
+    last_msg = "unknown"
+    for attempt in range(1, attempts + 1):
+        if on_attempt is not None:
+            on_attempt(attempt, attempts, "probing")
+        ok, msg = _probe_gateway_health_once(base_url)
+        if ok:
+            if attempt > 1:
+                return True, f"Gateway reachable (attempt {attempt}/{attempts})"
+            return True, msg
+        last_msg = msg
+        if attempt < attempts and _is_transient_health_failure(msg):
+            logger.info(
+                "Gateway /health attempt %s/%s failed (%s); retrying in %.1fs",
+                attempt,
+                attempts,
+                msg,
+                delay,
+            )
+            if delay > 0:
+                time.sleep(delay)
+            continue
+        break
+    return False, last_msg
+
+
+def gateway_connectivity_status(
+    *,
+    on_health_attempt: Callable[[int, int, str], None] | None = None,
+) -> dict[str, Any]:
     """
     Resolve gateway URL and probe ``/health``.
 
@@ -90,7 +150,7 @@ def gateway_connectivity_status() -> dict[str, Any]:
             ),
         }
 
-    ok, msg = probe_gateway_health(base)
+    ok, msg = probe_gateway_health(base, on_attempt=on_health_attempt)
     return {
         "gateway_url": base,
         "gateway_ok": ok,

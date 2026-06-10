@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from app.db.client import get_db
@@ -39,7 +40,14 @@ async def ensure_staging_schema_async(*, db: StandardDatabase | None = None) -> 
     return await asyncio.to_thread(ensure_staging_schema, db=db)
 
 
-def ensure_ontology_schema(*, db: StandardDatabase | None = None) -> dict[str, Any]:
+MigrationProgressFn = Callable[[str, dict[str, Any] | None], None]
+
+
+def ensure_ontology_schema(
+    *,
+    db: StandardDatabase | None = None,
+    on_progress: MigrationProgressFn | None = None,
+) -> dict[str, Any]:
     """Apply pending migrations idempotently (``make migrate`` equivalent).
 
     Safe to call before document chunking or extraction runs. Uses a process-wide
@@ -49,7 +57,7 @@ def ensure_ontology_schema(*, db: StandardDatabase | None = None) -> dict[str, A
 
     database = db or get_db()
     with _lock:
-        newly_applied = init_schema(database)
+        newly_applied = init_schema(database, on_progress=on_progress)
         if newly_applied:
             _last_applied = newly_applied
             log.info(
@@ -66,6 +74,10 @@ def ensure_ontology_schema(*, db: StandardDatabase | None = None) -> dict[str, A
     }
 
 
-async def ensure_ontology_schema_async(*, db: StandardDatabase | None = None) -> dict[str, Any]:
+async def ensure_ontology_schema_async(
+    *,
+    db: StandardDatabase | None = None,
+    on_progress: MigrationProgressFn | None = None,
+) -> dict[str, Any]:
     """Run :func:`ensure_ontology_schema` in a worker thread (do not block the event loop)."""
-    return await asyncio.to_thread(ensure_ontology_schema, db=db)
+    return await asyncio.to_thread(ensure_ontology_schema, db=db, on_progress=on_progress)

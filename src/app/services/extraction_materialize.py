@@ -10,7 +10,7 @@ from app.db import documents_repo
 from app.models.documents import DocumentStatus
 from app.services import embedding_artifacts
 from app.services import embedding_status as emb_status_svc
-from app.services.schema_bootstrap import ensure_ontology_schema, ensure_staging_schema
+from app.services.schema_bootstrap import ensure_staging_schema
 
 log = logging.getLogger(__name__)
 
@@ -60,9 +60,21 @@ def materialize_embedding_document_for_extraction(
     if str(row.get("status") or "") != "ready":
         raise ValueError(f"Document {doc_id} is not ready (status={row.get('status')})")
 
-    ensure_staging_schema()
-    ensure_ontology_schema()
+    report(
+        "Ensuring documents/chunks collections exist in Arango…",
+        {"phase": "staging_schema"},
+    )
+    staging = ensure_staging_schema()
+    if staging.get("collections_created"):
+        report(
+            f"Created staging collections: {', '.join(staging['collections_created'])}",
+            {"phase": "staging_schema", "collections_created": staging["collections_created"]},
+        )
 
+    report(
+        "Reading chunks from UC volume…",
+        {"phase": "read_uc", "status": "reading"},
+    )
     chunk_rows = embedding_artifacts.read_chunks(doc_id)
     if not chunk_rows:
         raise ValueError(f"No UC chunks for document {doc_id}")
@@ -72,6 +84,10 @@ def materialize_embedding_document_for_extraction(
         {"phase": "read_uc", "chunk_count": len(chunk_rows)},
     )
 
+    report(
+        "Reading embeddings from UC volume…",
+        {"phase": "read_uc", "status": "embeddings", "chunk_count": len(chunk_rows)},
+    )
     emb_by_index: dict[int, list[float]] = {}
     for item in embedding_artifacts.read_embeddings(doc_id):
         idx = int(item.get("chunk_index") or 0)
@@ -83,6 +99,14 @@ def materialize_embedding_document_for_extraction(
         "volume_relative_path": row["volume_relative_path"],
         "volume_source": "upload",
     }
+    report(
+        f"Upserting document record ({len(emb_by_index)} embeddings loaded)…",
+        {
+            "phase": "document_upsert",
+            "chunk_count": len(chunk_rows),
+            "embedding_count": len(emb_by_index),
+        },
+    )
     existing = documents_repo.get_document(doc_id)
     if existing:
         documents_repo.update_document_metadata(

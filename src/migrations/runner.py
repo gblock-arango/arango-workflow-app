@@ -17,14 +17,20 @@ from __future__ import annotations
 
 import importlib
 import logging
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from app.db.types import StandardDatabase
 
 from app.db.utils import doc_get
 
 log = logging.getLogger(__name__)
+
+MigrationProgressFn = Callable[[str, dict[str, Any] | None], None]
+DEFAULT_MIGRATION_HEARTBEAT_SEC = 10.0
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent
 META_COLLECTION = "aoe_system_meta"
@@ -62,31 +68,111 @@ def discover_migrations() -> list[str]:
     return modules
 
 
-def apply_all(db: StandardDatabase) -> list[str]:
+def apply_all(
+    db: StandardDatabase,
+    *,
+    on_progress: MigrationProgressFn | None = None,
+    heartbeat_sec: float = DEFAULT_MIGRATION_HEARTBEAT_SEC,
+) -> list[str]:
     """Apply all pending migrations and return list of newly-applied names.
 
     Already-applied migrations (recorded in ``aoe_system_meta``) are skipped.
+    ``on_progress`` is invoked before each migration and every ``heartbeat_sec``
+    while a slow migration runs (keeps Diagnostics polls fresh).
     """
+    def report(message: str, progress: dict[str, Any] | None = None) -> None:
+        if on_progress:
+            on_progress(message, progress)
+
     _ensure_meta_collection(db)
     state = _load_schema_state(db)
     applied: list[dict] = state.get("applied_migrations", [])
     applied_names: set[str] = {m["name"] for m in applied}
 
     all_migrations = discover_migrations()
+    pending = [name for name in all_migrations if name not in applied_names]
     newly_applied: list[str] = []
+
+    if pending:
+        report(
+            f"Applying {len(pending)} pending schema migration(s) (of {len(all_migrations)} total)…",
+            {
+                "phase": "schema_migration",
+                "migration_pending": len(pending),
+                "migration_total": len(all_migrations),
+            },
+        )
+    else:
+        report(
+            f"Schema up to date ({len(all_migrations)} migrations already applied)",
+            {
+                "phase": "schema_migration",
+                "migration_pending": 0,
+                "migration_total": len(all_migrations),
+            },
+        )
 
     for mod_name in all_migrations:
         if mod_name in applied_names:
             log.debug("migration %s already applied — skipping", mod_name)
             continue
 
+        index = len(newly_applied) + 1
         log.info("applying migration %s …", mod_name)
-        module = importlib.import_module(f"migrations.{mod_name}")
-        module.up(db)  # type: ignore[attr-defined]
+        report(
+            f"Migration {index}/{len(pending)}: {mod_name}…",
+            {
+                "phase": "schema_migration",
+                "migration": mod_name,
+                "migration_index": index,
+                "migration_pending": len(pending),
+                "migration_total": len(all_migrations),
+            },
+        )
 
+        module = importlib.import_module(f"migrations.{mod_name}")
+        started = time.perf_counter()
+        stop = threading.Event()
+
+        def _heartbeat() -> None:
+            while not stop.wait(max(1.0, float(heartbeat_sec))):
+                elapsed_s = int(time.perf_counter() - started)
+                report(
+                    f"Still applying {mod_name} ({elapsed_s}s)…",
+                    {
+                        "phase": "schema_migration",
+                        "migration": mod_name,
+                        "migration_index": index,
+                        "migration_pending": len(pending),
+                        "migration_total": len(all_migrations),
+                        "migration_elapsed_s": elapsed_s,
+                    },
+                )
+
+        hb = threading.Thread(target=_heartbeat, name=f"migrate-hb-{mod_name}", daemon=True)
+        hb.start()
+        try:
+            module.up(db)  # type: ignore[attr-defined]
+        finally:
+            stop.set()
+            hb.join(timeout=1.0)
+
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
         applied.append({"name": mod_name, "applied_at": time.time()})
         newly_applied.append(mod_name)
         log.info("migration %s applied successfully", mod_name)
+        report(
+            f"Migration {index}/{len(pending)} done: {mod_name} ({elapsed_ms}ms)",
+            {
+                "phase": "schema_migration",
+                "migration": mod_name,
+                "migration_index": index,
+                "migration_pending": len(pending),
+                "migration_total": len(all_migrations),
+                "migration_elapsed_ms": elapsed_ms,
+                "migration_ok": True,
+            },
+        )
 
     state["schema_version"] = len(applied)
     state["applied_migrations"] = applied

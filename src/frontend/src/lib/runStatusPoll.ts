@@ -17,6 +17,27 @@ const STAGE_ALIASES: Record<string, string> = {
   starting: "gateway_arango",
 };
 
+/** Min ms without a preparation update before the UI shows a stall warning. */
+export const PREPARATION_STALL_MS_BY_STAGE: Record<string, number> = {
+  queued: 20_000,
+  gateway_health: 70_000,
+  gateway_arango: 70_000,
+  run_persisted: 120_000,
+  starting: 20_000,
+  materializing_arango: 90_000,
+  schema_migrations: 120_000,
+  launching_pipeline: 30_000,
+};
+
+export const DEFAULT_PREPARATION_STALL_MS = 20_000;
+
+export function preparationStallThresholdMs(
+  stage: string | null | undefined,
+): number {
+  const key = stage ?? "queued";
+  return PREPARATION_STALL_MS_BY_STAGE[key] ?? DEFAULT_PREPARATION_STALL_MS;
+}
+
 export const PREPARATION_STAGE_ORDER = [
   "queued",
   "gateway_health",
@@ -57,7 +78,7 @@ export function mergeRunProgressSnapshots(
   next: RunProgressSnapshot,
 ): RunProgressSnapshot {
   if (!prev) return next;
-  if (next.status === "failed") return next;
+  if (next.status === "failed" || next.status === "cancelled") return next;
 
   const prevStage = preparationStageRank(prev.preparation_stage);
   const nextStage = preparationStageRank(next.preparation_stage);
@@ -94,6 +115,16 @@ export interface PreparationProgressDetail {
   total?: number;
   batch_size?: number;
   chunk_count?: number;
+  embedding_count?: number;
+  collections_created?: string[];
+  status?: string;
+  migration?: string;
+  migration_index?: number;
+  migration_pending?: number;
+  migration_total?: number;
+  migration_elapsed_s?: number;
+  migration_elapsed_ms?: number;
+  migration_ok?: boolean;
   gateway_ok?: boolean;
   gateway_url?: string;
   gateway_message?: string;
@@ -112,6 +143,10 @@ export interface PreparationProgressDetail {
 export interface RunProgressSnapshot {
   run_id: string;
   status: string;
+  doc_id?: string | null;
+  doc_ids?: string[] | null;
+  target_ontology_id?: string | null;
+  arango_database?: string | null;
   preparation_stage?: string | null;
   preparation_message?: string | null;
   preparation_updated_at?: number | null;
@@ -135,9 +170,19 @@ export function pickProgress(raw: Record<string, unknown>): RunProgressSnapshot 
   const progressRaw =
     (raw.preparation_progress as Record<string, unknown> | undefined) ??
     (stats.preparation_progress as Record<string, unknown> | undefined);
+  const docIdsRaw = raw.doc_ids;
+  const docIds = Array.isArray(docIdsRaw)
+    ? docIdsRaw.map((id) => String(id))
+    : null;
   return {
     run_id: String(raw._key ?? ""),
     status: String(raw.status ?? "unknown"),
+    doc_id: typeof raw.doc_id === "string" ? raw.doc_id : null,
+    doc_ids: docIds,
+    target_ontology_id:
+      typeof raw.target_ontology_id === "string" ? raw.target_ontology_id : null,
+    arango_database:
+      typeof raw.arango_database === "string" ? raw.arango_database : null,
     preparation_stage:
       (raw.preparation_stage as string | undefined) ??
       (stats.preparation_stage as string | undefined) ??

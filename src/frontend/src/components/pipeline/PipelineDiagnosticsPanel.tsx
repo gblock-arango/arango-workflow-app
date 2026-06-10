@@ -1,7 +1,7 @@
 "use client";
 
 import type { RunProgressSnapshot } from "@/lib/runStatusPoll";
-import { isRunStatusPollTimeout } from "@/lib/runStatusPoll";
+import { isRunStatusPollTimeout, preparationStallThresholdMs } from "@/lib/runStatusPoll";
 
 const PREPARATION_STEPS: {
   key: string;
@@ -92,6 +92,32 @@ function progressDetailLine(progress: RunProgressSnapshot | null): string | null
     if (p.arango_verified) parts.push("run doc verified in Arango");
     if (parts.length > 0) return parts.join(" · ");
   }
+  if (
+    (p.phase === "schema_migration" || p.phase === "schema_migrations") &&
+    p.migration
+  ) {
+    const idx =
+      p.migration_index != null && p.migration_pending != null
+        ? ` (${p.migration_index}/${p.migration_pending})`
+        : "";
+    const elapsed =
+      p.migration_elapsed_s != null ? ` · ${p.migration_elapsed_s}s` : "";
+    return `Schema migration${idx}: ${p.migration}${elapsed}`;
+  }
+  if (p.phase === "staging_schema") {
+    const created = p.collections_created as string[] | undefined;
+    if (created?.length) return `Staging: created ${created.join(", ")}`;
+    return "Staging: documents/chunks collections";
+  }
+  if (p.phase === "read_uc") {
+    if (p.chunk_count != null) return `UC: ${p.chunk_count} chunks loaded`;
+    if (p.status === "embeddings") return "UC: loading embeddings…";
+    return "UC: reading chunks…";
+  }
+  if (p.phase === "document_upsert" && p.chunk_count != null) {
+    const emb = p.embedding_count != null ? ` · ${p.embedding_count} embeddings` : "";
+    return `Document upsert · ${p.chunk_count} chunks${emb}`;
+  }
   if (p.phase === "arango_insert" && p.total != null && p.inserted != null) {
     const batch =
       p.batch_size != null ? ` · batch size ${p.batch_size}` : "";
@@ -148,26 +174,12 @@ export default function PipelineDiagnosticsPanel({
       ? displayProgress.preparation_updated_at * 1000
       : null;
   const stage = displayProgress?.preparation_stage ?? "queued";
-  const earlyGatewayStages = new Set([
-    "queued",
-    "gateway_health",
-    "gateway_arango",
-    "run_persisted",
-    "starting",
-  ]);
-  const prepStalledEarly =
+  const stallThresholdMs = preparationStallThresholdMs(stage);
+  const prepStalled =
     !pollError &&
     displayProgress?.status === "preparing" &&
     prepUpdatedMs != null &&
-    earlyGatewayStages.has(stage) &&
-    Date.now() - prepUpdatedMs > 20_000;
-  const prepStalledMaterialize =
-    !pollError &&
-    displayProgress?.status === "preparing" &&
-    prepUpdatedMs != null &&
-    stage === "materializing_arango" &&
-    Date.now() - prepUpdatedMs > 120_000;
-  const prepStalled = prepStalledEarly || prepStalledMaterialize;
+    Date.now() - prepUpdatedMs > stallThresholdMs;
 
   const checkpoints = displayProgress?.preparation_progress?.checkpoints ?? [];
 
@@ -234,9 +246,16 @@ export default function PipelineDiagnosticsPanel({
             <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded px-2 py-1">
               Preparation has not advanced at stage{" "}
               <strong>{stage}</strong>
-              {prepStalledEarly
-                ? " for 20s — gateway may be unreachable or worker stuck before Arango write."
-                : " for 2 min — chunk materialization may be slow; check gateway logs."}
+              {` for ${Math.round(stallThresholdMs / 1000)}s`}
+              {stage === "gateway_health" || stage === "gateway_arango"
+                ? " — gateway may be cold-starting or workers busy (first /health after redeploy is often 10–60s)."
+                : stage === "run_persisted"
+                  ? " — Arango write/read via gateway+tunnel can take 30–90s; see checkpoint lines below."
+                  : stage === "schema_migrations"
+                    ? " — a schema migration may be slow through the gateway; see migration line below."
+                    : stage === "materializing_arango"
+                      ? " — UC read or chunk insert may be slow; check gateway logs."
+                      : " — worker may be stuck; check gateway logs."}
             </p>
           )}
 
