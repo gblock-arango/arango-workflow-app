@@ -562,14 +562,10 @@ export default function PipelineDiagnosticsPanel({
 
   if (embedded) {
     return (
-      <aside
-        className="flex flex-col w-full lg:w-[340px] flex-shrink-0 border-t lg:border-t-0 lg:border-l border-gray-100 bg-gray-50/40 overflow-hidden"
-        style={{ height: AGENT_DAG_HEIGHT_PX }}
-        aria-label="Run diagnostics"
-      >
-        <div className="px-3 py-2 border-b border-gray-100 shrink-0 space-y-0.5">
+      <div className="flex flex-col h-full min-h-0 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 shrink-0 space-y-0.5 bg-white">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
               Diagnostics
             </h2>
             {lastPolledAt && (
@@ -582,8 +578,8 @@ export default function PipelineDiagnosticsPanel({
             {showAgentTelemetry ? "Agent & LLM telemetry" : "Run progress polls"}
           </p>
         </div>
-        <div className="flex-1 overflow-y-auto px-3 py-2">{content}</div>
-      </aside>
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 bg-gray-50/40">{content}</div>
+      </div>
     );
   }
 

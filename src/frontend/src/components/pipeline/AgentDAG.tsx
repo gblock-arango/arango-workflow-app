@@ -123,7 +123,8 @@ function AgentNode({ data }: NodeProps<AgentNodeData>) {
   );
 }
 
-export const AGENT_DAG_HEIGHT_PX = 290;
+/** Default pipeline monitor widget height (Agent Pipeline + Diagnostics). */
+export const PIPELINE_WIDGET_HEIGHT_CLASS = "h-[75vh]";
 
 const nodeTypes = { agentNode: AgentNode };
 
@@ -219,8 +220,7 @@ export default function AgentDAG({ steps, onContextMenu, onApi }: AgentDAGProps)
 
   return (
     <div
-      className="w-full [&_.react-flow__pane]:!cursor-default [&_.react-flow__node]:!cursor-default"
-      style={{ height: AGENT_DAG_HEIGHT_PX }}
+      className="w-full h-full min-h-0 [&_.react-flow__pane]:!cursor-default [&_.react-flow__node]:!cursor-default"
       data-testid="agent-dag"
     >
       <ReactFlow
