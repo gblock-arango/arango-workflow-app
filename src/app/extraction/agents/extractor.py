@@ -14,8 +14,6 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.config import settings
-from app.db.client import get_db
-from app.db.utils import run_aql
 from app.extraction.prompts import get_template
 from app.extraction.state import ExtractionPipelineState, StepLog, TokenUsage
 from app.models.ontology import ExtractionResult
@@ -80,17 +78,35 @@ def _get_llm(model_name: str) -> Any:
     return ChatOpenAI(**kwargs)
 
 
+def _format_chunk_batch_text(chunks: list[dict[str, Any]], start_index: int = 0) -> str:
+    """Render one chunk group as prompt text with stable chunk ids."""
+    text_parts = []
+    for offset, chunk in enumerate(chunks):
+        j = start_index + offset + 1
+        chunk_id = chunk.get("_key") or chunk.get("id") or chunk.get("chunk_id") or str(j)
+        text_parts.append(f"[Chunk {j} | source_chunk_id={chunk_id}]\n{chunk.get('text', '')}")
+    return "\n\n".join(text_parts)
+
+
 def _batch_chunks(chunks: list[dict[str, Any]], batch_size: int) -> list[str]:
     """Combine chunks into batched text blocks for prompt injection."""
     batches: list[str] = []
     for i in range(0, len(chunks), batch_size):
         batch = chunks[i : i + batch_size]
-        text_parts = []
-        for j, chunk in enumerate(batch, start=i + 1):
-            chunk_id = chunk.get("_key") or chunk.get("id") or chunk.get("chunk_id") or str(j)
-            text_parts.append(f"[Chunk {j} | source_chunk_id={chunk_id}]\n{chunk.get('text', '')}")
-        batches.append("\n\n".join(text_parts))
+        batches.append(_format_chunk_batch_text(batch, start_index=i))
     return batches
+
+
+def _batch_chunk_groups(
+    chunks: list[dict[str, Any]],
+    batch_size: int,
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Return (batch_text, batch_chunks) pairs for extraction + in-memory RAG."""
+    groups: list[tuple[str, list[dict[str, Any]]]] = []
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i : i + batch_size]
+        groups.append((_format_chunk_batch_text(batch, start_index=i), batch))
+    return groups
 
 
 def _parse_llm_response(raw_text: str, pass_number: int, model_name: str) -> ExtractionResult:
@@ -149,43 +165,62 @@ def _parse_llm_response(raw_text: str, pass_number: int, model_name: str) -> Ext
     return ExtractionResult.model_validate(data)
 
 
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    dot = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+    for x, y in zip(a, b, strict=False):
+        dot += x * y
+        norm_a += x * x
+        norm_b += y * y
+    if norm_a <= 0.0 or norm_b <= 0.0:
+        return 0.0
+    return dot / ((norm_a**0.5) * (norm_b**0.5))
+
+
+def _mean_embedding(chunks: list[dict[str, Any]]) -> list[float] | None:
+    embeddings = [c["embedding"] for c in chunks if isinstance(c.get("embedding"), list)]
+    if not embeddings:
+        return None
+    dim = len(embeddings[0])
+    if dim == 0 or any(len(emb) != dim for emb in embeddings):
+        return None
+    totals = [0.0] * dim
+    for emb in embeddings:
+        for idx, value in enumerate(emb):
+            totals[idx] += float(value)
+    count = float(len(embeddings))
+    return [value / count for value in totals]
+
+
 def _retrieve_relevant_chunks(
-    document_id: str,
-    chunks: list[dict[str, Any]],
-    batch_text: str,
+    all_chunks: list[dict[str, Any]],
+    batch_chunks: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """RAG: retrieve relevant chunks via vector similarity.
+    """In-memory RAG: cosine similarity over UC-loaded embeddings (no Arango)."""
+    if not settings.extraction_rag_enabled:
+        return batch_chunks
 
-    Falls back to returning the input chunks if vector search is unavailable.
-    """
-    try:
-        db = get_db()
-        if not db.has_collection("chunks"):
-            return chunks
+    query_embedding = _mean_embedding(batch_chunks)
+    if query_embedding is None:
+        return batch_chunks
 
-        sample_embedding = chunks[0].get("embedding") if chunks else None
-        if not sample_embedding:
-            return chunks
+    min_similarity = settings.extraction_rag_min_similarity
+    top_k = settings.extraction_rag_top_k
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for chunk in all_chunks:
+        embedding = chunk.get("embedding")
+        if not isinstance(embedding, list) or len(embedding) != len(query_embedding):
+            continue
+        similarity = _cosine_similarity(query_embedding, embedding)
+        if similarity >= min_similarity:
+            scored.append((similarity, chunk))
 
-        query = """\
-FOR chunk IN chunks
-  FILTER chunk.doc_id == @doc_id
-  LET sim = COSINE_SIMILARITY(chunk.embedding, @embedding)
-  FILTER sim > 0.7
-  SORT sim DESC
-  LIMIT 10
-  RETURN chunk"""
-        result = list(
-            run_aql(
-                db,
-                query,
-                bind_vars={"doc_id": document_id, "embedding": sample_embedding},
-            )
-        )
-        return result if result else chunks
-    except Exception:
-        log.debug("RAG chunk retrieval unavailable, using provided chunks")
-        return chunks
+    if not scored:
+        return batch_chunks
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [chunk for _, chunk in scored[:top_k]]
 
 
 async def _extract_batch(
@@ -196,15 +231,15 @@ async def _extract_batch(
     pass_num: int,
     model_name: str,
     domain_context: str,
-    document_id: str,
-    chunks: list[dict[str, Any]],
+    all_chunks: list[dict[str, Any]],
+    batch_chunks: list[dict[str, Any]],
     run_id: str,
     semaphore: asyncio.Semaphore,
 ) -> tuple[list[Any], list[str], dict[str, int]]:
     """Extract ontology classes from a single batch. Returns (classes, errors, token_counts)."""
     async with semaphore:
-        relevant_chunks = _retrieve_relevant_chunks(document_id, chunks, batch_text)
-        if relevant_chunks and relevant_chunks is not chunks:
+        relevant_chunks = _retrieve_relevant_chunks(all_chunks, batch_chunks)
+        if relevant_chunks and relevant_chunks is not batch_chunks:
             rag_text = "\n\n".join(c.get("text", "") for c in relevant_chunks[:5])
             batch_text = f"{batch_text}\n\n--- RELATED CONTEXT ---\n{rag_text}"
 
@@ -277,16 +312,15 @@ async def _run_single_pass(
     pass_num: int,
     llm: Any,
     template: Any,
-    chunk_batches: list[str],
+    batch_groups: list[tuple[str, list[dict[str, Any]]]],
     model_name: str,
     domain_context: str,
-    document_id: str,
-    chunks: list[dict[str, Any]],
+    all_chunks: list[dict[str, Any]],
     run_id: str,
     semaphore: asyncio.Semaphore,
 ) -> tuple[ExtractionResult, list[str], dict[str, int]]:
     """Run one extraction pass with all batches concurrent."""
-    log.info("extractor pass %d started (%d batches)", pass_num, len(chunk_batches))
+    log.info("extractor pass %d started (%d batches)", pass_num, len(batch_groups))
 
     tasks = [
         _extract_batch(
@@ -297,12 +331,12 @@ async def _run_single_pass(
             pass_num=pass_num,
             model_name=model_name,
             domain_context=domain_context,
-            document_id=document_id,
-            chunks=chunks,
+            all_chunks=all_chunks,
+            batch_chunks=batch_chunks,
             run_id=run_id,
             semaphore=semaphore,
         )
-        for idx, batch_text in enumerate(chunk_batches)
+        for idx, (batch_text, batch_chunks) in enumerate(batch_groups)
     ]
 
     results = await asyncio.gather(*tasks)
@@ -364,7 +398,7 @@ async def extractor_node(state: ExtractionPipelineState) -> dict[str, Any]:
     template = get_template(template_key)
     total_tokens = TokenUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
 
-    chunk_batches = _batch_chunks(chunks, batch_size)
+    batch_groups = _batch_chunk_groups(chunks, batch_size)
     semaphore = asyncio.Semaphore(settings.llm_extraction_max_concurrency)
 
     # Run all passes concurrently — each pass runs its batches concurrently too
@@ -373,11 +407,10 @@ async def extractor_node(state: ExtractionPipelineState) -> dict[str, Any]:
             pass_num=p,
             llm=llm,
             template=template,
-            chunk_batches=chunk_batches,
+            batch_groups=batch_groups,
             model_name=model_name,
             domain_context=domain_context,
-            document_id=document_id,
-            chunks=chunks,
+            all_chunks=chunks,
             run_id=run_id,
             semaphore=semaphore,
         )

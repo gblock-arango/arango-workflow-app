@@ -22,6 +22,18 @@ STAGE_SCHEMA = "schema_migrations"
 STAGE_LAUNCHING = "launching_pipeline"
 
 
+def format_duration_ms(ms: int) -> str:
+    """Format a wall-clock interval for UI checkpoint messages (seconds when ≥1s)."""
+    if ms < 1000:
+        return f"{ms}ms"
+    sec = ms / 1000.0
+    if sec < 60:
+        return f"{sec:.1f}s" if sec < 10 else f"{sec:.0f}s"
+    minutes = int(sec // 60)
+    remainder = sec % 60
+    return f"{minutes}m {remainder:.0f}s"
+
+
 def _append_checkpoint(
     run_id: str,
     *,
@@ -120,6 +132,7 @@ def probe_gateway_health_checkpoint(run_id: str) -> None:
 
     status = gateway_connectivity_status(on_health_attempt=on_health_attempt)
     latency_ms = int((time.perf_counter() - started) * 1000)
+    duration = format_duration_ms(latency_ms)
     ok = bool(status.get("gateway_ok"))
     gateway_url = str(status.get("gateway_url") or "")
     detail = str(status.get("gateway_message") or "unknown")
@@ -147,7 +160,7 @@ def probe_gateway_health_checkpoint(run_id: str) -> None:
         record_checkpoint_cache(
             run_id,
             stage=STAGE_GATEWAY_HEALTH,
-            message=f"Gateway /health failed ({latency_ms}ms): {hint}",
+            message=f"Gateway /health failed after {duration}: {hint}",
             ok=False,
             progress=progress,
         )
@@ -156,23 +169,29 @@ def probe_gateway_health_checkpoint(run_id: str) -> None:
     record_checkpoint_cache(
         run_id,
         stage=STAGE_GATEWAY_ARANGO,
-        message=f"Gateway /health OK ({latency_ms}ms) — opening Arango via proxy…",
+        message=f"Gateway /health OK in {duration} — opening Arango via proxy…",
         progress=progress,
     )
 
 
-def connect_arango_checkpoint(run_id: str) -> tuple[Any, Any]:
+def connect_arango_checkpoint(
+    run_id: str,
+    arango_database: str | None = None,
+) -> tuple[Any, Any]:
     """``get_db()`` through gateway proxy; surfaces connect latency to UI."""
     from app.config import settings as app_settings
     from app.db.client import (
         _is_missing_database_error,
+        _is_stale_gateway_client_error,
+        effective_arango_database_name,
         get_db,
         recover_missing_arango_database,
+        reset_gateway_session,
     )
     from app.db.gateway_database import GatewayAPIError
     from app.services.extraction import _apply_run_arango_database, _get_collection
 
-    _apply_run_arango_database(run_id)
+    _apply_run_arango_database(run_id, arango_database=arango_database)
     started = time.perf_counter()
     db = None
     col = None
@@ -182,8 +201,11 @@ def connect_arango_checkpoint(run_id: str) -> tuple[Any, Any]:
             db = get_db()
             col = _get_collection(db, "extraction_runs")
             break
-        except (GatewayAPIError, RuntimeError) as exc:
+        except (GatewayAPIError, RuntimeError, AttributeError) as exc:
             last_exc = exc
+            if attempt == 0 and _is_stale_gateway_client_error(exc):
+                reset_gateway_session()
+                continue
             if (
                 attempt == 0
                 and app_settings.can_create_databases
@@ -192,6 +214,9 @@ def connect_arango_checkpoint(run_id: str) -> tuple[Any, Any]:
                 recover_missing_arango_database()
                 continue
             message = format_gateway_error(exc)
+            db_label = effective_arango_database_name()
+            if db_label:
+                message = f"{message} (database={db_label!r})"
             if not app_settings.can_create_databases and _is_missing_database_error(exc):
                 message = (
                     f"{message} — recreate database {app_settings.arango_db!r} in Arango "
@@ -209,6 +234,7 @@ def connect_arango_checkpoint(run_id: str) -> tuple[Any, Any]:
         assert last_exc is not None
         raise last_exc
     latency_ms = int((time.perf_counter() - started) * 1000)
+    duration = format_duration_ms(latency_ms)
     from app.services.run_progress_cache import get_cached_run_progress
 
     db_label = (get_cached_run_progress(run_id) or {}).get("arango_database") or "Arango"
@@ -216,7 +242,8 @@ def connect_arango_checkpoint(run_id: str) -> tuple[Any, Any]:
         run_id,
         stage=STAGE_RUN_PERSISTED,
         message=(
-            f"Arango session ready on {db_label} ({latency_ms}ms) — persisting run record…"
+            f"Arango session ready on {db_label} "
+            f"({duration} to open DB + extraction_runs collection) — persisting run record…"
         ),
         progress={
             "phase": "gateway_arango",
@@ -262,6 +289,7 @@ def persist_run_record_checkpoint(
         )
     stored = doc_get(col, run_id)
     latency_ms = int((time.perf_counter() - started) * 1000)
+    duration = format_duration_ms(latency_ms)
     if stored is None:
         record_checkpoint_cache(
             run_id,
@@ -277,7 +305,8 @@ def persist_run_record_checkpoint(
         run_id,
         stage=STAGE_RUN_PERSISTED,
         message=(
-            f"Run record confirmed in Arango ({latency_ms}ms) — "
+            f"Run record confirmed in Arango "
+            f"(gateway round-trip {duration}) — "
             f"status={stored.get('status', 'preparing')}"
         ),
         progress={

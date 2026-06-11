@@ -30,11 +30,21 @@ from app.db.utils import doc_get
 log = logging.getLogger(__name__)
 
 MigrationProgressFn = Callable[[str, dict[str, Any] | None], None]
-DEFAULT_MIGRATION_HEARTBEAT_SEC = 10.0
+DEFAULT_MIGRATION_HEARTBEAT_SEC = 12.0
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent
 META_COLLECTION = "aoe_system_meta"
 META_KEY = "schema_state"
+
+
+def _format_migration_duration(ms: int) -> str:
+    if ms < 1000:
+        return f"{ms}ms"
+    sec = ms / 1000.0
+    if sec < 60:
+        return f"{sec:.1f}s" if sec < 10 else f"{sec:.0f}s"
+    minutes = int(sec // 60)
+    return f"{minutes}m {sec % 60:.0f}s"
 
 
 def _ensure_meta_collection(db: StandardDatabase) -> None:
@@ -54,10 +64,15 @@ def _load_schema_state(db: StandardDatabase) -> dict:
 def _save_schema_state(db: StandardDatabase, state: dict) -> None:
     col = db.collection(META_COLLECTION)
     state["_key"] = META_KEY
-    if col.has(META_KEY):
+    if doc_get(col, META_KEY) is not None:
         col.replace(state)
     else:
         col.insert(state)
+    if doc_get(col, META_KEY) is None:
+        raise RuntimeError(
+            f"Failed to persist {META_COLLECTION}/{META_KEY} after schema migrations — "
+            "check arango-gateway-app connectivity and retry extraction"
+        )
 
 
 def discover_migrations() -> list[str]:
@@ -94,6 +109,97 @@ def apply_all(
     newly_applied: list[str] = []
 
     if pending:
+        from migrations.bootstrap_batch import (
+            bootstrap_fresh_schema,
+            can_bootstrap_fresh,
+            core_collections_present,
+            should_use_batch_bootstrap,
+        )
+
+        if should_use_batch_bootstrap(db, applied_names, pending):
+            if can_bootstrap_fresh(applied_names):
+                batch_message = (
+                    f"Fresh database — applying {len(pending)} migrations in one batch…"
+                )
+            else:
+                batch_message = (
+                    "Core collections already present — finishing schema in batch "
+                    f"(graphs, indexes, views; {len(pending)} pending migration(s))…"
+                )
+            report(
+                batch_message,
+                {
+                    "phase": "schema_migration",
+                    "migration_pending": len(pending),
+                    "migration_total": len(all_migrations),
+                    "bootstrap": True,
+                },
+            )
+            try:
+                bootstrap_fresh_schema(db, on_progress=report)
+                now = time.time()
+                for mod_name in pending:
+                    applied.append({"name": mod_name, "applied_at": now})
+                    newly_applied.append(mod_name)
+                state["schema_version"] = len(applied)
+                state["applied_migrations"] = applied
+                report(
+                    "Persisting schema migration state to Arango…",
+                    {
+                        "phase": "schema_migration",
+                        "bootstrap_phase": "persist",
+                        "migration_pending": 0,
+                        "migration_total": len(all_migrations),
+                    },
+                )
+                persist_started = time.perf_counter()
+                stop_persist = threading.Event()
+
+                def _persist_heartbeat() -> None:
+                    while not stop_persist.wait(DEFAULT_MIGRATION_HEARTBEAT_SEC):
+                        elapsed_s = int(time.perf_counter() - persist_started)
+                        report(
+                            f"Still persisting schema migration state ({elapsed_s}s)…",
+                            {
+                                "phase": "schema_migration",
+                                "bootstrap_phase": "persist",
+                                "migration_pending": 0,
+                                "migration_total": len(all_migrations),
+                                "migration_elapsed_s": elapsed_s,
+                            },
+                        )
+
+                persist_hb = threading.Thread(
+                    target=_persist_heartbeat,
+                    name="schema-state-persist-hb",
+                    daemon=True,
+                )
+                persist_hb.start()
+                try:
+                    _save_schema_state(db, state)
+                finally:
+                    stop_persist.set()
+                    persist_hb.join(timeout=1.0)
+                log.info(
+                    "batch bootstrap complete — %d migration(s) marked applied",
+                    len(newly_applied),
+                )
+                return newly_applied
+            except Exception as exc:
+                log.exception("batch schema bootstrap failed")
+                if core_collections_present(db):
+                    raise RuntimeError(
+                        "Batch schema bootstrap failed while collection DDL is already "
+                        "present. Refusing to fall back to sequential migration 001+ "
+                        "(that path only repeats slow gateway existence checks). "
+                        "Check arango-gateway-app logs and connectivity, then retry."
+                    ) from exc
+                report(
+                    "Batch bootstrap failed — retrying migrations one at a time…",
+                    {"phase": "schema_migration", "bootstrap": False},
+                )
+
+    if pending:
         report(
             f"Applying {len(pending)} pending schema migration(s) (of {len(all_migrations)} total)…",
             {
@@ -112,21 +218,22 @@ def apply_all(
             },
         )
 
+    total = len(all_migrations)
     for mod_name in all_migrations:
         if mod_name in applied_names:
             log.debug("migration %s already applied — skipping", mod_name)
             continue
 
-        index = len(newly_applied) + 1
+        index = len(applied) + 1
         log.info("applying migration %s …", mod_name)
         report(
-            f"Migration {index}/{len(pending)}: {mod_name}…",
+            f"Migration {index}/{total}: {mod_name}…",
             {
                 "phase": "schema_migration",
                 "migration": mod_name,
                 "migration_index": index,
                 "migration_pending": len(pending),
-                "migration_total": len(all_migrations),
+                "migration_total": total,
             },
         )
 
@@ -144,7 +251,7 @@ def apply_all(
                         "migration": mod_name,
                         "migration_index": index,
                         "migration_pending": len(pending),
-                        "migration_total": len(all_migrations),
+                        "migration_total": total,
                         "migration_elapsed_s": elapsed_s,
                     },
                 )
@@ -160,15 +267,19 @@ def apply_all(
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         applied.append({"name": mod_name, "applied_at": time.time()})
         newly_applied.append(mod_name)
+        applied_names.add(mod_name)
+        state["schema_version"] = len(applied)
+        state["applied_migrations"] = applied
+        _save_schema_state(db, state)
         log.info("migration %s applied successfully", mod_name)
         report(
-            f"Migration {index}/{len(pending)} done: {mod_name} ({elapsed_ms}ms)",
+            f"Migration {index}/{total} done: {mod_name} ({_format_migration_duration(elapsed_ms)})",
             {
                 "phase": "schema_migration",
                 "migration": mod_name,
                 "migration_index": index,
                 "migration_pending": len(pending),
-                "migration_total": len(all_migrations),
+                "migration_total": total,
                 "migration_elapsed_ms": elapsed_ms,
                 "migration_ok": True,
             },

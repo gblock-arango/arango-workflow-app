@@ -19,7 +19,9 @@ from app.services.er import (
     explain_match,
     get_config,
     run_er_pipeline,
+    score_existing_class_row_vs_extracted,
     score_existing_class_vs_extracted,
+    should_score_er_pair,
     update_config,
 )
 
@@ -291,3 +293,41 @@ class TestUpdateConfig:
         config = get_config()
         assert config.similarity_threshold == 0.75
         update_config({"similarity_threshold": 0.7})
+
+
+class TestInMemoryExtractionER:
+    def test_should_score_blocks_unrelated_pairs(self):
+        existing = {"key": "k1", "label": "Invoice", "uri": "http://ex.org#Invoice", "description": ""}
+        extracted = ExtractedClass(
+            uri="http://ex.org#Customer",
+            label="Customer",
+            description="Completely different concept",
+            confidence=0.9,
+        )
+        assert should_score_er_pair(existing, extracted) is False
+
+    def test_should_score_allows_uri_match(self):
+        existing = {"key": "k1", "label": "Foo", "uri": "http://ex.org#Customer", "description": ""}
+        extracted = ExtractedClass(
+            uri="http://ex.org#Customer",
+            label="Bar",
+            description="",
+            confidence=0.9,
+        )
+        assert should_score_er_pair(existing, extracted) is True
+
+    def test_score_existing_class_row_vs_extracted(self):
+        existing = {
+            "key": "k1",
+            "label": "Customer",
+            "uri": "http://ex.org#Customer",
+            "description": "A customer entity",
+        }
+        extracted = ExtractedClass(
+            uri="http://ex.org#Customer",
+            label="Customer",
+            description="A customer entity",
+            confidence=0.9,
+        )
+        result = score_existing_class_row_vs_extracted(existing, extracted)
+        assert result["combined_score"] >= 0.85

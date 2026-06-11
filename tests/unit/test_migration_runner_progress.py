@@ -25,11 +25,15 @@ class TestMigrationRunnerProgress:
         pending = discover_migrations()[:2]
         with patch("migrations.runner.discover_migrations", return_value=pending):
             with patch("migrations.runner._load_schema_state", return_value={}):
-                with patch("migrations.runner.importlib.import_module") as mock_import:
-                    mod = MagicMock()
-                    mod.up = MagicMock()
-                    mock_import.return_value = mod
-                    applied = apply_all(db, on_progress=on_progress, heartbeat_sec=60.0)
+                with patch(
+                    "migrations.bootstrap_batch.bootstrap_fresh_schema",
+                    side_effect=RuntimeError("force sequential fallback"),
+                ):
+                    with patch("migrations.runner.importlib.import_module") as mock_import:
+                        mod = MagicMock()
+                        mod.up = MagicMock()
+                        mock_import.return_value = mod
+                        applied = apply_all(db, on_progress=on_progress, heartbeat_sec=60.0)
 
         assert applied == pending
         assert any("Migration 1/2" in m for m in messages)

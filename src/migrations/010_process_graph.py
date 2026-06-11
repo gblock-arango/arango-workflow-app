@@ -70,8 +70,7 @@ def up(db: StandardDatabase) -> None:
 
     if db.has_graph("domain_ontology"):
         graph = db.graph("domain_ontology")
-        existing_edge_colls = {edef["edge_collection"] for edef in graph.edge_definitions()}
-        if "extracted_from" not in existing_edge_colls:
+        if not graph.has_edge_definition("extracted_from"):
             graph.create_edge_definition(
                 edge_collection="extracted_from",
                 from_vertex_collections=["ontology_classes"],

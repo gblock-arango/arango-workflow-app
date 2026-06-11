@@ -1,4 +1,7 @@
 import {
+  effectivePreparationStage,
+  isPreparationBlocked,
+  isSchemaBootstrapComplete,
   mergeRunProgressSnapshots,
   pickProgress,
   preparationStageRank,
@@ -70,5 +73,55 @@ describe("preparationStageRank", () => {
     expect(preparationStageRank("queued")).toBeLessThan(
       preparationStageRank("launching_pipeline"),
     );
+  });
+});
+
+describe("isSchemaBootstrapComplete", () => {
+  it("detects bootstrap completion from progress and message", () => {
+    expect(
+      isSchemaBootstrapComplete({
+        preparation_message: "Batch schema bootstrap complete (17 doc + 13 edge, 3m 25s)",
+        preparation_progress: { bootstrap_phase: "complete" },
+      }),
+    ).toBe(true);
+    expect(
+      isSchemaBootstrapComplete({
+        preparation_message: "Persisting schema migration state…",
+        preparation_progress: { bootstrap_phase: "persist" },
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("effectivePreparationStage", () => {
+  it("advances UI past schema when bootstrap finished but status is still preparing", () => {
+    const snap = pickProgress({
+      _key: "run_abc123def456",
+      status: "preparing",
+      preparation_stage: "schema_migrations",
+      preparation_message: "Batch schema bootstrap complete (17 doc + 13 edge, 3m 25s)",
+      preparation_progress: { bootstrap_phase: "complete" },
+    });
+    expect(effectivePreparationStage(snap)).toBe("launching_pipeline");
+  });
+});
+
+describe("isPreparationBlocked", () => {
+  it("flags blocked when server silence exceeds 15s during preparing", () => {
+    const snap = pickProgress({
+      _key: "run_abc123def456",
+      status: "preparing",
+      preparation_updated_at: Date.now() / 1000 - 20,
+    });
+    expect(isPreparationBlocked(snap, Date.now())).toBe(true);
+  });
+
+  it("does not flag blocked when heartbeat is fresh", () => {
+    const snap = pickProgress({
+      _key: "run_abc123def456",
+      status: "preparing",
+      preparation_updated_at: Date.now() / 1000 - 5,
+    });
+    expect(isPreparationBlocked(snap, Date.now())).toBe(false);
   });
 });

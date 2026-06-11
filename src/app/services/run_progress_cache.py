@@ -241,6 +241,7 @@ def update_run_progress_cache(
     message: str | None = None,
     progress: dict[str, Any] | None = None,
     stats_patch: dict[str, Any] | None = None,
+    touch_session: bool = True,
 ) -> None:
     """Merge preparation / agent progress into the shared cache."""
     try:
@@ -260,6 +261,16 @@ def update_run_progress_cache(
         entry["stats"] = stats
         entry["_key"] = run_id
         _write_file(run_id, entry)
+        if touch_session:
+            from app.services.preparation_heartbeat import record_preparation_session
+
+            record_preparation_session(
+                run_id,
+                stage=stage,
+                message=message,
+                progress=progress,
+                status=status,
+            )
     except ValueError:
         log.warning("skipped update_run_progress_cache for invalid run_id", extra={"run_id": run_id})
 

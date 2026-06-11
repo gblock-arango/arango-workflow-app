@@ -24,10 +24,11 @@ from app.config import settings
 from app.db.arango_database_names import resolve_arango_database_name, validate_arango_database_name
 from app.db.client import (
     clear_active_arango_database,
-    effective_arango_database_name,
+    _is_duplicate_name_error,
     get_db,
     set_active_arango_database,
 )
+from app.db.gateway_database import GatewayAPIError
 from app.db.pagination import decode_cursor, encode_cursor, paginate
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, insert_temporal_edge_if_absent, run_aql
@@ -78,6 +79,7 @@ PREPARATION_STAGE_GATEWAY_HEALTH = "gateway_health"
 PREPARATION_STAGE_GATEWAY_ARANGO = "gateway_arango"
 PREPARATION_STAGE_RUN_PERSISTED = "run_persisted"
 PREPARATION_STAGE_STARTING = "starting"  # legacy
+PREPARATION_STAGE_LOADING_UC = "loading_uc_chunks"
 PREPARATION_STAGE_MATERIALIZING = "materializing_arango"
 PREPARATION_STAGE_SCHEMA = "schema_migrations"
 PREPARATION_STAGE_LAUNCHING = "launching_pipeline"
@@ -96,18 +98,28 @@ def _generate_run_id() -> str:
 
 def _get_collection(db: StandardDatabase, name: str) -> StandardCollection:
     if not db.has_collection(name):
-        db.create_collection(name)
+        try:
+            db.create_collection(name)
+        except GatewayAPIError as exc:
+            if not _is_duplicate_name_error(exc):
+                raise
     return db.collection(name)
 
 
-def _apply_run_arango_database(run_id: str, *, run: dict[str, Any] | None = None) -> str | None:
-    """Pin the run's target database on the current thread (cache, then Arango record)."""
-    name = None
-    cached = get_cached_run_progress(run_id)
-    if cached and cached.get("arango_database"):
-        name = str(cached["arango_database"])
-    elif run and run.get("arango_database"):
-        name = str(run["arango_database"])
+def _apply_run_arango_database(
+    run_id: str,
+    *,
+    run: dict[str, Any] | None = None,
+    arango_database: str | None = None,
+) -> str | None:
+    """Pin the run's target database on the current thread (explicit, cache, or run doc)."""
+    name = (arango_database or "").strip() or None
+    if not name:
+        cached = get_cached_run_progress(run_id)
+        if cached and cached.get("arango_database"):
+            name = str(cached["arango_database"])
+        elif run and run.get("arango_database"):
+            name = str(run["arango_database"])
     if not name:
         return None
     set_active_arango_database(name)
@@ -116,7 +128,12 @@ def _apply_run_arango_database(run_id: str, *, run: dict[str, Any] | None = None
 
 def db_for_run(run_id: str) -> StandardDatabase:
     """Open the Arango database that owns this extraction run."""
-    _apply_run_arango_database(run_id)
+    run = get_run(run_id=run_id)
+    db_name = run.get("arango_database")
+    if db_name:
+        set_active_arango_database(str(db_name))
+    else:
+        _apply_run_arango_database(run_id, run=run)
     return get_db()
 
 
@@ -237,6 +254,12 @@ def schedule_prepare_and_execute_run(
         if active_db:
             set_active_arango_database(active_db)
         try:
+            from app.services.preparation_heartbeat import (
+                start_preparation_session,
+                stop_preparation_session,
+            )
+
+            start_preparation_session(run_id)
             update_run_progress_cache(
                 run_id,
                 stage=PREPARATION_STAGE_GATEWAY_HEALTH,
@@ -251,6 +274,7 @@ def schedule_prepare_and_execute_run(
                 log.exception("prepare_and_execute_run thread failed", extra={"run_id": run_id})
                 mark_run_preparation_failed(run_id, str(exc))
             finally:
+                stop_preparation_session(run_id)
                 clear_extraction_cancel(run_id)
                 with contextlib.suppress(Exception):
                     cached = get_cached_run_progress(run_id)
@@ -289,6 +313,11 @@ def update_run_preparation(
         message=message,
         progress=progress,
     )
+    # Schema migrations and the post-schema launch transition hold the gateway for
+    # minutes; heartbeats must not queue competing writes on the same client
+    # (120s timeout freezes the UI poll).
+    if stage in (PREPARATION_STAGE_SCHEMA, PREPARATION_STAGE_LAUNCHING):
+        return
     try:
         col = _get_collection(db, "extraction_runs")
         run = doc_get(col, run_id)
@@ -392,7 +421,7 @@ def begin_extraction_run(
     )
     run_record["stats"]["preparation_message"] = (
         f"Queued — database {resolved_database} (created automatically if missing), "
-        "then gateway health check and UC chunk materialization"
+        "then gateway health check and UC chunk load"
     )
     run_id = str(run_record["_key"])
     seed_run_progress(
@@ -503,7 +532,7 @@ async def prepare_and_execute_run(
         persist_run_record_checkpoint,
         probe_gateway_health_checkpoint,
     )
-    from app.services.extraction_materialize import materialize_embedding_document_for_extraction
+    from app.services.extraction_materialize import load_chunks_for_extraction
     from app.services.schema_bootstrap import ensure_ontology_schema_async
 
     def _wrap_cancellable_progress(
@@ -515,8 +544,7 @@ async def prepare_and_execute_run(
 
         return on_progress
 
-    def _materialize_one_document(doc_id: str, index: int, total: int) -> dict[str, Any]:
-        assert db is not None
+    def _load_one_document(doc_id: str, index: int, total: int) -> list[dict[str, Any]]:
         _apply_run_arango_database(run_id)
 
         def on_progress(message: str, progress: dict[str, Any] | None = None) -> None:
@@ -530,14 +558,14 @@ async def prepare_and_execute_run(
             update_run_preparation(
                 db,
                 run_id,
-                stage=PREPARATION_STAGE_MATERIALIZING,
+                stage=PREPARATION_STAGE_LOADING_UC,
                 message=f"({index}/{total}) {message}",
                 progress=merged,
             )
 
         on_progress = _wrap_cancellable_progress(on_progress)
-        on_progress(f"Starting UC → Arango materialization for {doc_id}")
-        return materialize_embedding_document_for_extraction(doc_id, on_progress=on_progress)
+        on_progress(f"Loading chunks from UC volume for {doc_id}")
+        return load_chunks_for_extraction(doc_id, on_progress=on_progress)
 
     db: StandardDatabase | None = None
     col: StandardCollection | None = None
@@ -545,7 +573,11 @@ async def prepare_and_execute_run(
         check_extraction_cancelled(run_id)
         await asyncio.to_thread(probe_gateway_health_checkpoint, run_id)
         check_extraction_cancelled(run_id)
-        db, col = await asyncio.to_thread(connect_arango_checkpoint, run_id)
+        db, col = await asyncio.to_thread(
+            connect_arango_checkpoint,
+            run_id,
+            (run_record or {}).get("arango_database"),
+        )
         check_extraction_cancelled(run_id)
         await asyncio.to_thread(
             persist_run_record_checkpoint,
@@ -555,10 +587,12 @@ async def prepare_and_execute_run(
             run_record,
         )
 
+        preloaded_chunks: list[dict[str, Any]] = []
         total = len(document_ids)
         for index, doc_id in enumerate(document_ids, start=1):
             check_extraction_cancelled(run_id)
-            await asyncio.to_thread(_materialize_one_document, doc_id, index, total)
+            doc_chunks = await asyncio.to_thread(_load_one_document, doc_id, index, total)
+            preloaded_chunks.extend(doc_chunks)
 
         def on_schema_progress(message: str, progress: dict[str, Any] | None = None) -> None:
             merged: dict[str, Any] = {"phase": "schema_migrations"}
@@ -580,14 +614,61 @@ async def prepare_and_execute_run(
         await ensure_ontology_schema_async(db=db, on_progress=on_schema_progress)
 
         check_extraction_cancelled(run_id)
-        update_run_preparation(
-            db,
-            run_id,
-            stage=PREPARATION_STAGE_LAUNCHING,
-            message="Chunks confirmed in Arango — starting LangGraph agent pipeline",
+        launch_message = (
+            f"Schema complete — loaded {len(preloaded_chunks)} chunks from UC, "
+            "starting LangGraph agent pipeline"
         )
-        col.update({"_key": run_id, "status": "running"})
-        update_run_progress_cache(run_id, status="running", stage=PREPARATION_STAGE_LAUNCHING)
+        # Cache-first: execute_run also uses the gateway; Arango status writes can
+        # block for minutes after batch schema DDL on the same HTTP client.
+        update_run_progress_cache(
+            run_id,
+            status="running",
+            stage=PREPARATION_STAGE_LAUNCHING,
+            message=launch_message,
+            progress={"phase": "launching_pipeline"},
+        )
+        try:
+            run = doc_get(col, run_id) or {}
+            stats = dict(run.get("stats") or {})
+            stats["preparation_stage"] = PREPARATION_STAGE_LAUNCHING
+            stats["preparation_message"] = launch_message
+            stats["preparation_updated_at"] = time.time()
+            stats["preparation_progress"] = {"phase": "launching_pipeline"}
+            persist_started = time.perf_counter()
+            stop_persist = threading.Event()
+
+            def _status_persist_heartbeat() -> None:
+                while not stop_persist.wait(12.0):
+                    elapsed_s = int(time.perf_counter() - persist_started)
+                    update_run_progress_cache(
+                        run_id,
+                        status="running",
+                        stage=PREPARATION_STAGE_LAUNCHING,
+                        message=f"{launch_message} — confirming in Arango ({elapsed_s}s)…",
+                        progress={
+                            "phase": "launching_pipeline",
+                            "confirm_run_status": True,
+                            "migration_elapsed_s": elapsed_s,
+                        },
+                        touch_session=False,
+                    )
+
+            status_hb = threading.Thread(
+                target=_status_persist_heartbeat,
+                name=f"run-status-hb-{run_id[:12]}",
+                daemon=True,
+            )
+            status_hb.start()
+            try:
+                col.update({"_key": run_id, "status": "running", "stats": stats})
+            finally:
+                stop_persist.set()
+                status_hb.join(timeout=1.0)
+        except Exception:
+            log.warning(
+                "arango run status update failed (file cache already running)",
+                extra={"run_id": run_id},
+            )
 
         await execute_run(
             run_id=run_id,
@@ -595,6 +676,7 @@ async def prepare_and_execute_run(
             config_overrides=config_overrides,
             domain_ontology_ids=domain_ontology_ids,
             target_ontology_id=target_ontology_id,
+            preloaded_chunks=preloaded_chunks,
         )
     except ExtractionCancelled:
         raise
@@ -651,6 +733,7 @@ async def execute_run(
     event_callback: Any | None = None,
     domain_ontology_ids: list[str] | None = None,
     target_ontology_id: str | None = None,
+    preloaded_chunks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Execute the extraction pipeline for an existing run record.
 
@@ -716,15 +799,21 @@ async def execute_run(
     except Exception:
         log.debug("UC entity selection context unavailable", exc_info=True)
 
-    chunks: list[dict[str, Any]] = []
-    for did in doc_ids:
-        chunks.extend(_load_document_chunks(db, did))
+    chunks_from_uc = preloaded_chunks is not None
+    if chunks_from_uc:
+        chunks = list(preloaded_chunks)
+    else:
+        chunks = []
+        for did in doc_ids:
+            chunks.extend(_load_document_chunks(db, did))
 
     primary_doc_id = doc_ids[0] if doc_ids else "unknown"
 
     if not chunks:
+        source = "UC volume" if chunks_from_uc else "Arango"
         raise ValueError(
-            f"No chunks found in Arango for document(s) {doc_ids} — materialization may have failed"
+            f"No chunks found in {source} for document(s) {doc_ids} — "
+            "complete Parse & Chunk first"
         )
 
     check_extraction_cancelled(run_id)
@@ -840,6 +929,30 @@ async def execute_run(
         col.update({"_key": run_id, **update_data})
 
         if final_state.get("consistency_result"):
+            if chunks_from_uc:
+                from app.services.extraction_materialize import (
+                    materialize_embedding_documents_for_lineage,
+                )
+
+                def _on_lineage_progress(message: str, progress: dict[str, Any] | None = None) -> None:
+                    merged: dict[str, Any] = {"phase": "lineage_materialize"}
+                    if progress:
+                        merged.update(progress)
+                    update_run_preparation(
+                        db,
+                        run_id,
+                        stage=PREPARATION_STAGE_MATERIALIZING,
+                        message=message,
+                        progress=merged,
+                    )
+
+                await asyncio.to_thread(
+                    materialize_embedding_documents_for_lineage,
+                    doc_ids,
+                    preloaded_chunks=chunks,
+                    on_progress=_on_lineage_progress,
+                )
+
             _store_results(db, run_id=run_id, result=final_state["consistency_result"])
 
             if target_ontology_id:
@@ -1027,11 +1140,21 @@ def get_run(
 ) -> dict[str, Any]:
     """Get extraction run details."""
     if db is not None:
-        col = _get_collection(db, "extraction_runs")
-        run = doc_get(col, run_id)
-        if run is None:
-            raise NotFoundError(f"Extraction run '{run_id}' not found")
-        return enrich_run_for_client(run)
+        try:
+            if db.has_collection("extraction_runs"):
+                run = doc_get(db.collection("extraction_runs"), run_id)
+                if run is not None:
+                    return enrich_run_for_client(run)
+        except Exception:
+            log.debug(
+                "get_run lookup failed in provided database",
+                extra={"run_id": run_id},
+                exc_info=True,
+            )
+        log.debug(
+            "get_run missed in provided database — searching extraction databases",
+            extra={"run_id": run_id},
+        )
 
     _apply_run_arango_database(run_id)
     try:
@@ -1054,7 +1177,9 @@ def get_run(
                 continue
             run = doc_get(database.collection("extraction_runs"), run_id)
             if run is not None:
-                return enrich_run_for_client(run)
+                enriched = enrich_run_for_client(run)
+                enriched.setdefault("arango_database", db_name)
+                return enriched
         except Exception:
             log.debug("get_run search missed %s", db_name, exc_info=True)
         finally:

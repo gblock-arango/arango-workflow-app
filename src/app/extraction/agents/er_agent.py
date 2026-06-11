@@ -98,7 +98,10 @@ def _run_er_matching(
     ontology_id: str,
 ) -> dict[str, Any]:
     """Run ER matching for extracted classes against existing ontology."""
-    from app.services.er import score_existing_class_vs_extracted
+    from app.services.er import (
+        score_existing_class_row_vs_extracted,
+        should_score_er_pair,
+    )
 
     candidates: list[dict[str, Any]] = []
 
@@ -117,7 +120,7 @@ def _run_er_matching(
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
   FILTER cls.expired == @never
-  RETURN {key: cls._key, label: cls.label, uri: cls.uri}""",
+  RETURN {key: cls._key, label: cls.label, uri: cls.uri, description: cls.description}""",
                 bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
             )
         )
@@ -125,14 +128,14 @@ FOR cls IN ontology_classes
         if not existing_classes:
             return {"status": "completed", "reason": "no_existing_classes", "merge_candidates": []}
 
+        pairs_examined = 0
         for extracted in extracted_classes:
             for existing in existing_classes:
+                if not should_score_er_pair(existing, extracted):
+                    continue
+                pairs_examined += 1
                 try:
-                    match = score_existing_class_vs_extracted(
-                        db,
-                        existing_class_key=existing["key"],
-                        extracted=extracted,
-                    )
+                    match = score_existing_class_row_vs_extracted(existing, extracted)
                     score = match.get("combined_score", 0.0)
                     if score >= settings.er_vector_similarity_threshold:
                         candidates.append(
@@ -147,6 +150,17 @@ FOR cls IN ontology_classes
                         )
                 except Exception:
                     pass
+
+        log.info(
+            "er_agent in-memory scoring complete",
+            extra={
+                "run_id": run_id,
+                "existing_classes": len(existing_classes),
+                "extracted_classes": len(extracted_classes),
+                "pairs_examined": pairs_examined,
+                "candidates": len(candidates),
+            },
+        )
 
     except Exception as exc:
         log.warning("ER matching failed, returning partial results", extra={"error": str(exc)})

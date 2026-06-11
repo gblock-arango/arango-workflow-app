@@ -1,7 +1,17 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { AGENT_DAG_HEIGHT_PX } from "@/components/pipeline/AgentDAG";
 import type { RunProgressSnapshot } from "@/lib/runStatusPoll";
-import { isRunStatusPollTimeout, preparationStallThresholdMs } from "@/lib/runStatusPoll";
+import {
+  effectivePreparationStage,
+  isPreparationBlocked,
+  isRunStatusPollTimeout,
+  isSchemaBootstrapComplete,
+  preparationSilenceMs,
+  preparationStallThresholdMs,
+  PREPARATION_UI_MAX_SILENCE_MS,
+} from "@/lib/runStatusPoll";
 
 const PREPARATION_STEPS: {
   key: string;
@@ -65,7 +75,7 @@ function stepState(
   if (progress.status === "running" || progress.status === "completed") {
     return "done";
   }
-  const stage = progress.preparation_stage ?? "queued";
+  const stage = effectivePreparationStage(progress);
   const order = PREPARATION_STEPS.map((s) => s.key);
   const activeIdx = order.indexOf(stage);
   const stepIdx = order.indexOf(stepKey);
@@ -92,13 +102,26 @@ function progressDetailLine(progress: RunProgressSnapshot | null): string | null
     if (p.arango_verified) parts.push("run doc verified in Arango");
     if (parts.length > 0) return parts.join(" · ");
   }
+  if (p.bootstrap_phase === "persist") {
+    return "Schema bootstrap complete — saving migration state to Arango…";
+  }
+  if (p.bootstrap_phase === "complete") {
+    return "Schema bootstrap complete — finalizing before agents start…";
+  }
+  if (p.index_done != null && p.index_total != null && p.index_step === "mdi") {
+    return `Schema indexes: MDI temporal ${p.index_done}/${p.index_total}`;
+  }
+  if (p.confirm_run_status) {
+    return "Confirming run status in Arango before agents start…";
+  }
   if (
     (p.phase === "schema_migration" || p.phase === "schema_migrations") &&
     p.migration
   ) {
+    const total = p.migration_total ?? p.migration_pending;
     const idx =
-      p.migration_index != null && p.migration_pending != null
-        ? ` (${p.migration_index}/${p.migration_pending})`
+      p.migration_index != null && total != null
+        ? ` (${p.migration_index}/${total})`
         : "";
     const elapsed =
       p.migration_elapsed_s != null ? ` · ${p.migration_elapsed_s}s` : "";
@@ -126,6 +149,9 @@ function progressDetailLine(progress: RunProgressSnapshot | null): string | null
   if (p.doc_index != null && p.doc_total != null && p.doc_id) {
     return `Document ${p.doc_index}/${p.doc_total}: ${p.doc_id}`;
   }
+  if (p.heartbeat_seq != null && p.heartbeat_elapsed_s != null) {
+    return `Worker heartbeat #${p.heartbeat_seq} · ${p.heartbeat_elapsed_s}s in current stage`;
+  }
   if (p.chunk_count != null) {
     return `${p.chunk_count} chunks loaded from UC`;
   }
@@ -147,6 +173,8 @@ interface PipelineDiagnosticsPanelProps {
   pollBusy: boolean;
   lastPolledAt: number | null;
   pollAttempt: number;
+  /** When true, render as a compact right rail beside the Agent Pipeline DAG. */
+  embedded?: boolean;
 }
 
 export default function PipelineDiagnosticsPanel({
@@ -156,7 +184,15 @@ export default function PipelineDiagnosticsPanel({
   pollBusy,
   lastPolledAt,
   pollAttempt,
+  embedded = false,
 }: PipelineDiagnosticsPanelProps) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!selectedRunId) return;
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [selectedRunId]);
+
   const waitingForFirstPoll = Boolean(selectedRunId) && progress == null && pollAttempt === 0;
   const displayProgress: RunProgressSnapshot | null =
     progress ??
@@ -173,61 +209,81 @@ export default function PipelineDiagnosticsPanel({
     displayProgress?.preparation_updated_at != null
       ? displayProgress.preparation_updated_at * 1000
       : null;
-  const stage = displayProgress?.preparation_stage ?? "queued";
+  const silenceMs = preparationSilenceMs(displayProgress, nowMs);
+  const prepBlocked = isPreparationBlocked(displayProgress, nowMs);
+  const stage = effectivePreparationStage(displayProgress);
+  const bootstrapFinalizing =
+    displayProgress != null &&
+    displayProgress.status === "preparing" &&
+    isSchemaBootstrapComplete(displayProgress);
   const stallThresholdMs = preparationStallThresholdMs(stage);
   const prepStalled =
     !pollError &&
+    !prepBlocked &&
+    !bootstrapFinalizing &&
     displayProgress?.status === "preparing" &&
     prepUpdatedMs != null &&
-    Date.now() - prepUpdatedMs > stallThresholdMs;
+    nowMs - prepUpdatedMs > stallThresholdMs;
 
   const checkpoints = displayProgress?.preparation_progress?.checkpoints ?? [];
 
   const subProgress = progressDetailLine(displayProgress);
   const pollTimedOut = pollError != null && isRunStatusPollTimeout(pollError);
 
-  return (
-    <section className="border-b border-gray-200 bg-white px-4 py-3 space-y-3">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-            Diagnostics
-          </h2>
-          <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">
-            Run progress polls every 1s during gateway checks, 2s while agents run.
-          </p>
-        </div>
-        {selectedRunId && lastPolledAt && (
-          <span className="text-[10px] text-gray-400 shrink-0">
-            run {formatPolledAt(lastPolledAt)}
+  if (embedded && !selectedRunId) {
+    return null;
+  }
+
+  const content = selectedRunId ? (
+    <div
+      className={
+        embedded
+          ? "space-y-2"
+          : "rounded-lg border border-gray-200 bg-white px-3 py-2 space-y-2"
+      }
+    >
+      {!embedded && (
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className="font-mono text-gray-500 truncate" title={selectedRunId}>
+            {selectedRunId}
           </span>
-        )}
-      </div>
-
-      {selectedRunId ? (
-        <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 space-y-2">
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <span className="font-mono text-gray-500 truncate" title={selectedRunId}>
-              {selectedRunId}
+          {displayProgress?.status && (
+            <span
+              className={`shrink-0 font-medium capitalize ${
+                displayProgress.status === "failed"
+                  ? "text-red-700"
+                  : displayProgress.status === "preparing"
+                    ? "text-indigo-700"
+                    : displayProgress.status === "running"
+                      ? "text-emerald-700"
+                      : "text-gray-700"
+              }`}
+            >
+              {displayProgress.status.replace(/_/g, " ")}
             </span>
-            {displayProgress?.status && (
-              <span
-                className={`shrink-0 font-medium capitalize ${
-                  displayProgress.status === "failed"
-                    ? "text-red-700"
-                    : displayProgress.status === "preparing"
-                      ? "text-indigo-700"
-                      : displayProgress.status === "running"
-                        ? "text-emerald-700"
-                        : "text-gray-700"
-                }`}
-              >
-                {displayProgress.status.replace(/_/g, " ")}
-              </span>
-            )}
-          </div>
+          )}
+        </div>
+      )}
 
-          {pollError && (
+      {embedded && displayProgress?.status && (
+        <div className="flex items-center justify-end text-xs">
+          <span
+            className={`shrink-0 font-medium capitalize ${
+              displayProgress.status === "failed"
+                ? "text-red-700"
+                : displayProgress.status === "preparing"
+                  ? "text-indigo-700"
+                  : displayProgress.status === "running"
+                    ? "text-emerald-700"
+                    : "text-gray-700"
+            }`}
+          >
+            {displayProgress.status.replace(/_/g, " ")}
+          </span>
+        </div>
+      )}
+
+      {pollError && (
             <p
               className={`text-[11px] rounded px-2 py-1 ${
                 pollTimedOut || pollBusy
@@ -239,6 +295,22 @@ export default function PipelineDiagnosticsPanel({
                 ? `Status poll slow (${pollAttempt}) — extraction may still be running (API busy).`
                 : `Poll failed (${pollAttempt}): ${pollError}`}
               {progress ? " Showing last known status." : ""}
+            </p>
+          )}
+
+          {displayProgress?.status === "preparing" && silenceMs != null && (
+            <p
+              className={`text-[11px] rounded px-2 py-1 ${
+                prepBlocked
+                  ? "text-red-800 bg-red-50 border border-red-200 font-medium"
+                  : silenceMs > PREPARATION_UI_MAX_SILENCE_MS * 0.6
+                    ? "text-amber-800 bg-amber-50 border border-amber-100"
+                    : "text-gray-600 bg-gray-50 border border-gray-100"
+              }`}
+            >
+              {prepBlocked
+                ? `BLOCKED — no server progress update for ${Math.round(silenceMs / 1000)}s (limit ${PREPARATION_UI_MAX_SILENCE_MS / 1000}s). Worker may be stuck on a gateway call or the prepare thread died. Check arango-gateway-app logs.`
+                : `Last server update: ${Math.round(silenceMs / 1000)}s ago`}
             </p>
           )}
 
@@ -333,7 +405,7 @@ export default function PipelineDiagnosticsPanel({
             })}
           </ol>
 
-          {displayProgress?.status === "running" && (
+          {displayProgress?.status === "running" && !embedded && (
             <p className="text-[11px] text-emerald-700">
               Chunks are in Arango — agent pipeline is running (see DAG below; updates via REST
               when WebSocket is on another worker).
@@ -351,7 +423,51 @@ export default function PipelineDiagnosticsPanel({
             </div>
           )}
         </div>
-      ) : null}
+  ) : null;
+
+  if (embedded) {
+    return (
+      <aside
+        className="flex flex-col w-full lg:w-[340px] flex-shrink-0 border-t lg:border-t-0 lg:border-l border-gray-100 bg-gray-50/40 overflow-hidden"
+        style={{ height: AGENT_DAG_HEIGHT_PX }}
+        aria-label="Run diagnostics"
+      >
+        <div className="px-3 py-2 border-b border-gray-100 shrink-0 space-y-0.5">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              Diagnostics
+            </h2>
+            {lastPolledAt && (
+              <span className="text-[10px] text-gray-400 shrink-0">
+                {formatPolledAt(lastPolledAt)}
+              </span>
+            )}
+          </div>
+          <p className="text-[10px] text-gray-400 leading-snug">Run progress polls</p>
+        </div>
+        <div className="flex-1 overflow-y-auto px-3 py-2">{content}</div>
+      </aside>
+    );
+  }
+
+  return (
+    <section className="border-b border-gray-200 bg-white px-4 py-3 space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            Diagnostics
+          </h2>
+          <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">
+            Run progress polls
+          </p>
+        </div>
+        {selectedRunId && lastPolledAt && (
+          <span className="text-[10px] text-gray-400 shrink-0">
+            run {formatPolledAt(lastPolledAt)}
+          </span>
+        )}
+      </div>
+      {content}
     </section>
   );
 }

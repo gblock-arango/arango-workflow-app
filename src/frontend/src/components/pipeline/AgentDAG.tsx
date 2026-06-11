@@ -123,6 +123,8 @@ function AgentNode({ data }: NodeProps<AgentNodeData>) {
   );
 }
 
+export const AGENT_DAG_HEIGHT_PX = 290;
+
 const nodeTypes = { agentNode: AgentNode };
 
 const NODE_W = 220;
@@ -216,7 +218,11 @@ export default function AgentDAG({ steps, onContextMenu, onApi }: AgentDAGProps)
   }, [nodes]);
 
   return (
-    <div className="w-full h-[580px] [&_.react-flow__pane]:!cursor-default [&_.react-flow__node]:!cursor-default" data-testid="agent-dag">
+    <div
+      className="w-full [&_.react-flow__pane]:!cursor-default [&_.react-flow__node]:!cursor-default"
+      style={{ height: AGENT_DAG_HEIGHT_PX }}
+      data-testid="agent-dag"
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}

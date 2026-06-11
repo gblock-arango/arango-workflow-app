@@ -188,8 +188,10 @@ class TestRunERMatching:
                 "field_scores": {"label": 0.9},
             }
         )
+        mock_should_score = MagicMock(return_value=True)
         mock_er_module = MagicMock()
-        mock_er_module.score_existing_class_vs_extracted = mock_score
+        mock_er_module.score_existing_class_row_vs_extracted = mock_score
+        mock_er_module.should_score_er_pair = mock_should_score
 
         with (
             patch.dict(
@@ -204,7 +206,12 @@ class TestRunERMatching:
                 "app.extraction.agents.er_agent.run_aql",
                 return_value=iter(
                     [
-                        {"key": "k1", "label": "ExistingA", "uri": "http://ex.org#ExA"},
+                        {
+                            "key": "k1",
+                            "label": "ExistingA",
+                            "uri": "http://ex.org#ExA",
+                            "description": "desc",
+                        },
                     ]
                 ),
             ),
@@ -222,6 +229,7 @@ class TestRunERMatching:
         assert result["status"] == "completed"
         assert len(result["merge_candidates"]) == 1
         assert result["merge_candidates"][0]["combined_score"] == 0.95
+        mock_score.assert_called_once()
 
     def test_handles_db_exception_gracefully(self):
         mock_er_module = MagicMock()

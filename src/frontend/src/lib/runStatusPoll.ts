@@ -25,17 +25,69 @@ export const PREPARATION_STALL_MS_BY_STAGE: Record<string, number> = {
   run_persisted: 120_000,
   starting: 20_000,
   materializing_arango: 90_000,
-  schema_migrations: 120_000,
+  schema_migrations: 300_000,
   launching_pipeline: 30_000,
 };
 
 export const DEFAULT_PREPARATION_STALL_MS = 20_000;
+
+/** Hard limit: UI treats prepare as blocked if the server is silent this long. */
+export const PREPARATION_UI_MAX_SILENCE_MS = 15_000;
 
 export function preparationStallThresholdMs(
   stage: string | null | undefined,
 ): number {
   const key = stage ?? "queued";
   return PREPARATION_STALL_MS_BY_STAGE[key] ?? DEFAULT_PREPARATION_STALL_MS;
+}
+
+/** Batch bootstrap finished but gateway may still be persisting schema_state. */
+export function isSchemaBootstrapComplete(
+  progress: Pick<
+    RunProgressSnapshot,
+    "preparation_message" | "preparation_progress"
+  > | null,
+): boolean {
+  if (!progress) return false;
+  const phase = progress.preparation_progress?.bootstrap_phase;
+  if (phase === "complete" || phase === "persist") return true;
+  const message = progress.preparation_message ?? "";
+  return message.includes("Batch schema bootstrap complete");
+}
+
+/** UI stage while status is still preparing (gateway work after bootstrap). */
+export function effectivePreparationStage(
+  progress: Pick<
+    RunProgressSnapshot,
+    "status" | "preparation_stage" | "preparation_message" | "preparation_progress"
+  > | null,
+): string {
+  const stage = progress?.preparation_stage ?? "queued";
+  if (
+    progress?.status === "preparing" &&
+    stage === "schema_migrations" &&
+    isSchemaBootstrapComplete(progress)
+  ) {
+    return "launching_pipeline";
+  }
+  return stage;
+}
+
+export function preparationSilenceMs(
+  progress: Pick<RunProgressSnapshot, "preparation_updated_at"> | null,
+  nowMs: number = Date.now(),
+): number | null {
+  if (progress?.preparation_updated_at == null) return null;
+  return Math.max(0, nowMs - progress.preparation_updated_at * 1000);
+}
+
+export function isPreparationBlocked(
+  progress: Pick<RunProgressSnapshot, "status" | "preparation_updated_at"> | null,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!progress || progress.status !== "preparing") return false;
+  const silence = preparationSilenceMs(progress, nowMs);
+  return silence != null && silence > PREPARATION_UI_MAX_SILENCE_MS;
 }
 
 export const PREPARATION_STAGE_ORDER = [
@@ -125,6 +177,16 @@ export interface PreparationProgressDetail {
   migration_elapsed_s?: number;
   migration_elapsed_ms?: number;
   migration_ok?: boolean;
+  bootstrap?: boolean;
+  bootstrap_phase?: string;
+  bootstrap_elapsed_ms?: number;
+  heartbeat_elapsed_s?: number;
+  heartbeat_at?: number;
+  heartbeat_seq?: number;
+  confirm_run_status?: boolean;
+  index_step?: string;
+  index_done?: number;
+  index_total?: number;
   gateway_ok?: boolean;
   gateway_url?: string;
   gateway_message?: string;

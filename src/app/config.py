@@ -179,6 +179,10 @@ class Settings(BaseSettings):
     extraction_passes: int = 3
     extraction_consistency_threshold: int = 2
     extraction_confidence_min: float = 0.6
+    #: In-memory cosine RAG over UC-loaded chunk embeddings (no Arango gateway calls).
+    extraction_rag_enabled: bool = True
+    extraction_rag_min_similarity: float = 0.7
+    extraction_rag_top_k: int = 10
     #: Maximum simultaneous LLM calls in the extractor (all passes × batches).
     #: Default 40 is fast on high TPM tiers; lower to 3–8 on OpenAI free/Tier-1
     #: accounts to avoid 429 token-per-minute errors.

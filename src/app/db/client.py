@@ -15,10 +15,42 @@ from app.workflow_platform.runtime import workflow_config_dict
 
 log = logging.getLogger(__name__)
 
-_gateway_client: GatewayArangoClient | None = None
-_dbs: dict[str, GatewayDatabase] = {}
-_config_signature: tuple[Any, ...] | None = None
+# Gateway client + database handles are thread-local: extraction prepare runs in
+# asyncio.to_thread workers while other HTTP handlers must not close_db() them.
+_tls = threading.local()
 _active_arango_db = threading.local()
+
+
+def _tls_gateway() -> GatewayArangoClient | None:
+    return getattr(_tls, "gateway_client", None)
+
+
+def _set_tls_gateway(client: GatewayArangoClient | None) -> None:
+    if client is None:
+        if hasattr(_tls, "gateway_client"):
+            delattr(_tls, "gateway_client")
+    else:
+        _tls.gateway_client = client
+
+
+def _tls_dbs() -> dict[str, GatewayDatabase]:
+    dbs = getattr(_tls, "dbs", None)
+    if dbs is None:
+        dbs = {}
+        _tls.dbs = dbs
+    return dbs
+
+
+def _tls_config_signature() -> tuple[Any, ...] | None:
+    return getattr(_tls, "config_signature", None)
+
+
+def _set_tls_config_signature(signature: tuple[Any, ...] | None) -> None:
+    if signature is None:
+        if hasattr(_tls, "config_signature"):
+            delattr(_tls, "config_signature")
+    else:
+        _tls.config_signature = signature
 
 
 def _settings_signature() -> tuple[Any, ...]:
@@ -30,37 +62,47 @@ def _settings_signature() -> tuple[Any, ...]:
     )
 
 
+def _close_tls_gateway() -> None:
+    client = _tls_gateway()
+    if client is not None:
+        client.disconnect()
+    _set_tls_gateway(None)
+    if hasattr(_tls, "dbs"):
+        delattr(_tls, "dbs")
+
+
 def _get_settings() -> Settings:
-    global _config_signature
     settings = app_config.settings
     signature = _settings_signature()
-    if _config_signature != signature:
-        close_db()
-        _config_signature = signature
+    if _tls_config_signature() != signature:
+        _close_tls_gateway()
+        _set_tls_config_signature(signature)
     return settings
 
 
 def _connect_gateway() -> GatewayArangoClient:
-    global _gateway_client
     base = effective_gateway_url()
     if not base:
         raise RuntimeError(
             "Arango gateway is not configured. Set ARANGO_GATEWAY_BASE_URL or publish an active row "
             "to ARANGO_GATEWAY_REGISTRY_TABLE (and DATABRICKS_SQL_WAREHOUSE_ID for UC reads)."
         )
-    if _gateway_client is None:
+    _get_settings()
+    client = _tls_gateway()
+    if client is None or not getattr(client, "_proxy_url", ""):
         cfg = workflow_config_dict()
-        _gateway_client = GatewayArangoClient(
+        client = GatewayArangoClient(
             get_gateway_settings(),
             effective_base_url=base,
             auth_config=cfg,
         )
-        _gateway_client.connect()
+        client.connect()
+        _set_tls_gateway(client)
         log.info(
             "connected to Arango via gateway",
-            extra={"gateway": base, "db": _get_settings().arango_db},
+            extra={"gateway": base, "db": app_config.settings.arango_db},
         )
-    return _gateway_client
+    return client
 
 
 def set_active_arango_database(name: str | None) -> None:
@@ -81,7 +123,14 @@ def effective_arango_database_name() -> str:
     thread_name = getattr(_active_arango_db, "name", None)
     if thread_name:
         return str(thread_name)
-    return _get_settings().arango_db
+    return app_config.settings.arango_db
+
+
+def _is_duplicate_name_error(exc: BaseException) -> bool:
+    if isinstance(exc, GatewayAPIError):
+        if exc.error_code in (1207, 1210, 1925):
+            return True
+    return "duplicate name" in str(exc).lower()
 
 
 def _is_missing_database_error(exc: BaseException) -> bool:
@@ -93,21 +142,34 @@ def _is_missing_database_error(exc: BaseException) -> bool:
     return "database not found" in str(exc).lower()
 
 
+def _is_stale_gateway_client_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return (
+        "nonetype" in msg
+        and "request" in msg
+    ) or "not connected" in msg
+
+
+def _should_auto_create_database(db_name: str) -> bool:
+    """Auto-create only for per-run extraction DBs, not the legacy ``ARANGO_DB`` default."""
+    settings = _get_settings()
+    if db_name == settings.arango_db:
+        return False
+    thread_name = getattr(_active_arango_db, "name", None)
+    if not thread_name or str(thread_name) != db_name:
+        return False
+    return settings.can_create_databases
+
+
 def _ensure_database_exists(*, db_name: str | None = None) -> None:
     """Create the target user database via ``_system`` when missing (gateway mode).
 
-    Always re-checks ``has_database`` so a DB dropped in the Arango UI is
-    recreated on the next extraction run.
-
-    Skipped on managed platforms where ``_system`` access is restricted.
+    Auto-create runs only when a per-run database is pinned on the thread (extraction
+    prepare). The env default ``ARANGO_DB`` (OntoExtract) is never created silently
+    on startup or incidental ``get_db()`` calls.
     """
-    settings = _get_settings()
     resolved_name = db_name or effective_arango_database_name()
-    if not settings.can_create_databases:
-        log.info(
-            "skipping auto-create database on managed platform — database must be pre-provisioned",
-            extra={"db": resolved_name, "mode": settings.test_deployment_mode.value},
-        )
+    if not _should_auto_create_database(resolved_name):
         return
 
     sys_db = get_system_db()
@@ -121,46 +183,50 @@ def _ensure_database_exists(*, db_name: str | None = None) -> None:
     try:
         sys_db.create_database(resolved_name)
     except GatewayAPIError as exc:
-        # 1207: duplicate database name (race with another worker)
-        if exc.error_code == 1207:
+        if _is_duplicate_name_error(exc):
             return
         raise
 
 
 def get_db() -> GatewayDatabase:
-    global _dbs
     client = _connect_gateway()
     db_name = effective_arango_database_name()
     _ensure_database_exists(db_name=db_name)
-    if db_name not in _dbs:
-        _dbs[db_name] = GatewayDatabase(client, db_name)
-    return _dbs[db_name]
+    dbs = _tls_dbs()
+    if db_name not in dbs:
+        dbs[db_name] = GatewayDatabase(client, db_name)
+    else:
+        dbs[db_name]._client = client
+    return dbs[db_name]
+
+
+def reset_gateway_session() -> None:
+    """Drop this thread's gateway client and DB handles (e.g. after a stale-client error)."""
+    _close_tls_gateway()
 
 
 def recover_missing_arango_database() -> None:
     """Clear cached handles and recreate the active database after it was dropped."""
-    global _dbs
     db_name = effective_arango_database_name()
     log.warning(
         "Arango database missing — recreating via gateway",
         extra={"db": db_name},
     )
-    _dbs.pop(db_name, None)
+    _tls_dbs().pop(db_name, None)
     _ensure_database_exists(db_name=db_name)
 
 
 def get_system_db() -> GatewayDatabase:
     client = _connect_gateway()
-    if "_system" not in _dbs:
-        _dbs["_system"] = GatewayDatabase(client, "_system")
-    return _dbs["_system"]
+    dbs = _tls_dbs()
+    if "_system" not in dbs:
+        dbs["_system"] = GatewayDatabase(client, "_system")
+    else:
+        dbs["_system"]._client = client
+    return dbs["_system"]
 
 
 def close_db() -> None:
-    global _gateway_client, _dbs, _config_signature
-    if _gateway_client is not None:
-        _gateway_client.disconnect()
-    _gateway_client = None
-    _dbs = {}
-    _config_signature = None
-    clear_active_arango_database()
+    """Close gateway resources for the current thread only."""
+    _close_tls_gateway()
+    _set_tls_config_signature(None)

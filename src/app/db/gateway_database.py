@@ -348,14 +348,50 @@ class GatewayGraph:
         data = _unwrap_arango_result(res, op="graph")
         return self._db._format_graph_props(data.get("graph", data))
 
-    def has_edge_definition(self, name: str) -> bool:
+    def edge_definitions(self) -> list[dict[str, Any]]:
+        """Return edge definitions in python-arango shape."""
         body = self.properties()
         edges = body.get("edge_definitions") or body.get("edgeDefinitions") or []
+        normalized: list[dict[str, Any]] = []
         for ed in edges:
-            coll = ed.get("edge_collection") or ed.get("collection")
-            if coll == name:
+            normalized.append(
+                {
+                    "edge_collection": ed.get("edge_collection") or ed.get("collection"),
+                    "from_vertex_collections": ed.get("from_vertex_collections")
+                    or ed.get("from")
+                    or [],
+                    "to_vertex_collections": ed.get("to_vertex_collections")
+                    or ed.get("to")
+                    or [],
+                }
+            )
+        return normalized
+
+    def has_edge_definition(self, name: str) -> bool:
+        for ed in self.edge_definitions():
+            if ed.get("edge_collection") == name:
                 return True
         return False
+
+    def create_edge_definition(
+        self,
+        edge_collection: str,
+        from_vertex_collections: Sequence[str],
+        to_vertex_collections: Sequence[str],
+        **_: Any,
+    ) -> Any:
+        """``POST /_api/gharial/{graph}/edge`` — add an edge definition to a graph."""
+        body: Dict[str, Any] = {
+            "collection": edge_collection,
+            "from": list(from_vertex_collections),
+            "to": list(to_vertex_collections),
+        }
+        res = self._db._request(
+            "POST",
+            f"/_db/{_q(self._db.name)}/_api/gharial/{_q(self._name)}/edge",
+            json_body=body,
+        )
+        return _unwrap_arango_result(res, op="create_edge_definition")
 
     def edge_collection(self, name: str) -> GatewayEdgeCollection:
         return GatewayEdgeCollection(self._db, self._name, name)
@@ -513,6 +549,10 @@ class GatewayCollection:
             return None
         return _unwrap_arango_result(res, op="get")
 
+    def has(self, key: str) -> bool:
+        """True when a document with ``key`` exists (python-arango compatible)."""
+        return self.get(key) is not None
+
     def find(self, filters: Dict[str, Any], *, skip: int = 0, limit: int = 100) -> GatewayCursor:
         parts = []
         bind: Dict[str, Any] = {"@coll": self.name, "s": skip, "l": limit}
@@ -582,7 +622,13 @@ class GatewayDatabase:
         self.backup = GatewayBackup(client)
 
     def _request(self, method: str, path: str, *, json_body: Any = None) -> dict[str, Any]:
-        return self._client.request(method, path, json_body=json_body)
+        client = self._client
+        if client is None or not getattr(client, "_proxy_url", ""):
+            from app.db.client import _connect_gateway
+
+            client = _connect_gateway()
+            self._client = client
+        return client.request(method, path, json_body=json_body)
 
     @staticmethod
     def _format_graph_props(graph: dict[str, Any]) -> dict[str, Any]:

@@ -186,14 +186,6 @@ function PipelineMonitorInner() {
             runProgress={runProgress.progress}
             onRunCancelled={() => setRunListKey((k) => k + 1)}
           />
-          <PipelineDiagnosticsPanel
-            selectedRunId={selectedRunId}
-            progress={runProgress.progress}
-            pollError={runProgress.pollError}
-            pollBusy={runProgress.pollBusy}
-            lastPolledAt={runProgress.lastPolledAt}
-            pollAttempt={runProgress.pollAttempt}
-          />
           <RunList
             key={runListKey}
             onSelectRun={handleSelectRun}
@@ -243,9 +235,9 @@ function PipelineMonitorInner() {
                 </div>
               )}
 
-              {/* Agent DAG */}
-              <div className="flex-1 p-4 min-h-[400px]">
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm h-full overflow-hidden">
+              {/* Agent DAG + diagnostics */}
+              <div className="p-4">
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
                     <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
                       Agent Pipeline
@@ -268,8 +260,19 @@ function PipelineMonitorInner() {
                       </a>
                     </div>
                   </div>
-                  <div className="h-[calc(100%-48px)]">
-                    <AgentDAG steps={steps} />
+                  <div className="flex flex-col lg:flex-row lg:items-stretch">
+                    <div className="flex-1 min-w-0">
+                      <AgentDAG steps={steps} />
+                    </div>
+                    <PipelineDiagnosticsPanel
+                      embedded
+                      selectedRunId={selectedRunId}
+                      progress={runProgress.progress}
+                      pollError={runProgress.pollError}
+                      pollBusy={runProgress.pollBusy}
+                      lastPolledAt={runProgress.lastPolledAt}
+                      pollAttempt={runProgress.pollAttempt}
+                    />
                   </div>
                 </div>
               </div>

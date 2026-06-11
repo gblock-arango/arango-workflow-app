@@ -11,6 +11,7 @@ from app.services.extraction_gateway_checkpoints import (
     STAGE_GATEWAY_HEALTH,
     STAGE_RUN_PERSISTED,
     connect_arango_checkpoint,
+    format_duration_ms,
     persist_run_record_checkpoint,
     probe_gateway_health_checkpoint,
     record_checkpoint_cache,
@@ -26,6 +27,11 @@ def progress_cache_dir(tmp_path, monkeypatch):
 
 class TestExtractionGatewayCheckpoints:
     run_id = "run_abc123def456"
+
+    def test_format_duration_ms(self) -> None:
+        assert format_duration_ms(500) == "500ms"
+        assert format_duration_ms(11949) == "12s"
+        assert format_duration_ms(65000) == "1m 5s"
 
     def setup_method(self) -> None:
         drop_run_progress_cache(self.run_id)
@@ -90,6 +96,7 @@ class TestExtractionGatewayCheckpoints:
         assert args[1] == self.run_id
         assert kwargs["stage"] == STAGE_RUN_PERSISTED
         assert kwargs["progress"]["arango_verified"] is True
+        assert "gateway round-trip" in kwargs["message"]
 
     def test_record_checkpoint_appends_log(self, progress_cache_dir) -> None:
         record_checkpoint_cache(

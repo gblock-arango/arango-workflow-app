@@ -332,6 +332,67 @@ FOR cluster IN entity_clusters
     )
 
 
+def _normalize_er_label(label: str) -> str:
+    return _NON_ALNUM.sub(" ", label.strip().lower()).strip()
+
+
+def score_existing_class_row_vs_extracted(
+    existing: dict[str, Any],
+    extracted: ExtractedClass,
+) -> dict[str, Any]:
+    """Score a bulk-loaded class row against an in-memory extracted class."""
+    existing_key = str(existing.get("key") or existing.get("_key") or "")
+    label_1 = str(existing.get("label", ""))
+    label_2 = extracted.label
+    desc_1 = str(existing.get("description", ""))
+    desc_2 = extracted.description
+    uri_1 = str(existing.get("uri", ""))
+    uri_2 = extracted.uri
+
+    field_scores: dict[str, float] = {}
+    field_scores["label_jaro_winkler"] = _jaro_winkler_sim(label_1, label_2)
+    field_scores["description_token_overlap"] = _token_overlap(desc_1, desc_2)
+    field_scores["uri_exact"] = 1.0 if uri_1 and uri_2 and uri_1 == uri_2 else 0.0
+    field_scores["topological"] = 0.0
+
+    combined = (
+        0.4 * field_scores["label_jaro_winkler"]
+        + 0.3 * field_scores["description_token_overlap"]
+        + 0.2 * field_scores["uri_exact"]
+        + 0.1 * field_scores["topological"]
+    )
+
+    return {
+        "key1": existing_key,
+        "key2": None,
+        "combined_score": round(combined, 4),
+        "field_scores": field_scores,
+    }
+
+
+def should_score_er_pair(existing: dict[str, Any], extracted: ExtractedClass) -> bool:
+    """Cheap blocking before full symbolic scoring during extraction ER."""
+    uri_1 = str(existing.get("uri", "") or "")
+    uri_2 = str(extracted.uri or "")
+    if uri_1 and uri_2 and uri_1 == uri_2:
+        return True
+
+    label_1 = _normalize_er_label(str(existing.get("label", "") or ""))
+    label_2 = _normalize_er_label(extracted.label or "")
+    if label_1 and label_2:
+        if label_1 == label_2:
+            return True
+        if _jaro_winkler_sim(label_1, label_2) >= 0.85:
+            return True
+
+    desc_1 = str(existing.get("description", "") or "")
+    desc_2 = extracted.description or ""
+    if desc_1 and desc_2 and _token_overlap(desc_1, desc_2) >= 0.5:
+        return True
+
+    return False
+
+
 def score_existing_class_vs_extracted(
     db: StandardDatabase | None = None,
     *,
@@ -354,32 +415,15 @@ def score_existing_class_vs_extracted(
             "error": "existing_class_not_found",
         }
 
-    label_1 = str(c1.get("label", ""))
-    label_2 = extracted.label
-    desc_1 = str(c1.get("description", ""))
-    desc_2 = extracted.description
-    uri_1 = str(c1.get("uri", ""))
-    uri_2 = extracted.uri
-
-    field_scores: dict[str, float] = {}
-    field_scores["label_jaro_winkler"] = _jaro_winkler_sim(label_1, label_2)
-    field_scores["description_token_overlap"] = _token_overlap(desc_1, desc_2)
-    field_scores["uri_exact"] = 1.0 if uri_1 == uri_2 else 0.0
-    field_scores["topological"] = 0.0
-
-    combined = (
-        0.4 * field_scores["label_jaro_winkler"]
-        + 0.3 * field_scores["description_token_overlap"]
-        + 0.2 * field_scores["uri_exact"]
-        + 0.1 * field_scores["topological"]
+    return score_existing_class_row_vs_extracted(
+        {
+            "key": existing_class_key,
+            "label": c1.get("label", ""),
+            "uri": c1.get("uri", ""),
+            "description": c1.get("description", ""),
+        },
+        extracted,
     )
-
-    return {
-        "key1": existing_class_key,
-        "key2": None,
-        "combined_score": round(combined, 4),
-        "field_scores": field_scores,
-    }
 
 
 def explain_match(

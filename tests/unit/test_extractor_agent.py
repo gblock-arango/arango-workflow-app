@@ -264,40 +264,50 @@ class TestParseLlmResponse:
 
 
 class TestRetrieveRelevantChunks:
-    def test_falls_back_when_no_collection(self):
-        mock_db = MagicMock()
-        mock_db.has_collection.return_value = False
-        chunks = [{"text": "a"}]
-        with patch("app.extraction.agents.extractor.get_db", return_value=mock_db):
-            result = _retrieve_relevant_chunks("doc1", chunks, "batch text")
-        assert result is chunks
+    def test_returns_batch_when_rag_disabled(self):
+        batch = [{"text": "a"}]
+        all_chunks = [{"text": "a"}, {"text": "b", "embedding": [1.0, 0.0]}]
+        with patch("app.extraction.agents.extractor.settings") as mock_settings:
+            mock_settings.extraction_rag_enabled = False
+            result = _retrieve_relevant_chunks(all_chunks, batch)
+        assert result is batch
 
     def test_falls_back_when_no_embedding(self):
-        mock_db = MagicMock()
-        mock_db.has_collection.return_value = True
-        chunks = [{"text": "a"}]  # no embedding key
-        with patch("app.extraction.agents.extractor.get_db", return_value=mock_db):
-            result = _retrieve_relevant_chunks("doc1", chunks, "batch text")
-        assert result is chunks
+        batch = [{"text": "a"}]
+        all_chunks = [{"text": "a"}, {"text": "b"}]
+        with patch("app.extraction.agents.extractor.settings") as mock_settings:
+            mock_settings.extraction_rag_enabled = True
+            result = _retrieve_relevant_chunks(all_chunks, batch)
+        assert result is batch
 
-    def test_returns_vector_results_when_available(self):
-        mock_db = MagicMock()
-        mock_db.has_collection.return_value = True
-        chunks = [{"text": "a", "embedding": [0.1, 0.2]}]
-        vector_results = [{"text": "similar chunk"}]
+    def test_returns_similar_chunks_in_memory(self):
+        batch = [{"text": "query", "embedding": [1.0, 0.0]}]
+        all_chunks = [
+            {"text": "query", "embedding": [1.0, 0.0]},
+            {"text": "orthogonal", "embedding": [0.0, 1.0]},
+            {"text": "similar", "embedding": [0.95, 0.05]},
+        ]
+        with patch("app.extraction.agents.extractor.settings") as mock_settings:
+            mock_settings.extraction_rag_enabled = True
+            mock_settings.extraction_rag_min_similarity = 0.7
+            mock_settings.extraction_rag_top_k = 10
+            result = _retrieve_relevant_chunks(all_chunks, batch)
+        texts = [c["text"] for c in result]
+        assert "similar" in texts
+        assert "orthogonal" not in texts
 
-        with (
-            patch("app.extraction.agents.extractor.get_db", return_value=mock_db),
-            patch("app.extraction.agents.extractor.run_aql", return_value=vector_results),
-        ):
-            result = _retrieve_relevant_chunks("doc1", chunks, "batch text")
-        assert result == vector_results
-
-    def test_falls_back_on_exception(self):
-        chunks = [{"text": "a", "embedding": [0.1]}]
-        with patch("app.extraction.agents.extractor.get_db", side_effect=RuntimeError("no db")):
-            result = _retrieve_relevant_chunks("doc1", chunks, "batch text")
-        assert result is chunks
+    def test_uses_batch_mean_embedding(self):
+        batch = [
+            {"text": "a", "embedding": [1.0, 0.0]},
+            {"text": "b", "embedding": [1.0, 0.0]},
+        ]
+        all_chunks = batch + [{"text": "near", "embedding": [0.9, 0.1]}]
+        with patch("app.extraction.agents.extractor.settings") as mock_settings:
+            mock_settings.extraction_rag_enabled = True
+            mock_settings.extraction_rag_min_similarity = 0.7
+            mock_settings.extraction_rag_top_k = 10
+            result = _retrieve_relevant_chunks(all_chunks, batch)
+        assert any(c["text"] == "near" for c in result)
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +353,7 @@ class TestExtractorNode:
             patch("app.extraction.agents.extractor.get_template", return_value=mock_template),
             patch(
                 "app.extraction.agents.extractor._retrieve_relevant_chunks",
-                side_effect=lambda did, c, bt: c,
+                side_effect=lambda all_c, batch_c: batch_c,
             ),
         ):
             result = await extractor_node(self._make_state())
@@ -366,7 +376,7 @@ class TestExtractorNode:
             patch("app.extraction.agents.extractor.get_template", return_value=mock_template),
             patch(
                 "app.extraction.agents.extractor._retrieve_relevant_chunks",
-                side_effect=lambda did, c, bt: c,
+                side_effect=lambda all_c, batch_c: batch_c,
             ),
         ):
             result = await extractor_node(self._make_state(chunks=[]))
@@ -391,7 +401,7 @@ class TestExtractorNode:
             patch("app.extraction.agents.extractor.get_template", return_value=mock_template),
             patch(
                 "app.extraction.agents.extractor._retrieve_relevant_chunks",
-                side_effect=lambda did, c, bt: c,
+                side_effect=lambda all_c, batch_c: batch_c,
             ),
         ):
             result = await extractor_node(self._make_state())
