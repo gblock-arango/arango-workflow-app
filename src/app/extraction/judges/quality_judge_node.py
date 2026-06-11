@@ -66,8 +66,8 @@ async def quality_judge_node(state: ExtractionPipelineState) -> dict[str, Any]:
     )
 
     faithfulness_scores, validity_scores = await asyncio.gather(
-        judge_faithfulness(classes, chunks, model_name=model_name),
-        validate_semantics(classes, model_name=model_name),
+        judge_faithfulness(classes, chunks, model_name=model_name, run_id=run_id),
+        validate_semantics(classes, model_name=model_name, run_id=run_id),
     )
 
     updated_classes: list[ExtractedClass] = []

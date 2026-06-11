@@ -272,6 +272,7 @@ function PipelineMonitorInner() {
                       pollBusy={runProgress.pollBusy}
                       lastPolledAt={runProgress.lastPolledAt}
                       pollAttempt={runProgress.pollAttempt}
+                      agentSteps={steps}
                     />
                   </div>
                 </div>

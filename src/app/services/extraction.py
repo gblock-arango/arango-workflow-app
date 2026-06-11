@@ -850,6 +850,13 @@ async def execute_run(
 
         publish = _persisting_event_callback
 
+    from app.services.run_agent_diagnostics import init_agent_diagnostics
+
+    await asyncio.to_thread(
+        init_agent_diagnostics,
+        run_id,
+        message=f"LangGraph pipeline running ({len(chunks)} chunks)",
+    )
     await asyncio.to_thread(
         update_run_current_step,
         run_id,
@@ -1199,6 +1206,9 @@ def enrich_run_for_client(run: dict[str, Any]) -> dict[str, Any]:
         "preparation_message",
         "preparation_updated_at",
         "preparation_progress",
+        "agent_diagnostics",
+        "token_usage",
+        "model",
     ):
         if key not in out and stats.get(key) is not None:
             out[key] = stats[key]
@@ -1287,6 +1297,8 @@ def build_run_status_snapshot(run: dict[str, Any]) -> dict[str, Any]:
     errors = stats.get("errors")
     if not isinstance(errors, list):
         errors = []
+    agent_diagnostics = stats.get("agent_diagnostics")
+    token_usage = stats.get("token_usage")
     return {
         "_key": enriched.get("_key"),
         "status": enriched.get("status"),
@@ -1303,6 +1315,9 @@ def build_run_status_snapshot(run: dict[str, Any]) -> dict[str, Any]:
         "preparation_progress": enriched.get("preparation_progress"),
         "preparation_errors": enriched.get("preparation_errors"),
         "current_step": stats.get("current_step"),
+        "agent_diagnostics": agent_diagnostics if isinstance(agent_diagnostics, dict) else None,
+        "token_usage": token_usage if isinstance(token_usage, dict) else None,
+        "model": enriched.get("model") or stats.get("model"),
         "stats": {
             "step_logs": step_logs[-40:],
             "errors": errors[:20],
@@ -1310,12 +1325,25 @@ def build_run_status_snapshot(run: dict[str, Any]) -> dict[str, Any]:
             "preparation_message": stats.get("preparation_message"),
             "preparation_updated_at": stats.get("preparation_updated_at"),
             "preparation_progress": stats.get("preparation_progress"),
+            "agent_diagnostics": agent_diagnostics if isinstance(agent_diagnostics, dict) else None,
+            "token_usage": token_usage if isinstance(token_usage, dict) else None,
+            "current_step": stats.get("current_step"),
         },
     }
 
 
 def update_run_current_step(run_id: str, step: str, *, message: str | None = None) -> None:
     """Best-effort progress marker while LangGraph runs (polled by UI)."""
+    now = time.time()
+    msg = message or f"Agent step: {step}"
+    update_run_progress_cache(
+        run_id,
+        status="running",
+        stage="launching_pipeline",
+        message=msg,
+        stats_patch={"current_step": step},
+        touch_session=False,
+    )
     try:
         db = get_db()
         col = _get_collection(db, "extraction_runs")
@@ -1324,16 +1352,9 @@ def update_run_current_step(run_id: str, step: str, *, message: str | None = Non
             return
         stats = dict(run.get("stats") or {})
         stats["current_step"] = step
-        if message:
-            stats["preparation_message"] = message
-        stats["preparation_updated_at"] = time.time()
+        stats["preparation_message"] = msg
+        stats["preparation_updated_at"] = now
         col.update({"_key": run_id, "stats": stats})
-        update_run_progress_cache(
-            run_id,
-            status="running",
-            message=message or stats.get("preparation_message"),
-            stats_patch={"current_step": step, "step_logs": stats.get("step_logs", [])},
-        )
     except Exception:
         log.debug("could not update run current_step", extra={"run_id": run_id, "step": step})
 
@@ -1346,6 +1367,60 @@ def record_run_step_event(
     error: str | None = None,
 ) -> None:
     """Persist incremental step_logs so REST polls can drive the agent DAG."""
+    from app.services.run_agent_diagnostics import sync_agent_diagnostics_from_step_logs
+    from app.services.run_progress_cache import get_cached_run_progress
+
+    now = time.time()
+    cached = get_cached_run_progress(run_id)
+    cached_stats = dict(cached.get("stats") or {}) if cached else {}
+    logs: list[dict[str, Any]] = [
+        dict(entry) for entry in (cached_stats.get("step_logs") or []) if isinstance(entry, dict)
+    ]
+    idx = next((i for i, entry in enumerate(logs) if entry.get("step") == step), None)
+    current_step = cached_stats.get("current_step")
+
+    if event_type == "step_started":
+        patch: dict[str, Any] = {"step": step, "status": "running", "started_at": now}
+        if idx is not None:
+            logs[idx] = {**logs[idx], **patch}
+        else:
+            logs.append(patch)
+        current_step = step
+    elif event_type == "step_completed":
+        patch = {"step": step, "status": "completed", "completed_at": now}
+        if idx is not None:
+            merged = {**logs[idx], **patch}
+            merged.setdefault("started_at", now)
+            logs[idx] = merged
+        else:
+            logs.append({**patch, "started_at": now})
+    elif event_type == "step_failed":
+        patch = {
+            "step": step,
+            "status": "failed",
+            "completed_at": now,
+            "error": error or "step failed",
+        }
+        if idx is not None:
+            logs[idx] = {**logs[idx], **patch}
+        else:
+            logs.append({**patch, "started_at": now})
+    else:
+        return
+
+    logs = logs[-60:]
+    sync_agent_diagnostics_from_step_logs(
+        run_id,
+        logs,
+        current_step=str(current_step) if current_step else step,
+    )
+    update_run_progress_cache(
+        run_id,
+        status="running",
+        message=f"Agent step: {step} ({event_type.replace('step_', '')})",
+        touch_session=False,
+    )
+
     try:
         db = get_db()
         col = _get_collection(db, "extraction_runs")
@@ -1353,49 +1428,10 @@ def record_run_step_event(
         if run is None:
             return
         stats = dict(run.get("stats") or {})
-        logs: list[dict[str, Any]] = [
-            dict(entry) for entry in (stats.get("step_logs") or []) if isinstance(entry, dict)
-        ]
-        now = time.time()
-        idx = next((i for i, entry in enumerate(logs) if entry.get("step") == step), None)
-
-        if event_type == "step_started":
-            patch: dict[str, Any] = {"step": step, "status": "running", "started_at": now}
-            if idx is not None:
-                logs[idx] = {**logs[idx], **patch}
-            else:
-                logs.append(patch)
-            stats["current_step"] = step
-        elif event_type == "step_completed":
-            patch = {"step": step, "status": "completed", "completed_at": now}
-            if idx is not None:
-                merged = {**logs[idx], **patch}
-                merged.setdefault("started_at", now)
-                logs[idx] = merged
-            else:
-                logs.append({**patch, "started_at": now})
-        elif event_type == "step_failed":
-            patch = {
-                "step": step,
-                "status": "failed",
-                "completed_at": now,
-                "error": error or "step failed",
-            }
-            if idx is not None:
-                logs[idx] = {**logs[idx], **patch}
-            else:
-                logs.append({**patch, "started_at": now})
-        else:
-            return
-
-        stats["step_logs"] = logs[-60:]
+        stats["step_logs"] = logs
+        stats["current_step"] = current_step
         stats["preparation_updated_at"] = now
         col.update({"_key": run_id, "stats": stats})
-        update_run_progress_cache(
-            run_id,
-            status="running",
-            stats_patch={"current_step": stats.get("current_step"), "step_logs": stats["step_logs"]},
-        )
     except Exception:
         log.debug(
             "could not record run step event",

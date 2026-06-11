@@ -2,6 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { AGENT_DAG_HEIGHT_PX } from "@/components/pipeline/AgentDAG";
+import {
+  computeLlmCallsPerMinute,
+  countRunningAgents,
+  effectiveAgentStartedAt,
+  formatCompactNumber,
+  formatEpochTime,
+  formatStepLabel,
+  isAgentPhase,
+  pickAgentDiagnostics,
+  pickTokenUsage,
+  recentAgentStepLogs,
+} from "@/lib/agentDiagnostics";
 import type { RunProgressSnapshot } from "@/lib/runStatusPoll";
 import {
   effectivePreparationStage,
@@ -12,6 +24,7 @@ import {
   preparationStallThresholdMs,
   PREPARATION_UI_MAX_SILENCE_MS,
 } from "@/lib/runStatusPoll";
+import type { StepStatus } from "@/types/pipeline";
 
 const PREPARATION_STEPS: {
   key: string;
@@ -173,6 +186,8 @@ interface PipelineDiagnosticsPanelProps {
   pollBusy: boolean;
   lastPolledAt: number | null;
   pollAttempt: number;
+  /** Live agent step map from WebSocket (for running-agent count). */
+  agentSteps?: Map<string, StepStatus>;
   /** When true, render as a compact right rail beside the Agent Pipeline DAG. */
   embedded?: boolean;
 }
@@ -184,6 +199,7 @@ export default function PipelineDiagnosticsPanel({
   pollBusy,
   lastPolledAt,
   pollAttempt,
+  agentSteps,
   embedded = false,
 }: PipelineDiagnosticsPanelProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -226,6 +242,23 @@ export default function PipelineDiagnosticsPanel({
     nowMs - prepUpdatedMs > stallThresholdMs;
 
   const checkpoints = displayProgress?.preparation_progress?.checkpoints ?? [];
+  const showAgentTelemetry = isAgentPhase(displayProgress);
+  const agentDiag = pickAgentDiagnostics(displayProgress);
+  const tokenUsage = pickTokenUsage(displayProgress);
+  const agentStartedAt = effectiveAgentStartedAt(displayProgress, agentDiag);
+  const llmCalls = agentDiag?.llm_calls ?? 0;
+  const callsPerMin = computeLlmCallsPerMinute(llmCalls, agentStartedAt, nowMs);
+  const runningAgents = countRunningAgents(displayProgress, agentSteps);
+  const promptTokens =
+    agentDiag?.prompt_tokens ?? tokenUsage?.prompt_tokens ?? 0;
+  const completionTokens =
+    agentDiag?.completion_tokens ?? tokenUsage?.completion_tokens ?? 0;
+  const totalTokens =
+    agentDiag?.total_tokens ??
+    tokenUsage?.total_tokens ??
+    promptTokens + completionTokens;
+  const promptChars = agentDiag?.prompt_chars ?? 0;
+  const stepEvents = recentAgentStepLogs(displayProgress);
 
   const subProgress = progressDetailLine(displayProgress);
   const pollTimedOut = pollError != null && isRunStatusPollTimeout(pollError);
@@ -331,26 +364,112 @@ export default function PipelineDiagnosticsPanel({
             </p>
           )}
 
-          {displayProgress?.preparation_message && (
+          {displayProgress?.preparation_message && !showAgentTelemetry && (
             <p className="text-[11px] text-gray-600 bg-gray-50 rounded px-2 py-1 leading-relaxed">
               {displayProgress.preparation_message}
             </p>
           )}
 
-          {displayProgress?.status === "running" && displayProgress.current_step && (
+          {showAgentTelemetry && (
+            <div className="space-y-2">
+              <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide">
+                Agent &amp; LLM telemetry
+              </p>
+              <div className="grid grid-cols-2 gap-1.5">
+                <MetricTile label="LLM calls" value={formatCompactNumber(llmCalls)} />
+                <MetricTile
+                  label="Calls / min"
+                  value={
+                    callsPerMin != null ? callsPerMin.toFixed(1) : llmCalls > 0 ? "…" : "0"
+                  }
+                />
+                <MetricTile label="Prompt tokens" value={formatCompactNumber(promptTokens)} />
+                <MetricTile
+                  label="Completion tokens"
+                  value={formatCompactNumber(completionTokens)}
+                />
+                <MetricTile label="Total tokens" value={formatCompactNumber(totalTokens)} />
+                <MetricTile label="Prompt chars" value={formatCompactNumber(promptChars)} />
+                <MetricTile label="Agents running" value={String(runningAgents)} />
+                <MetricTile
+                  label="Current step"
+                  value={
+                    displayProgress?.current_step
+                      ? formatStepLabel(displayProgress.current_step)
+                      : "—"
+                  }
+                  wide
+                />
+              </div>
+              {displayProgress?.model && (
+                <p className="text-[10px] text-gray-500 font-mono truncate">
+                  Model: {displayProgress.model}
+                </p>
+              )}
+              {agentDiag?.last_llm_at != null && (
+                <p className="text-[10px] text-gray-500">
+                  Last LLM: {formatEpochTime(agentDiag.last_llm_at)}
+                  {agentDiag.last_llm_step
+                    ? ` · ${formatStepLabel(agentDiag.last_llm_step)}`
+                    : ""}
+                </p>
+              )}
+              {stepEvents.length > 0 && (
+                <div className="rounded border border-emerald-100 bg-emerald-50/50 px-2 py-1.5 space-y-1">
+                  <p className="text-[10px] font-semibold text-emerald-800 uppercase tracking-wide">
+                    Agent state changes
+                  </p>
+                  <ul className="space-y-0.5 max-h-36 overflow-y-auto">
+                    {stepEvents.map((entry, i) => (
+                      <li
+                        key={`${entry.step}-${entry.started_at}-${i}`}
+                        className="text-[10px] font-mono leading-snug text-gray-700"
+                      >
+                        <span className="text-gray-400">
+                          {formatEpochTime(entry.completed_at ?? entry.started_at)}
+                        </span>{" "}
+                        <span className="font-semibold">
+                          {entry.step ? formatStepLabel(entry.step) : "step"}
+                        </span>
+                        {": "}
+                        <span
+                          className={
+                            entry.status === "failed"
+                              ? "text-red-700"
+                              : entry.status === "running"
+                                ? "text-emerald-700"
+                                : "text-gray-600"
+                          }
+                        >
+                          {entry.status ?? "unknown"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {llmCalls === 0 && stepEvents.length === 0 && (
+                <p className="text-[11px] text-gray-500 bg-gray-50 rounded px-2 py-1">
+                  Pipeline running — LLM counters update as extraction and judge calls complete.
+                </p>
+              )}
+            </div>
+          )}
+
+          {!showAgentTelemetry && displayProgress?.status === "running" && displayProgress.current_step && (
             <p className="text-[11px] text-emerald-800 bg-emerald-50 rounded px-2 py-1">
               Agent step:{" "}
               <code className="font-mono">{displayProgress.current_step.replace(/_/g, " ")}</code>
             </p>
           )}
 
-          {subProgress && (
+          {!showAgentTelemetry && subProgress && (
             <p className="text-[11px] text-indigo-800 bg-indigo-50 rounded px-2 py-1">
               {subProgress}
             </p>
           )}
 
-          {checkpoints.length > 0 && (
+          {!showAgentTelemetry && checkpoints.length > 0 && (
             <div className="rounded border border-gray-100 bg-gray-50 px-2 py-1.5 space-y-1">
               <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
                 Gateway checkpoints
@@ -371,6 +490,7 @@ export default function PipelineDiagnosticsPanel({
             </div>
           )}
 
+          {!showAgentTelemetry && (
           <ol className="space-y-1.5">
             {PREPARATION_STEPS.map((step) => {
               const state = stepState(step.key, displayProgress);
@@ -404,8 +524,23 @@ export default function PipelineDiagnosticsPanel({
               );
             })}
           </ol>
+          )}
 
-          {displayProgress?.status === "running" && !embedded && (
+          {showAgentTelemetry && !embedded && (
+            <details className="text-[11px] text-gray-500">
+              <summary className="cursor-pointer hover:text-gray-700">Preparation steps (completed)</summary>
+              <ol className="mt-1.5 space-y-1">
+                {PREPARATION_STEPS.map((step) => (
+                  <li key={step.key} className="flex items-center gap-2">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
+                    <span className="text-gray-600">{step.label}</span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
+
+          {!showAgentTelemetry && displayProgress?.status === "running" && !embedded && (
             <p className="text-[11px] text-emerald-700">
               Chunks are in Arango — agent pipeline is running (see DAG below; updates via REST
               when WebSocket is on another worker).
@@ -443,7 +578,9 @@ export default function PipelineDiagnosticsPanel({
               </span>
             )}
           </div>
-          <p className="text-[10px] text-gray-400 leading-snug">Run progress polls</p>
+          <p className="text-[10px] text-gray-400 leading-snug">
+            {showAgentTelemetry ? "Agent & LLM telemetry" : "Run progress polls"}
+          </p>
         </div>
         <div className="flex-1 overflow-y-auto px-3 py-2">{content}</div>
       </aside>
@@ -458,7 +595,7 @@ export default function PipelineDiagnosticsPanel({
             Diagnostics
           </h2>
           <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">
-            Run progress polls
+            {showAgentTelemetry ? "Agent & LLM telemetry" : "Run progress polls"}
           </p>
         </div>
         {selectedRunId && lastPolledAt && (
@@ -469,5 +606,28 @@ export default function PipelineDiagnosticsPanel({
       </div>
       {content}
     </section>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+  wide = false,
+}: {
+  label: string;
+  value: string;
+  wide?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded border border-gray-100 bg-white px-2 py-1.5 ${
+        wide ? "col-span-2" : ""
+      }`}
+    >
+      <p className="text-[9px] uppercase tracking-wide text-gray-400">{label}</p>
+      <p className="text-[12px] font-semibold text-gray-800 truncate" title={value}>
+        {value}
+      </p>
+    </div>
   );
 }

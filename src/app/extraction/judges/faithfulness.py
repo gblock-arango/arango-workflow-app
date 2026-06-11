@@ -7,6 +7,7 @@ but ungrounded, or hallucinated.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -85,6 +86,8 @@ async def judge_faithfulness(
     classes: list[ExtractedClass],
     chunks: list[dict[str, Any]],
     model_name: str | None = None,
+    *,
+    run_id: str | None = None,
 ) -> dict[str, float]:
     """Return {class_uri: faithfulness_score} for each class.
 
@@ -113,6 +116,20 @@ async def judge_faithfulness(
 
         response = await llm.ainvoke(messages)
         raw_text = response.content if isinstance(response.content, str) else str(response.content)
+
+        if run_id:
+            from app.services.run_agent_diagnostics import record_llm_call, usage_from_response
+
+            pt, ct = usage_from_response(response)
+            prompt_chars = len(_SYSTEM_PROMPT) + len(user_prompt)
+            await asyncio.to_thread(
+                record_llm_call,
+                run_id,
+                prompt_tokens=pt,
+                completion_tokens=ct,
+                prompt_chars=prompt_chars,
+                step="quality_judge_faithfulness",
+            )
 
         scores = _parse_response(raw_text, class_uris)
         log.info(

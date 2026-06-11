@@ -370,6 +370,32 @@ def merge_run_progress_for_poll(
     if cached_stats.get("current_step") and not gateway_stats.get("current_step"):
         stats["current_step"] = cached_stats.get("current_step")
 
+    from app.services.run_agent_diagnostics import merge_agent_diagnostics_for_poll
+
+    merged_diag = merge_agent_diagnostics_for_poll(cached_stats, gateway_stats)
+    if merged_diag:
+        stats["agent_diagnostics"] = merged_diag
+    cached_token = cached_stats.get("token_usage")
+    gateway_token = gateway_stats.get("token_usage")
+    if isinstance(cached_token, dict):
+        if not isinstance(gateway_token, dict):
+            stats["token_usage"] = cached_token
+        else:
+            stats["token_usage"] = {
+                "prompt_tokens": max(
+                    int(gateway_token.get("prompt_tokens", 0)),
+                    int(cached_token.get("prompt_tokens", 0)),
+                ),
+                "completion_tokens": max(
+                    int(gateway_token.get("completion_tokens", 0)),
+                    int(cached_token.get("completion_tokens", 0)),
+                ),
+                "total_tokens": max(
+                    int(gateway_token.get("total_tokens", 0)),
+                    int(cached_token.get("total_tokens", 0)),
+                ),
+            }
+
     merged["stats"] = stats
     cached_status = cached.get("status")
     gateway_status = merged.get("status")

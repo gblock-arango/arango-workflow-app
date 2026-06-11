@@ -273,6 +273,19 @@ async def _extract_batch(
                     response.content if isinstance(response.content, str) else str(response.content)
                 )
 
+                from app.services.run_agent_diagnostics import record_llm_call, usage_from_response
+
+                pt, ct = usage_from_response(response)
+                prompt_chars = sum(len(getattr(m, "content", "") or "") for m in messages)
+                await asyncio.to_thread(
+                    record_llm_call,
+                    run_id,
+                    prompt_tokens=pt,
+                    completion_tokens=ct,
+                    prompt_chars=prompt_chars,
+                    step=f"extractor_pass_{pass_num}",
+                )
+
                 if not raw_text or not raw_text.strip():
                     raise ValueError("LLM returned empty response")
 

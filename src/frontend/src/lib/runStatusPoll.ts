@@ -155,6 +155,23 @@ export function mergeRunProgressSnapshots(
     };
   }
 
+  const prevDiag = prev.agent_diagnostics ?? prev.stats?.agent_diagnostics;
+  const nextDiag = next.agent_diagnostics ?? next.stats?.agent_diagnostics;
+  if (prevDiag && typeof prevDiag === "object" && typeof nextDiag === "object") {
+    const prevCalls = Number((prevDiag as Record<string, unknown>).llm_calls ?? 0);
+    const nextCalls = Number((nextDiag as Record<string, unknown>).llm_calls ?? 0);
+    if (nextCalls < prevCalls) {
+      return {
+        ...next,
+        agent_diagnostics: prev.agent_diagnostics ?? prevDiag,
+        stats: {
+          ...next.stats,
+          agent_diagnostics: prev.stats?.agent_diagnostics ?? prevDiag,
+        },
+      };
+    }
+  }
+
   return next;
 }
 
@@ -205,6 +222,7 @@ export interface PreparationProgressDetail {
 export interface RunProgressSnapshot {
   run_id: string;
   status: string;
+  started_at?: number | null;
   doc_id?: string | null;
   doc_ids?: string[] | null;
   target_ontology_id?: string | null;
@@ -214,12 +232,18 @@ export interface RunProgressSnapshot {
   preparation_updated_at?: number | null;
   preparation_progress?: PreparationProgressDetail | null;
   current_step?: string | null;
+  model?: string | null;
+  agent_diagnostics?: Record<string, unknown> | null;
+  token_usage?: Record<string, number> | null;
   errors?: string[];
   chunk_count?: number;
   /** Raw stats subset when fetched from status endpoint (for DAG step_logs). */
   stats?: {
     step_logs?: unknown[];
     errors?: unknown[];
+    agent_diagnostics?: Record<string, unknown>;
+    token_usage?: Record<string, number>;
+    current_step?: string;
   };
 }
 
@@ -236,9 +260,16 @@ export function pickProgress(raw: Record<string, unknown>): RunProgressSnapshot 
   const docIds = Array.isArray(docIdsRaw)
     ? docIdsRaw.map((id) => String(id))
     : null;
+  const agentDiagnosticsRaw =
+    (raw.agent_diagnostics as Record<string, unknown> | undefined) ??
+    (stats.agent_diagnostics as Record<string, unknown> | undefined);
+  const tokenUsageRaw =
+    (raw.token_usage as Record<string, number> | undefined) ??
+    (stats.token_usage as Record<string, number> | undefined);
   return {
     run_id: String(raw._key ?? ""),
     status: String(raw.status ?? "unknown"),
+    started_at: typeof raw.started_at === "number" ? raw.started_at : null,
     doc_id: typeof raw.doc_id === "string" ? raw.doc_id : null,
     doc_ids: docIds,
     target_ontology_id:
@@ -264,11 +295,19 @@ export function pickProgress(raw: Record<string, unknown>): RunProgressSnapshot 
       (raw.current_step as string | undefined) ??
       (stats.current_step as string | undefined) ??
       null,
+    model: typeof raw.model === "string" ? raw.model : null,
+    agent_diagnostics: agentDiagnosticsRaw ?? null,
+    token_usage: tokenUsageRaw ?? null,
     errors,
     chunk_count: typeof raw.chunk_count === "number" ? raw.chunk_count : undefined,
     stats: {
       step_logs: Array.isArray(stats.step_logs) ? stats.step_logs : undefined,
       errors: Array.isArray(stats.errors) ? stats.errors : undefined,
+      agent_diagnostics: agentDiagnosticsRaw,
+      token_usage: tokenUsageRaw,
+      current_step:
+        (stats.current_step as string | undefined) ??
+        (raw.current_step as string | undefined),
     },
   };
 }
