@@ -13,8 +13,8 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from app.extraction.pipeline import (
     _NEXT_STEPS,
-    _should_proceed_to_staging,
-    _should_retry_consistency,
+    _after_prepare_arango,
+    _should_proceed_to_finalize,
     _should_retry_extraction,
     build_pipeline,
     compile_pipeline,
@@ -51,36 +51,30 @@ class TestShouldRetryExtraction:
         assert _should_retry_extraction(state) == "retry"
 
 
-class TestShouldRetryConsistency:
-    def test_end_when_no_result(self):
-        state = {"consistency_result": None}
-        assert _should_retry_consistency(state) == "end"
+class TestShouldProceedToFinalize:
+    def test_abort_when_filter_failed(self):
+        state = {"filter_results": {"status": "failed"}}
+        assert _should_proceed_to_finalize(state) == "abort"
 
-    def test_end_when_empty_classes(self):
-        mock_result = MagicMock()
-        mock_result.classes = []
-        state = {"consistency_result": mock_result}
-        assert _should_retry_consistency(state) == "end"
-
-    def test_continue_when_classes_exist(self):
+    def test_finalize_when_filter_succeeded(self):
         mock_result = MagicMock()
         mock_result.classes = [MagicMock()]
-        state = {"consistency_result": mock_result}
-        assert _should_retry_consistency(state) == "continue"
+        state = {"filter_results": {"status": "completed"}, "consistency_result": mock_result}
+        assert _should_proceed_to_finalize(state) == "finalize"
+
+    def test_abort_when_no_consistency_result(self):
+        state = {"filter_results": {"status": "completed"}, "consistency_result": None}
+        assert _should_proceed_to_finalize(state) == "abort"
 
 
-class TestShouldProceedToStaging:
-    def test_end_when_filter_failed(self):
-        state = {"filter_results": {"status": "failed"}}
-        assert _should_proceed_to_staging(state) == "end"
+class TestAfterPrepareArango:
+    def test_abort_on_failed_prep(self):
+        state = {"prepare_arango_result": {"status": "failed"}}
+        assert _after_prepare_arango(state) == "abort"
 
-    def test_continue_when_filter_succeeded(self):
-        state = {"filter_results": {"status": "completed"}}
-        assert _should_proceed_to_staging(state) == "continue"
-
-    def test_continue_when_no_filter_results(self):
-        state = {"filter_results": {}}
-        assert _should_proceed_to_staging(state) == "continue"
+    def test_continue_on_success(self):
+        state = {"prepare_arango_result": {"status": "completed"}}
+        assert _after_prepare_arango(state) == "continue"
 
 
 # ---------------------------------------------------------------------------
@@ -97,12 +91,15 @@ class TestBuildPipeline:
         graph = build_pipeline()
         node_names = set(graph.nodes.keys())
         expected = {
+            "prepare_arango",
             "strategy_selector",
             "extractor",
             "consistency_checker",
             "quality_judge",
             "er_agent",
+            "belief_revision",
             "filter",
+            "finalize_graph",
         }
         assert expected.issubset(node_names)
 
@@ -147,16 +144,17 @@ class TestSetEventBus:
 
 class TestNextStepsMapping:
     def test_has_expected_transitions(self):
+        assert _NEXT_STEPS["prepare_arango"] == ["strategy_selector"]
         assert _NEXT_STEPS["strategy_selector"] == ["extractor"]
         assert _NEXT_STEPS["extractor"] == ["consistency_checker"]
         assert _NEXT_STEPS["consistency_checker"] == ["quality_judge", "er_agent"]
-        # Stream 11 IBR.11: belief_revision sits between QJ/ER and filter.
         assert _NEXT_STEPS["quality_judge"] == ["belief_revision"]
         assert _NEXT_STEPS["er_agent"] == ["belief_revision"]
         assert _NEXT_STEPS["belief_revision"] == ["filter"]
+        assert _NEXT_STEPS["filter"] == ["finalize_graph"]
 
-    def test_filter_not_in_next_steps(self):
-        assert "filter" not in _NEXT_STEPS
+    def test_finalize_not_in_next_steps(self):
+        assert "finalize_graph" not in _NEXT_STEPS
 
 
 # ---------------------------------------------------------------------------

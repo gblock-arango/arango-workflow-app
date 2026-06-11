@@ -1,8 +1,8 @@
 """LangGraph StateGraph for the ontology extraction pipeline.
 
-Nodes: strategy_selector → extractor → consistency_checker → er_agent → filter
+Nodes: prepare_arango → strategy_selector → extractor → … → filter → finalize_graph
 Conditional edges retry on failure. Checkpointed via MemorySaver.
-Human-in-the-loop breakpoint after pre-curation filter.
+Human-in-the-loop breakpoint after pre-curation filter (before graph persist).
 """
 
 from __future__ import annotations
@@ -19,8 +19,11 @@ from app.extraction.agents.consistency import consistency_checker_node
 from app.extraction.agents.er_agent import er_agent_node
 from app.extraction.agents.extractor import extractor_node
 from app.extraction.agents.filter import filter_agent_node
+from app.extraction.agents.finalize_graph import finalize_graph_node
+from app.extraction.agents.prepare_arango import prepare_arango_node
 from app.extraction.agents.strategy import strategy_selector_node
 from app.extraction.judges.quality_judge_node import quality_judge_node
+from app.extraction.live_metrics import live_metrics_from_node
 from app.extraction.state import ExtractionPipelineState
 
 log = logging.getLogger(__name__)
@@ -28,12 +31,14 @@ log = logging.getLogger(__name__)
 _EVENT_BUS: dict[str, Any] | None = None
 
 _NEXT_STEPS: dict[str, list[str]] = {
+    "prepare_arango": ["strategy_selector"],
     "strategy_selector": ["extractor"],
     "extractor": ["consistency_checker"],
     "consistency_checker": ["quality_judge", "er_agent"],
     "quality_judge": ["belief_revision"],
     "er_agent": ["belief_revision"],
     "belief_revision": ["filter"],
+    "filter": ["finalize_graph"],
 }
 
 
@@ -41,6 +46,14 @@ def set_event_bus(bus: dict[str, Any] | None) -> None:
     """Register an event bus for pipeline step notifications (WebSocket)."""
     global _EVENT_BUS
     _EVENT_BUS = bus
+
+
+def _after_prepare_arango(state: ExtractionPipelineState) -> str:
+    """Abort the DAG when Arango prep failed."""
+    prep = state.get("prepare_arango_result") or {}
+    if prep.get("status") == "failed" or state.get("errors"):
+        return "abort"
+    return "continue"
 
 
 def _should_retry_extraction(state: ExtractionPipelineState) -> str:
@@ -55,39 +68,29 @@ def _should_retry_extraction(state: ExtractionPipelineState) -> str:
     return "continue"
 
 
-def _should_retry_consistency(state: ExtractionPipelineState) -> str:
-    """Conditional edge: skip ER + filter if consistency check produced no results."""
-    result = state.get("consistency_result")
-    if result is None or (hasattr(result, "classes") and len(result.classes) == 0):
-        return "end"
-    return "continue"
-
-
-def _should_proceed_to_staging(state: ExtractionPipelineState) -> str:
-    """Conditional edge: proceed to staging after pre-curation filter."""
+def _should_proceed_to_finalize(state: ExtractionPipelineState) -> str:
+    """Route to graph persist after filter, or END when there is nothing to write."""
     filter_results = state.get("filter_results", {})
     if filter_results.get("status") == "failed":
-        return "end"
-    return "continue"
+        return "abort"
+    consistency = state.get("consistency_result")
+    if consistency is None or (hasattr(consistency, "classes") and len(consistency.classes) == 0):
+        return "abort"
+    return "finalize"
 
 
 def build_pipeline() -> StateGraph[Any]:
     """Construct the LangGraph StateGraph for extraction.
 
-    Pipeline topology (parallel fork/join after consistency checker):
+    Pipeline topology:
 
-    Strategy -> Extraction -> Consistency -+-> Quality Judge -+-> Belief Revision -> Filter
-                                           +-> ER Agent ------+
-
-    Quality Judge and ER Agent run in parallel since they both only
-    depend on the consistency result and don't depend on each other.
-    Belief Revision (Stream 11) joins them: it reads the ER results to
-    avoid revising entities that ER will merge, and it gates writes
-    behind ``settings.belief_revision_pipeline_enabled`` (default OFF).
-    Filter is the final pre-staging step.
+    Prepare Arango -> Strategy -> Extraction -> Consistency
+      -+-> Quality Judge -+-> Belief Revision -> Filter -> Finalize Graph
+       +-> ER Agent -----+
     """
     graph = StateGraph(ExtractionPipelineState)
 
+    graph.add_node("prepare_arango", prepare_arango_node)
     graph.add_node("strategy_selector", strategy_selector_node)
     graph.add_node("extractor", extractor_node)
     graph.add_node("consistency_checker", consistency_checker_node)
@@ -95,8 +98,17 @@ def build_pipeline() -> StateGraph[Any]:
     graph.add_node("er_agent", er_agent_node)
     graph.add_node("belief_revision", belief_revision_node)
     graph.add_node("filter", filter_agent_node)
+    graph.add_node("finalize_graph", finalize_graph_node)
 
-    graph.set_entry_point("strategy_selector")
+    graph.set_entry_point("prepare_arango")
+    graph.add_conditional_edges(
+        "prepare_arango",
+        _after_prepare_arango,
+        {
+            "continue": "strategy_selector",
+            "abort": END,
+        },
+    )
     graph.add_edge("strategy_selector", "extractor")
 
     graph.add_conditional_edges(
@@ -127,12 +139,13 @@ def build_pipeline() -> StateGraph[Any]:
 
     graph.add_conditional_edges(
         "filter",
-        _should_proceed_to_staging,
+        _should_proceed_to_finalize,
         {
-            "end": END,
-            "continue": END,
+            "finalize": "finalize_graph",
+            "abort": END,
         },
     )
+    graph.add_edge("finalize_graph", END)
 
     return graph
 
@@ -149,9 +162,9 @@ def compile_pipeline(
     Parameters
     ----------
     interrupt_after_filter:
-        If True, adds a human-in-the-loop breakpoint after the pre-curation
-        filter. The pipeline pauses, emits a WebSocket event, and waits for
-        curation decisions before proceeding to staging.
+        If True, pauses after the pre-curation filter and **before**
+        ``finalize_graph`` (graph persist). Resume the checkpoint to commit
+        ontology writes to Arango.
     """
     graph = build_pipeline()
     if checkpointer is None:
@@ -182,28 +195,23 @@ async def run_pipeline(
     event_callback: Any | None = None,
     domain_context: str = "",
     domain_ontology_ids: list[str] | None = None,
+    doc_ids: list[str] | None = None,
+    target_ontology_id: str | None = None,
+    chunks_from_uc: bool = False,
     cancel_check: Callable[[], bool] | None = None,
+    pipeline_metadata: dict[str, Any] | None = None,
 ) -> ExtractionPipelineState:
-    """Execute the extraction pipeline end-to-end.
-
-    Parameters
-    ----------
-    run_id:
-        Unique identifier for this extraction run.
-    document_id:
-        The document being processed.
-    chunks:
-        Document chunks to extract from.
-    thread_id:
-        LangGraph thread for checkpoint resume. Defaults to run_id.
-    event_callback:
-        Async callable invoked with step events for WebSocket broadcasting.
-    domain_context:
-        Serialized domain ontology text for Tier 2 context-aware extraction.
-    domain_ontology_ids:
-        IDs of domain ontologies used as context for Tier 2 extraction.
-    """
+    """Execute the extraction pipeline end-to-end."""
     compiled = compile_pipeline(interrupt_after_filter=True)
+
+    metadata = {
+        "domain_ontology_ids": domain_ontology_ids or [],
+        "doc_ids": doc_ids or ([document_id] if document_id else []),
+        "target_ontology_id": target_ontology_id,
+        "chunks_from_uc": chunks_from_uc,
+    }
+    if pipeline_metadata:
+        metadata.update(pipeline_metadata)
 
     initial_state: ExtractionPipelineState = {
         "run_id": run_id,
@@ -214,15 +222,15 @@ async def run_pipeline(
         "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         "step_logs": [],
         "current_step": "initialized",
-        "metadata": {
-            "domain_ontology_ids": domain_ontology_ids or [],
-        },
+        "metadata": metadata,
         "faithfulness_scores": {},
         "validity_scores": {},
         "er_results": {},
         "filter_results": {},
         "merge_candidates": [],
         "domain_context": domain_context,
+        "prepare_arango_result": None,
+        "finalize_graph_result": None,
     }
 
     config = {"configurable": {"thread_id": thread_id or run_id}}
@@ -239,7 +247,7 @@ async def run_pipeline(
             await event_callback(
                 run_id=run_id,
                 event_type="step_started",
-                step="strategy_selector",
+                step="prepare_arango",
                 data={},
             )
 
@@ -255,11 +263,15 @@ async def run_pipeline(
                 )
                 last_node = node_name
                 if event_callback:
+                    node_metrics = live_metrics_from_node(
+                        node_name,
+                        node_output if isinstance(node_output, dict) else None,
+                    )
                     await event_callback(
                         run_id=run_id,
                         event_type="step_completed",
                         step=node_name,
-                        data={"current_step": node_name},
+                        data={"current_step": node_name, **node_metrics},
                     )
                     for next_step in _NEXT_STEPS.get(node_name, []):
                         await event_callback(
@@ -312,7 +324,8 @@ async def run_pipeline(
             step="filter",
             data={
                 "message": (
-                    "Pipeline paused after pre-curation filter. Awaiting curation decisions."
+                    "Pipeline paused after pre-curation filter. "
+                    "Resume to run finalize_graph and persist to Arango."
                 ),
                 "filter_results": result_state.get("filter_results", {}),
                 "merge_candidates": result_state.get("merge_candidates", []),
@@ -325,6 +338,7 @@ async def run_pipeline(
             step="pipeline",
             data={
                 "consistency_result": result_state.get("consistency_result") is not None,
+                "finalize_graph": (result_state.get("finalize_graph_result") or {}).get("status"),
                 "errors": result_state.get("errors", []),
             },
         )
@@ -335,6 +349,7 @@ async def run_pipeline(
             "run_id": run_id,
             "steps": len(result_state.get("step_logs", [])),
             "errors": len(result_state.get("errors", [])),
+            "finalize_status": (result_state.get("finalize_graph_result") or {}).get("status"),
         },
     )
 

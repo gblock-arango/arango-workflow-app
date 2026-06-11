@@ -87,3 +87,7 @@ class ExtractionPipelineState(TypedDict, total=False):
     # belief_revision node hasn't run yet (early pipeline state) or
     # when the agent's return is missing the field.
     belief_revision_summary: dict[str, Any] | None
+
+    # Arango prep / persist nodes (LangGraph bookends)
+    prepare_arango_result: dict[str, Any] | None
+    finalize_graph_result: dict[str, Any] | None

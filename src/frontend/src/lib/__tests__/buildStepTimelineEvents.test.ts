@@ -3,6 +3,11 @@ import type { StepStatus } from "@/types/pipeline";
 
 function makeSteps(): Map<string, StepStatus> {
   const m = new Map<string, StepStatus>();
+  m.set("prepare_arango", {
+    status: "completed",
+    startedAt: "2026-04-09T09:59:58.000Z",
+    completedAt: "2026-04-09T09:59:59.000Z",
+  });
   m.set("strategy_selector", {
     status: "completed",
     startedAt: "2026-04-09T10:00:00.000Z",
@@ -33,29 +38,36 @@ function makeSteps(): Map<string, StepStatus> {
     startedAt: "2026-04-09T10:00:38.000Z",
     completedAt: "2026-04-09T10:00:39.000Z",
   });
+  m.set("finalize_graph", {
+    status: "completed",
+    startedAt: "2026-04-09T10:00:39.000Z",
+    completedAt: "2026-04-09T10:00:40.000Z",
+  });
   return m;
 }
 
 describe("buildStepTimelineEvents", () => {
   it("creates two events (started + completed) per step with timestamps", () => {
     const events = buildStepTimelineEvents(makeSteps());
-    expect(events).toHaveLength(12);
+    expect(events).toHaveLength(16);
   });
 
   it("uses step_started and step_completed event types", () => {
     const events = buildStepTimelineEvents(makeSteps());
     const started = events.filter((e) => e.event_type === "step_started");
     const completed = events.filter((e) => e.event_type === "step_completed");
-    expect(started).toHaveLength(6);
-    expect(completed).toHaveLength(6);
+    expect(started).toHaveLength(8);
+    expect(completed).toHaveLength(8);
   });
 
   it("uses human-readable labels from STEP_LABELS", () => {
     const events = buildStepTimelineEvents(makeSteps());
     const labels = events.map((e) => e.entity_label);
+    expect(labels).toContain("Prepare Arango");
     expect(labels).toContain("Strategy Selector");
     expect(labels).toContain("Extraction Agent");
     expect(labels).toContain("Pre-Curation Filter");
+    expect(labels).toContain("Finalize Graph");
   });
 
   it("converts ISO timestamps to Unix seconds", () => {

@@ -328,6 +328,11 @@ async def get_run_cost(run_id: str) -> dict[str, Any]:
 
 
 def _get_run_cost_sync(run_id: str) -> dict[str, Any]:
+    from app.services.run_progress_cache import get_cached_run_progress
+
+    cached = get_cached_run_progress(run_id)
+    if cached and str(cached.get("status")) in ("running", "paused", "preparing"):
+        return extraction_service.get_run_cost(None, run_id=run_id)
     db = extraction_service.db_for_run(run_id)
     return extraction_service.get_run_cost(db, run_id=run_id)
 

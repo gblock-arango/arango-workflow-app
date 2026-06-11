@@ -132,21 +132,25 @@ const NODE_W = 220;
 const NODE_GAP_Y = 110;
 
 const PIPELINE_TOPOLOGY: { id: PipelineStep; x: number; y: number }[] = [
-  { id: "strategy_selector",       x: 140, y: 0 },
-  { id: "extraction_agent",        x: 140, y: NODE_GAP_Y },
-  { id: "consistency_checker",     x: 140, y: NODE_GAP_Y * 2 },
-  { id: "quality_judge",           x: 10,  y: NODE_GAP_Y * 3 },
-  { id: "entity_resolution_agent", x: 270, y: NODE_GAP_Y * 3 },
-  { id: "pre_curation_filter",     x: 140, y: NODE_GAP_Y * 4 },
+  { id: "prepare_arango",          x: 140, y: 0 },
+  { id: "strategy_selector",       x: 140, y: NODE_GAP_Y },
+  { id: "extraction_agent",        x: 140, y: NODE_GAP_Y * 2 },
+  { id: "consistency_checker",     x: 140, y: NODE_GAP_Y * 3 },
+  { id: "quality_judge",           x: 10,  y: NODE_GAP_Y * 4 },
+  { id: "entity_resolution_agent", x: 270, y: NODE_GAP_Y * 4 },
+  { id: "pre_curation_filter",     x: 140, y: NODE_GAP_Y * 5 },
+  { id: "finalize_graph",          x: 140, y: NODE_GAP_Y * 6 },
 ];
 
 const PIPELINE_EDGES: [PipelineStep, PipelineStep][] = [
+  ["prepare_arango", "strategy_selector"],
   ["strategy_selector", "extraction_agent"],
   ["extraction_agent", "consistency_checker"],
   ["consistency_checker", "quality_judge"],
   ["consistency_checker", "entity_resolution_agent"],
   ["quality_judge", "pre_curation_filter"],
   ["entity_resolution_agent", "pre_curation_filter"],
+  ["pre_curation_filter", "finalize_graph"],
 ];
 
 export default function AgentDAG({ steps, onContextMenu, onApi }: AgentDAGProps) {

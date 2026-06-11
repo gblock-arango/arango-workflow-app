@@ -272,7 +272,6 @@ function PipelineMonitorInner() {
                       pollBusy={runProgress.pollBusy}
                       lastPolledAt={runProgress.lastPolledAt}
                       pollAttempt={runProgress.pollAttempt}
-                      agentSteps={steps}
                     />
                   </div>
                 </div>
@@ -298,7 +297,11 @@ function PipelineMonitorInner() {
 
                 <div className="max-h-[300px] overflow-y-auto">
                   {activeTab === "metrics" && (
-                    <RunMetrics runId={selectedRunId} />
+                    <RunMetrics
+                      runId={selectedRunId}
+                      runStatus={runProgress.progress?.status}
+                      agentSteps={steps}
+                    />
                   )}
                   {activeTab === "errors" && (
                     <ErrorLog steps={steps} runId={selectedRunId} />

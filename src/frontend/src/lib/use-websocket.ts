@@ -22,12 +22,14 @@ interface UseExtractionSocketReturn {
 }
 
 const BACKEND_TO_FRONTEND_STEP: Record<string, PipelineStep> = {
+  prepare_arango: "prepare_arango",
   strategy_selector: "strategy_selector",
   extractor: "extraction_agent",
   consistency_checker: "consistency_checker",
   quality_judge: "quality_judge",
   er_agent: "entity_resolution_agent",
   filter: "pre_curation_filter",
+  finalize_graph: "finalize_graph",
   belief_revision: "quality_judge",
 };
 

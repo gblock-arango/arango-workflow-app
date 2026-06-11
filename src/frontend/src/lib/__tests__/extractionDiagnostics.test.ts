@@ -11,6 +11,7 @@ describe("PREPARATION_STAGE_ORDER", () => {
       "gateway_health",
       "gateway_arango",
       "run_persisted",
+      "loading_uc_chunks",
       "materializing_arango",
       "schema_migrations",
       "launching_pipeline",

@@ -127,6 +127,36 @@ def sync_agent_diagnostics_from_step_logs(
         )
 
 
+_LIVE_METRIC_KEYS = (
+    "classes_extracted",
+    "properties_extracted",
+    "pass_agreement_rate",
+    "merge_candidates_found",
+    "belief_revision",
+    "current_step",
+)
+
+
+def record_live_run_metrics(run_id: str, patch: dict[str, Any]) -> None:
+    """Merge partial entity / agent metrics into the shared progress cache."""
+    if not patch:
+        return
+    try:
+        cached = get_cached_run_progress(run_id)
+        stats = dict(cached.get("stats") or {}) if cached else {}
+        for key in _LIVE_METRIC_KEYS:
+            if key in patch and patch[key] is not None:
+                stats[key] = patch[key]
+        update_run_progress_cache(
+            run_id,
+            status="running",
+            stats_patch=stats,
+            touch_session=False,
+        )
+    except Exception:
+        log.debug("could not record live run metrics", extra={"run_id": run_id}, exc_info=True)
+
+
 def merge_agent_diagnostics_for_poll(
     cached_stats: dict[str, Any],
     gateway_stats: dict[str, Any],

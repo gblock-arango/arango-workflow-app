@@ -93,3 +93,31 @@ class TestRunAgentDiagnostics:
         )
         assert merged["llm_calls"] == 5
         assert merged["prompt_tokens"] == 1000
+
+    def test_get_run_cost_from_cache_while_running(self, progress_cache_dir) -> None:
+        from app.services.extraction import get_run_cost
+        from app.services.run_agent_diagnostics import init_agent_diagnostics, record_llm_call
+        from app.services.run_progress_cache import seed_run_progress
+
+        seed_run_progress(
+            self.run_id,
+            status="running",
+            stage="launching_pipeline",
+            message="running",
+            stats={"started_at": time.time() - 60},
+        )
+        init_agent_diagnostics(self.run_id)
+        record_llm_call(self.run_id, prompt_tokens=500, completion_tokens=100)
+        from app.services.run_agent_diagnostics import record_live_run_metrics
+
+        record_live_run_metrics(
+            self.run_id,
+            {"classes_extracted": 12, "properties_extracted": 40, "current_step": "er_agent"},
+        )
+
+        payload = get_run_cost(None, run_id=self.run_id)
+        assert payload["live"] is True
+        assert payload["classes_extracted"] == 12
+        assert payload["properties_extracted"] == 40
+        assert payload["llm_calls"] == 1
+        assert payload["current_step"] == "er_agent"

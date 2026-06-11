@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.services.extraction import schedule_prepare_and_execute_run
+from app.services.extraction import schedule_execute_run
 from app.services.run_progress_cache import drop_run_progress_cache
 from app.workflow_platform.databricks_outbound_auth import (
     set_outbound_bearer_override,
@@ -23,7 +23,7 @@ def progress_cache_dir(tmp_path, monkeypatch):
 
 
 def _join_prepare_thread(run_id: str, *, timeout: float = 5.0) -> None:
-    prefix = f"extract-prepare-{run_id[:16]}"
+    prefix = f"extract-run-{run_id[:16]}"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         for thread in threading.enumerate():
@@ -46,7 +46,7 @@ class TestExtractionPrepareAuth:
     def test_prepare_thread_pins_service_principal_bearer(self, progress_cache_dir) -> None:
         seen_headers: list[dict[str, str]] = []
 
-        async def fake_prepare(**_kwargs: object) -> None:
+        async def fake_execute(**_kwargs: object) -> None:
             from app.workflow_platform.databricks_outbound_auth import outbound_databricks_auth_headers
 
             seen_headers.append(outbound_databricks_auth_headers())
@@ -58,13 +58,13 @@ class TestExtractionPrepareAuth:
             )
 
         with patch(
-            "app.services.extraction.prepare_and_execute_run",
-            new=fake_prepare,
+            "app.services.extraction.execute_run",
+            new=fake_execute,
         ), patch(
             "app.services.extraction.pin_outbound_service_principal_bearer",
             side_effect=fake_pin,
         ), patch("app.services.extraction.release_outbound_service_principal_bearer"):
-            schedule_prepare_and_execute_run(
+            schedule_execute_run(
                 run_id=self.run_id,
                 document_ids=["doc1"],
             )

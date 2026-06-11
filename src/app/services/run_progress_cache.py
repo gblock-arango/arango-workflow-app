@@ -28,6 +28,7 @@ PREPARATION_STAGE_ORDER: tuple[str, ...] = (
     "gateway_arango",
     "run_persisted",
     "starting",  # legacy alias — treat as gateway_arango in rank()
+    "loading_uc_chunks",
     "materializing_arango",
     "schema_migrations",
     "launching_pipeline",
@@ -183,7 +184,7 @@ def _snapshot(entry: dict[str, Any], run_id: str) -> dict[str, Any]:
         "completed_at": entry.get("completed_at"),
         "stats": dict(stats) if isinstance(stats, dict) else {},
     }
-    for key in ("doc_id", "doc_ids", "target_ontology_id", "arango_database"):
+    for key in ("doc_id", "doc_ids", "target_ontology_id", "arango_database", "pending_run_record"):
         if entry.get(key) is not None:
             out[key] = entry[key]
     return out
@@ -201,6 +202,7 @@ def seed_run_progress(
     doc_ids: list[str] | None = None,
     target_ontology_id: str | None = None,
     arango_database: str | None = None,
+    pending_run_record: dict[str, Any] | None = None,
 ) -> None:
     """Insert or refresh cache when a run is created or the prepare thread starts."""
     base_stats: dict[str, Any] = {
@@ -227,6 +229,8 @@ def seed_run_progress(
         entry["target_ontology_id"] = target_ontology_id
     if arango_database:
         entry["arango_database"] = arango_database
+    if pending_run_record:
+        entry["pending_run_record"] = pending_run_record
     try:
         _write_file(run_id, entry)
     except ValueError:

@@ -384,15 +384,19 @@ class TestExecuteRunSuccess:
             "step_logs": [],
             "token_usage": {"prompt_tokens": 100, "completion_tokens": 50},
             "extraction_passes": [],
+            "finalize_graph_result": {
+                "status": "completed",
+                "ontology_id": "onto_new",
+                "graph_name": "ontology_test",
+                "classes_written": 1,
+            },
         }
 
         return mock_db, mock_col, run_record, pipeline_state, consistency_result
 
-    @patch("app.db.quality_history_repo.record_event_snapshot")
-    @patch("app.services.extraction._create_produced_by_edge")
-    @patch("app.services.extraction._auto_register_ontology", return_value="onto_new")
-    @patch("app.services.extraction._materialize_to_graph")
-    @patch("app.services.extraction._store_results")
+    @patch("app.services.extraction.asyncio.create_task")
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
     @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
@@ -406,19 +410,18 @@ class TestExecuteRunSuccess:
         mock_doc_get,
         mock_run_pipeline,
         mock_load_chunks,
-        mock_store,
-        mock_materialize,
-        mock_auto_reg,
-        mock_produced_by,
-        mock_record_snapshot,
+        _mock_update_step,
+        _mock_init_diag,
+        mock_create_task,
     ):
         from app.services.extraction import execute_run
 
         mock_db, mock_col, run_record, pipeline_state, _ = self._setup_mocks()
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [run_record, {"_key": "run_abc", "status": "completed"}]
+        mock_doc_get.return_value = {**run_record, "status": "completed", "ontology_id": "onto_new"}
         mock_run_pipeline.return_value = pipeline_state
+        mock_create_task.return_value = MagicMock()
 
         result = await execute_run(
             run_id="run_abc",
@@ -426,64 +429,40 @@ class TestExecuteRunSuccess:
             event_callback=MagicMock(),
         )
 
-        mock_store.assert_called_once()
-        mock_auto_reg.assert_called_once()
-        mock_materialize.assert_called_once()
-        mock_produced_by.assert_called_once()
         assert result["status"] == "completed"
-        ontology_persist = [
-            c.args[0]
-            for c in mock_col.update.call_args_list
-            if c.args and isinstance(c.args[0], dict) and c.args[0].get("ontology_id") == "onto_new"
-        ]
-        assert len(ontology_persist) == 1
-        assert ontology_persist[0]["_key"] == "run_abc"
+        update_payload = mock_col.update.call_args.args[0]
+        assert update_payload["ontology_id"] == "onto_new"
+        assert update_payload["stats"]["finalize_graph"]["status"] == "completed"
 
-        # Q.2 — extraction completion must record a quality snapshot
-        # tagged with the run id so the trend chart can attribute the
-        # datapoint to the run that caused it.
-        mock_record_snapshot.assert_called_once()
-        snap_args = mock_record_snapshot.call_args
-        assert snap_args.args == ("onto_new",)
-        assert snap_args.kwargs["source"] == "extraction_completion"
-        assert snap_args.kwargs["run_id"] == "run_abc"
-
-    @patch(
-        "app.db.quality_history_repo.record_event_snapshot",
-        side_effect=RuntimeError("snapshot blew up"),
-    )
-    @patch("app.services.extraction._create_produced_by_edge")
-    @patch("app.services.extraction._auto_register_ontology", return_value="onto_new")
-    @patch("app.services.extraction._materialize_to_graph")
-    @patch("app.services.extraction._store_results")
+    @patch("app.services.extraction.asyncio.create_task")
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
     @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
     @patch("app.services.extraction.get_db")
     @pytest.mark.asyncio
-    async def test_snapshot_failure_does_not_break_extraction(
+    async def test_completes_when_finalize_already_ran(
         self,
         mock_get_db,
         mock_get_col,
         mock_doc_get,
         mock_run_pipeline,
         mock_load_chunks,
-        mock_store,
-        mock_materialize,
-        mock_auto_reg,
-        mock_produced_by,
-        mock_record_snapshot,
+        _mock_update_step,
+        _mock_init_diag,
+        mock_create_task,
     ):
-        """Q.2: a quality snapshot bug must never prevent the extraction
-        pipeline from reporting ``status="completed"`` to the caller."""
+        """Pipeline finalize_graph result is persisted on the run record by execute_run."""
         from app.services.extraction import execute_run
 
         mock_db, mock_col, run_record, pipeline_state, _ = self._setup_mocks()
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [run_record, {"_key": "run_abc", "status": "completed"}]
+        mock_doc_get.return_value = {**run_record, "status": "completed"}
         mock_run_pipeline.return_value = pipeline_state
+        mock_create_task.return_value = MagicMock()
 
         result = await execute_run(
             run_id="run_abc",
@@ -491,15 +470,12 @@ class TestExecuteRunSuccess:
             event_callback=MagicMock(),
         )
 
-        # Pipeline still completes despite the snapshot exception.
         assert result["status"] == "completed"
-        mock_record_snapshot.assert_called_once()
 
-    @patch("app.services.extraction._create_produced_by_edge")
-    @patch("app.services.extraction._update_existing_ontology", return_value="onto_existing")
-    @patch("app.services.extraction._materialize_to_graph")
-    @patch("app.services.extraction._store_results")
-    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.extraction.asyncio.create_task")
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
@@ -512,19 +488,25 @@ class TestExecuteRunSuccess:
         mock_doc_get,
         mock_run_pipeline,
         mock_load_chunks,
-        mock_store,
-        mock_materialize,
-        mock_update_existing,
-        mock_produced_by,
+        _mock_update_step,
+        _mock_init_diag,
+        mock_create_task,
     ):
         from app.services.extraction import execute_run
 
         mock_db, mock_col, run_record, pipeline_state, _ = self._setup_mocks()
         run_record["target_ontology_id"] = "onto_existing"
+        pipeline_state["finalize_graph_result"] = {
+            "status": "completed",
+            "ontology_id": "onto_existing",
+            "graph_name": "ontology_existing",
+            "classes_written": 1,
+        }
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [run_record, {"_key": "run_abc", "status": "completed"}]
+        mock_doc_get.return_value = {**run_record, "status": "completed", "ontology_id": "onto_existing"}
         mock_run_pipeline.return_value = pipeline_state
+        mock_create_task.return_value = MagicMock()
 
         result = await execute_run(
             run_id="run_abc",
@@ -533,19 +515,13 @@ class TestExecuteRunSuccess:
             event_callback=MagicMock(),
         )
 
-        mock_update_existing.assert_called_once()
-        mock_materialize.assert_called_once()
         assert result["status"] == "completed"
-        ontology_persist = [
-            c.args[0]
-            for c in mock_col.update.call_args_list
-            if c.args
-            and isinstance(c.args[0], dict)
-            and c.args[0].get("ontology_id") == "onto_existing"
-        ]
-        assert len(ontology_persist) == 1
+        update_payload = mock_col.update.call_args.args[0]
+        assert update_payload["ontology_id"] == "onto_existing"
 
-    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
@@ -558,6 +534,8 @@ class TestExecuteRunSuccess:
         mock_doc_get,
         mock_run_pipeline,
         mock_load_chunks,
+        _mock_update_step,
+        _mock_init_diag,
     ):
         from app.services.extraction import execute_run
 
@@ -578,14 +556,16 @@ class TestExecuteRunSuccess:
         }
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [run_record, run_record]
+        mock_doc_get.return_value = run_record
         mock_run_pipeline.return_value = {"consistency_result": None, "errors": ["fail"]}
 
         await execute_run(run_id="run_abc", event_callback=MagicMock())
 
         mock_load_chunks.assert_called_once_with(mock_db, "doc_from_record")
 
-    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
@@ -598,6 +578,8 @@ class TestExecuteRunSuccess:
         mock_doc_get,
         mock_run_pipeline,
         mock_load_chunks,
+        _mock_update_step,
+        _mock_init_diag,
     ):
         """When doc_ids is empty but doc_id is set on the run record."""
         from app.services.extraction import execute_run
@@ -618,7 +600,7 @@ class TestExecuteRunSuccess:
         }
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [run_record, run_record]
+        mock_doc_get.return_value = run_record
         mock_run_pipeline.return_value = {"consistency_result": None, "errors": ["fail"]}
 
         await execute_run(run_id="run_abc", event_callback=MagicMock())
@@ -632,7 +614,9 @@ class TestExecuteRunSuccess:
 
 
 class TestExecuteRunFailure:
-    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
@@ -645,6 +629,8 @@ class TestExecuteRunFailure:
         mock_doc_get,
         mock_run_pipeline,
         mock_load_chunks,
+        _mock_update_step,
+        _mock_init_diag,
     ):
         from app.services.extraction import execute_run
 
@@ -664,7 +650,7 @@ class TestExecuteRunFailure:
         }
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [run_record, {"_key": "run_fail", "status": "failed"}]
+        mock_doc_get.return_value = {**run_record, "status": "failed"}
         mock_run_pipeline.side_effect = RuntimeError("LLM timeout")
 
         await execute_run(
@@ -699,8 +685,9 @@ class TestExecuteRunFailure:
         with pytest.raises(NotFoundError):
             await execute_run(run_id="nonexistent", event_callback=MagicMock())
 
-    @patch("app.services.extraction._store_results")
-    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
@@ -713,7 +700,8 @@ class TestExecuteRunFailure:
         mock_doc_get,
         mock_run_pipeline,
         mock_load_chunks,
-        mock_store,
+        _mock_update_step,
+        _mock_init_diag,
     ):
         from app.services.extraction import execute_run
 
@@ -733,7 +721,7 @@ class TestExecuteRunFailure:
         }
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [run_record, run_record]
+        mock_doc_get.return_value = run_record
         mock_run_pipeline.return_value = {
             "consistency_result": None,
             "errors": [],
@@ -751,9 +739,9 @@ class TestExecuteRunFailure:
         update_arg = mock_col.update.call_args[0][0]
         assert update_arg["status"] == "failed"
 
-    @patch("app.services.extraction._auto_register_ontology", return_value=None)
-    @patch("app.services.extraction._store_results")
-    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
@@ -766,8 +754,8 @@ class TestExecuteRunFailure:
         mock_doc_get,
         mock_run_pipeline,
         mock_load_chunks,
-        mock_store,
-        mock_auto_reg,
+        _mock_update_step,
+        _mock_init_diag,
     ):
         from app.services.extraction import execute_run
 
@@ -788,13 +776,14 @@ class TestExecuteRunFailure:
         consistency = _make_result(classes=[])
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [run_record, run_record]
+        mock_doc_get.return_value = run_record
         mock_run_pipeline.return_value = {
             "consistency_result": consistency,
             "errors": ["partial failure"],
             "step_logs": [],
             "token_usage": {},
             "extraction_passes": [],
+            "finalize_graph_result": {"status": "skipped", "reason": "empty_consistency_result"},
         }
 
         await execute_run(
@@ -803,7 +792,6 @@ class TestExecuteRunFailure:
             event_callback=MagicMock(),
         )
 
-        mock_auto_reg.assert_called_once()
         status_updates = [
             c.args[0]
             for c in mock_col.update.call_args_list
@@ -890,15 +878,15 @@ class TestPersistsBeliefRevisionSummary:
             "step_logs": [],
             "token_usage": {},
             "extraction_passes": [],
+            "finalize_graph_result": {"status": "completed", "ontology_id": "onto_x"},
         }
         if include_field:
             pipeline_state["belief_revision_summary"] = belief_summary
         return mock_db, mock_col, run_record, pipeline_state
 
-    @patch("app.services.extraction._create_produced_by_edge")
-    @patch("app.services.extraction._auto_register_ontology", return_value="onto_x")
-    @patch("app.services.extraction._materialize_to_graph")
-    @patch("app.services.extraction._store_results")
+    @patch("app.services.extraction.asyncio.create_task")
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
     @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "h"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
@@ -912,10 +900,9 @@ class TestPersistsBeliefRevisionSummary:
         mock_doc_get,
         mock_run_pipeline,
         _mock_load_chunks,
-        _mock_store,
-        _mock_materialize,
-        _mock_auto_reg,
-        _mock_produced_by,
+        _mock_update_step,
+        _mock_init_diag,
+        mock_create_task,
     ):
         from app.services.extraction import execute_run
 
@@ -932,11 +919,9 @@ class TestPersistsBeliefRevisionSummary:
         mock_db, mock_col, run_record, pipeline_state = self._setup(summary)
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [
-            run_record,
-            {"_key": "run_ibr", "status": "completed"},
-        ]
+        mock_doc_get.return_value = {**run_record, "status": "completed"}
         mock_run_pipeline.return_value = pipeline_state
+        mock_create_task.return_value = MagicMock()
 
         await execute_run(
             run_id="run_ibr",
@@ -950,10 +935,9 @@ class TestPersistsBeliefRevisionSummary:
         terminal_stats = stats_writes[-1]["stats"]
         assert terminal_stats["belief_revision"] == summary
 
-    @patch("app.services.extraction._create_produced_by_edge")
-    @patch("app.services.extraction._auto_register_ontology", return_value="onto_x")
-    @patch("app.services.extraction._materialize_to_graph")
-    @patch("app.services.extraction._store_results")
+    @patch("app.services.extraction.asyncio.create_task")
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
     @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "h"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
@@ -967,10 +951,9 @@ class TestPersistsBeliefRevisionSummary:
         mock_doc_get,
         mock_run_pipeline,
         _mock_load_chunks,
-        _mock_store,
-        _mock_materialize,
-        _mock_auto_reg,
-        _mock_produced_by,
+        _mock_update_step,
+        _mock_init_diag,
+        mock_create_task,
     ):
         """When IBR is feature-flag-off, the agent still emits a
         zeroed summary with ``status=skipped, reason=feature_flag_off``.
@@ -993,11 +976,9 @@ class TestPersistsBeliefRevisionSummary:
         mock_db, mock_col, run_record, pipeline_state = self._setup(summary)
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [
-            run_record,
-            {"_key": "run_ibr", "status": "completed"},
-        ]
+        mock_doc_get.return_value = {**run_record, "status": "completed"}
         mock_run_pipeline.return_value = pipeline_state
+        mock_create_task.return_value = MagicMock()
 
         await execute_run(
             run_id="run_ibr",
@@ -1009,10 +990,9 @@ class TestPersistsBeliefRevisionSummary:
         assert terminal_stats["belief_revision"] == summary
         assert terminal_stats["belief_revision"]["reason"] == "feature_flag_off"
 
-    @patch("app.services.extraction._create_produced_by_edge")
-    @patch("app.services.extraction._auto_register_ontology", return_value="onto_x")
-    @patch("app.services.extraction._materialize_to_graph")
-    @patch("app.services.extraction._store_results")
+    @patch("app.services.extraction.asyncio.create_task")
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
     @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "h"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
@@ -1026,10 +1006,9 @@ class TestPersistsBeliefRevisionSummary:
         mock_doc_get,
         mock_run_pipeline,
         _mock_load_chunks,
-        _mock_store,
-        _mock_materialize,
-        _mock_auto_reg,
-        _mock_produced_by,
+        _mock_update_step,
+        _mock_init_diag,
+        mock_create_task,
     ):
         """Forward-compat / regression guard. If a future agent
         revision (or a pipeline test fixture) returns state without
@@ -1042,11 +1021,9 @@ class TestPersistsBeliefRevisionSummary:
         assert "belief_revision_summary" not in pipeline_state
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [
-            run_record,
-            {"_key": "run_ibr", "status": "completed"},
-        ]
+        mock_doc_get.return_value = {**run_record, "status": "completed"}
         mock_run_pipeline.return_value = pipeline_state
+        mock_create_task.return_value = MagicMock()
 
         await execute_run(
             run_id="run_ibr",
@@ -1060,7 +1037,9 @@ class TestPersistsBeliefRevisionSummary:
         assert "belief_revision" in terminal_stats
         assert terminal_stats["belief_revision"] is None
 
-    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "h"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
@@ -1073,6 +1052,8 @@ class TestPersistsBeliefRevisionSummary:
         mock_doc_get,
         mock_run_pipeline,
         _mock_load_chunks,
+        _mock_update_step,
+        _mock_init_diag,
     ):
         """When the pipeline fires the IBR node successfully then
         crashes downstream (e.g. the materializer blows up), the IBR
@@ -1099,10 +1080,7 @@ class TestPersistsBeliefRevisionSummary:
         }
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [
-            run_record,
-            {"_key": "run_partial", "status": "failed"},
-        ]
+        mock_doc_get.return_value = {**run_record, "status": "failed"}
 
         # Pipeline fires IBR then crashes -- mimic by raising an
         # exception whose ``.partial_state`` mirror lives in the
@@ -1153,7 +1131,9 @@ class TestPersistsBeliefRevisionSummary:
 
 
 class TestExecuteRunDomainContext:
-    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
@@ -1166,6 +1146,8 @@ class TestExecuteRunDomainContext:
         mock_doc_get,
         mock_run_pipeline,
         mock_load_chunks,
+        _mock_update_step,
+        _mock_init_diag,
     ):
         from app.services.extraction import execute_run
 
@@ -1186,7 +1168,7 @@ class TestExecuteRunDomainContext:
         }
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [run_record, run_record]
+        mock_doc_get.return_value = run_record
         mock_run_pipeline.return_value = {
             "consistency_result": None,
             "errors": [],
@@ -1207,9 +1189,11 @@ class TestExecuteRunDomainContext:
             )
 
         _, kwargs = mock_run_pipeline.call_args
-        assert kwargs["domain_context"] == "domain context text"
+        assert kwargs["domain_context"].startswith("domain context text")
 
-    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
@@ -1222,6 +1206,8 @@ class TestExecuteRunDomainContext:
         mock_doc_get,
         mock_run_pipeline,
         mock_load_chunks,
+        _mock_update_step,
+        _mock_init_diag,
     ):
         from app.services.extraction import execute_run
 
@@ -1242,7 +1228,7 @@ class TestExecuteRunDomainContext:
         }
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [run_record, run_record]
+        mock_doc_get.return_value = run_record
         mock_run_pipeline.return_value = {
             "consistency_result": None,
             "errors": [],
@@ -1251,9 +1237,12 @@ class TestExecuteRunDomainContext:
             "extraction_passes": [],
         }
 
-        with patch(
-            "app.services.ontology_context.serialize_multi_domain_context",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch(
+                "app.services.ontology_context.serialize_multi_domain_context",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("app.services.uc_entity_selections.format_uc_entities_for_prompt", return_value=""),
         ):
             # Should not raise
             await execute_run(
@@ -1996,10 +1985,11 @@ class TestGetRun:
         assert result["preparation_message"] == "inserting"
         assert result["preparation_errors"] == ["boom"]
 
+    @patch("app.db.arango_database_names.discover_extraction_databases", return_value=[])
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
     @patch("app.services.extraction.get_db")
-    def test_raises_when_not_found(self, mock_get_db, mock_get_col, mock_doc_get):
+    def test_raises_when_not_found(self, mock_get_db, mock_get_col, mock_doc_get, _mock_discover):
         from app.api.errors import NotFoundError
         from app.services.extraction import get_run
 
@@ -2173,9 +2163,9 @@ class TestGenerateRunId:
 
 
 class TestExecuteRunAgreementRateFromStepLogs:
-    @patch("app.services.extraction._store_results")
-    @patch("app.services.extraction._auto_register_ontology", return_value=None)
-    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.run_agent_diagnostics.init_agent_diagnostics")
+    @patch("app.services.extraction.update_run_current_step")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
     @patch("app.services.extraction.doc_get")
     @patch("app.services.extraction._get_collection")
@@ -2188,8 +2178,8 @@ class TestExecuteRunAgreementRateFromStepLogs:
         mock_doc_get,
         mock_run_pipeline,
         mock_load_chunks,
-        mock_auto_reg,
-        mock_store,
+        _mock_update_step,
+        _mock_init_diag,
     ):
         from app.services.extraction import execute_run
 
@@ -2209,7 +2199,7 @@ class TestExecuteRunAgreementRateFromStepLogs:
         }
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
-        mock_doc_get.side_effect = [run_record, run_record]
+        mock_doc_get.return_value = run_record
 
         consistency = _make_result(classes=[])
         mock_run_pipeline.return_value = {

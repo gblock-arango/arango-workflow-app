@@ -303,7 +303,7 @@ describe("RunMetrics", () => {
       // one level (parentElement) to grab the whole MetricCard so we
       // can inspect value + sublabel together.
       const verdictsTile =
-        screen.getByText("IBR Verdicts").parentElement;
+        screen.getByText("IBR Verdicts").closest(".rounded-xl");
       expect(verdictsTile).not.toBeNull();
       expect(verdictsTile!.textContent).toContain("IBR Verdicts");
       expect(verdictsTile!.textContent).toContain("0");

@@ -27,7 +27,7 @@ class TestPipelineStepEvents:
 
     @pytest.mark.asyncio
     async def test_emits_step_started_before_stream(self):
-        """step_started for strategy_selector fires before the stream loop."""
+        """step_started for prepare_arango fires before the stream loop."""
         callback = AsyncMock()
 
         mock_compiled = MagicMock()
@@ -44,7 +44,7 @@ class TestPipelineStepEvents:
 
         first_call = callback.call_args_list[0]
         assert first_call.kwargs["event_type"] == "step_started"
-        assert first_call.kwargs["step"] == "strategy_selector"
+        assert first_call.kwargs["step"] == "prepare_arango"
 
     @pytest.mark.asyncio
     async def test_emits_step_completed_and_next_started(self):
@@ -52,6 +52,7 @@ class TestPipelineStepEvents:
         callback = AsyncMock()
 
         async def fake_stream():
+            yield {"prepare_arango": {}}
             yield {"strategy_selector": {}}
             yield {"extractor": {}}
 
@@ -70,15 +71,17 @@ class TestPipelineStepEvents:
         event_types = [c.kwargs["event_type"] for c in callback.call_args_list]
         event_steps = [c.kwargs["step"] for c in callback.call_args_list]
 
-        assert (event_types[0], event_steps[0]) == ("step_started", "strategy_selector")
-        assert (event_types[1], event_steps[1]) == ("step_completed", "strategy_selector")
-        assert (event_types[2], event_steps[2]) == ("step_started", "extractor")
-        assert (event_types[3], event_steps[3]) == ("step_completed", "extractor")
-        assert (event_types[4], event_steps[4]) == ("step_started", "consistency_checker")
+        assert (event_types[0], event_steps[0]) == ("step_started", "prepare_arango")
+        assert (event_types[1], event_steps[1]) == ("step_completed", "prepare_arango")
+        assert (event_types[2], event_steps[2]) == ("step_started", "strategy_selector")
+        assert (event_types[3], event_steps[3]) == ("step_completed", "strategy_selector")
+        assert (event_types[4], event_steps[4]) == ("step_started", "extractor")
+        assert (event_types[5], event_steps[5]) == ("step_completed", "extractor")
+        assert (event_types[6], event_steps[6]) == ("step_started", "consistency_checker")
 
     @pytest.mark.asyncio
-    async def test_last_node_does_not_emit_next_started(self):
-        """The filter node (last in pipeline) should not emit a step_started for a next node."""
+    async def test_filter_emits_finalize_started(self):
+        """After filter completes, step_started for finalize_graph fires."""
         callback = AsyncMock()
 
         async def fake_stream():
@@ -92,18 +95,17 @@ class TestPipelineStepEvents:
             await run_pipeline(
                 run_id="r1",
                 document_id="d1",
-                chunks=[],
+                chunks=[{"text": "x"}],
                 event_callback=callback,
             )
 
-        step_started_steps = [
+        started_steps = [
             c.kwargs["step"]
             for c in callback.call_args_list
-            if c.kwargs["event_type"] == "step_started"
+            if c.kwargs.get("event_type") == "step_started"
         ]
-        assert "filter" not in _NEXT_STEPS
-        for step in step_started_steps:
-            assert step != "__end__"
+        assert "finalize_graph" in started_steps
+        assert _NEXT_STEPS["filter"] == ["finalize_graph"]
 
     @pytest.mark.asyncio
     async def test_emits_completed_on_success(self):
@@ -210,7 +212,7 @@ class TestExecuteRunDefaultCallback:
 
     @pytest.mark.asyncio
     async def test_defaults_to_publish_event(self):
-        """When event_callback is None, execute_run uses ws publish_event."""
+        """When event_callback is None, execute_run wraps ws publish_event for pipeline."""
         captured_callback: list[Any] = []
 
         async def spy_run_pipeline(**kwargs):
@@ -233,23 +235,29 @@ class TestExecuteRunDefaultCallback:
         mock_db.has_collection.return_value = True
         mock_db.collection.return_value = mock_col
 
+        publish_event = AsyncMock()
+
         with (
             patch("app.services.extraction.get_db", return_value=mock_db),
             patch("app.services.extraction.run_pipeline", spy_run_pipeline),
-            patch("app.services.extraction._load_document_chunks", return_value=[]),
+            patch("app.services.extraction._load_document_chunks", return_value=[{"text": "x"}]),
+            patch("app.services.extraction.update_run_current_step"),
+            patch("app.services.run_agent_diagnostics.init_agent_diagnostics"),
+            patch("app.api.ws_extraction.publish_event", publish_event),
         ):
             from app.services.extraction import execute_run
 
             await execute_run(run_id="r1", document_id="d1")
 
         assert len(captured_callback) == 1
-        from app.api.ws_extraction import publish_event
-
-        assert captured_callback[0] is publish_event
+        wrapper = captured_callback[0]
+        assert callable(wrapper)
+        await wrapper(run_id="r1", event_type="step_started", step="prepare_arango")
+        publish_event.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_uses_custom_callback_when_provided(self):
-        """When a custom event_callback is passed, it is used instead of publish_event."""
+        """When a custom event_callback is passed, the pipeline wrapper delegates to it."""
         custom_cb = AsyncMock()
         captured_callback: list[Any] = []
 
@@ -276,13 +284,17 @@ class TestExecuteRunDefaultCallback:
         with (
             patch("app.services.extraction.get_db", return_value=mock_db),
             patch("app.services.extraction.run_pipeline", spy_run_pipeline),
-            patch("app.services.extraction._load_document_chunks", return_value=[]),
+            patch("app.services.extraction._load_document_chunks", return_value=[{"text": "x"}]),
+            patch("app.services.extraction.update_run_current_step"),
+            patch("app.services.run_agent_diagnostics.init_agent_diagnostics"),
         ):
             from app.services.extraction import execute_run
 
             await execute_run(run_id="r1", document_id="d1", event_callback=custom_cb)
 
-        assert captured_callback[0] is custom_cb
+        wrapper = captured_callback[0]
+        await wrapper(run_id="r1", event_type="step_started", step="prepare_arango")
+        custom_cb.assert_awaited_once()
 
 
 class TestPublishEventBroadcast:

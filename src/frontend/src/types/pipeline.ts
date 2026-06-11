@@ -101,6 +101,9 @@ export interface BeliefRevisionSummary {
 
 export interface RunCostResponse {
   run_id: string;
+  status?: string;
+  live?: boolean;
+  model?: string;
   total_duration_ms: number;
   prompt_tokens: number;
   completion_tokens: number;
@@ -109,6 +112,14 @@ export interface RunCostResponse {
   classes_extracted: number;
   properties_extracted: number;
   pass_agreement_rate: number;
+  merge_candidates_found?: number;
+  llm_calls?: number;
+  llm_calls_per_min?: number | null;
+  prompt_chars?: number;
+  agents_running?: number;
+  current_step?: string | null;
+  agent_diagnostics?: Record<string, unknown> | null;
+  step_logs?: unknown[];
   model_breakdown?: ModelCost[];
   avg_confidence?: number | null;
   completeness_pct?: number | null;
@@ -138,21 +149,25 @@ export interface WebSocketEvent {
 }
 
 export const PIPELINE_STEPS = [
+  "prepare_arango",
   "strategy_selector",
   "extraction_agent",
   "consistency_checker",
   "quality_judge",
   "entity_resolution_agent",
   "pre_curation_filter",
+  "finalize_graph",
 ] as const;
 
 export type PipelineStep = (typeof PIPELINE_STEPS)[number];
 
 export const STEP_LABELS: Record<PipelineStep, string> = {
+  prepare_arango: "Prepare Arango",
   strategy_selector: "Strategy Selector",
   extraction_agent: "Extraction Agent",
   consistency_checker: "Consistency Checker",
   quality_judge: "Quality Judge",
   entity_resolution_agent: "Entity Resolution Agent",
   pre_curation_filter: "Pre-Curation Filter",
+  finalize_graph: "Finalize Graph",
 };

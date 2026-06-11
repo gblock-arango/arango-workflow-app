@@ -1,15 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
-import type { BeliefRevisionSummary, RunCostResponse } from "@/types/pipeline";
+import { formatStepLabel } from "@/lib/agentDiagnostics";
+import { ACTIVE_RUN_STATUSES, RUN_STATUS_POLL_MS } from "@/lib/runStatusPoll";
+import type { BeliefRevisionSummary, RunCostResponse, StepStatus } from "@/types/pipeline";
 
-/**
- * Map IBR `reason` codes to human copy. Unknown reasons fall through
- * to the raw code so we never silently drop info; if a new reason
- * lands without a mapping the user still sees *something* that links
- * back to the backend symbol they can search for.
- */
 const IBR_REASON_LABELS: Record<string, string> = {
   feature_flag_off: "IBR disabled in this environment",
   no_extraction_results: "No extraction results to revise",
@@ -22,11 +18,6 @@ function ibrReasonLabel(reason: string | undefined): string {
   return IBR_REASON_LABELS[reason] ?? `Skipped: ${reason}`;
 }
 
-/**
- * Compose the Verdicts sublabel: a compact "AUTO_MERGE 3 · FLAG 2"
- * style string. Order is verdict-frequency descending so the most
- * common verdict reads first. Empty verdict_counts yields "—".
- */
 function verdictsSublabel(counts: Record<string, number>): string {
   const entries = Object.entries(counts).filter(([, n]) => n > 0);
   if (entries.length === 0) return "—";
@@ -38,6 +29,8 @@ function verdictsSublabel(counts: Record<string, number>): string {
 
 interface RunMetricsProps {
   runId: string | null;
+  runStatus?: string | null;
+  agentSteps?: Map<string, StepStatus>;
 }
 
 function formatDuration(ms: number | undefined): string {
@@ -61,21 +54,38 @@ function formatCost(cost: number | undefined): string {
 }
 
 function formatPercent(rate: number | undefined): string {
-  if (rate == null) return "—";
+  if (rate == null || rate === 0) return "—";
   return `${(rate * 100).toFixed(1)}%`;
+}
+
+function countRunningFromSteps(steps?: Map<string, StepStatus>): number {
+  if (!steps || steps.size === 0) return 0;
+  let n = 0;
+  for (const step of steps.values()) {
+    if (step.status === "running") n += 1;
+  }
+  return n;
 }
 
 interface MetricCardProps {
   label: string;
   value: string;
   sublabel?: string;
+  live?: boolean;
 }
 
-function MetricCard({ label, value, sublabel }: MetricCardProps) {
+function MetricCard({ label, value, sublabel, live }: MetricCardProps) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-        {label}
+      <div className="flex items-center gap-1.5 mb-2">
+        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          {label}
+        </div>
+        {live && (
+          <span className="text-[9px] font-semibold uppercase tracking-wide text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded">
+            live
+          </span>
+        )}
       </div>
       <div className="text-2xl font-bold text-gray-900">{value}</div>
       {sublabel && (
@@ -94,38 +104,49 @@ function SkeletonCard() {
   );
 }
 
-export default function RunMetrics({ runId }: RunMetricsProps) {
+export default function RunMetrics({
+  runId,
+  runStatus,
+  agentSteps,
+}: RunMetricsProps) {
   const [metrics, setMetrics] = useState<RunCostResponse | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasLoaded = useRef(false);
+
+  const pollActive =
+    runStatus != null && ACTIVE_RUN_STATUSES.has(runStatus);
+
+  const fetchMetrics = useCallback(async () => {
+    if (!runId) return;
+    if (!hasLoaded.current) setInitialLoading(true);
+    setError(null);
+    try {
+      const data = await api.get<RunCostResponse>(
+        `/api/v1/extraction/runs/${runId}/cost`,
+      );
+      setMetrics(data);
+      hasLoaded.current = true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load metrics");
+    } finally {
+      setInitialLoading(false);
+    }
+  }, [runId]);
 
   useEffect(() => {
-    if (!runId) {
-      setMetrics(null);
-      return;
-    }
+    hasLoaded.current = false;
+    setMetrics(null);
+    if (!runId) return;
 
-    let cancelled = false;
-    async function fetchMetrics() {
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await api.get<RunCostResponse>(
-          `/api/v1/extraction/runs/${runId}/cost`,
-        );
-        if (!cancelled) setMetrics(data);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load metrics");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
+    void fetchMetrics();
+    if (!pollActive) return;
 
-    fetchMetrics();
-    return () => {
-      cancelled = true;
-    };
-  }, [runId]);
+    const id = window.setInterval(() => {
+      void fetchMetrics();
+    }, RUN_STATUS_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [runId, pollActive, fetchMetrics]);
 
   if (!runId) {
     return (
@@ -135,9 +156,7 @@ export default function RunMetrics({ runId }: RunMetricsProps) {
     );
   }
 
-  // Error must win over the no-metrics loading fallback, otherwise a failed
-  // first fetch leaves users staring at perpetual skeletons.
-  if (error) {
+  if (error && !metrics) {
     return (
       <div className="text-sm text-red-500 p-4" data-testid="metrics-error">
         {error}
@@ -145,7 +164,7 @@ export default function RunMetrics({ runId }: RunMetricsProps) {
     );
   }
 
-  if (loading || !metrics) {
+  if (initialLoading || !metrics) {
     return (
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 p-4" data-testid="metrics-loading">
         {Array.from({ length: 5 }).map((_, i) => (
@@ -154,6 +173,14 @@ export default function RunMetrics({ runId }: RunMetricsProps) {
       </div>
     );
   }
+
+  const isLive = metrics.live === true || pollActive;
+  const agentsRunning = Math.max(
+    metrics.agents_running ?? 0,
+    countRunningFromSteps(agentSteps),
+  );
+  const llmCalls = metrics.llm_calls ?? 0;
+  const callsPerMin = metrics.llm_calls_per_min;
 
   const confidenceLabel =
     metrics.avg_confidence != null
@@ -169,75 +196,137 @@ export default function RunMetrics({ runId }: RunMetricsProps) {
           : "Low confidence"
       : undefined;
 
+  const stepLogs = Array.isArray(metrics.step_logs) ? metrics.step_logs : [];
+  const recentSteps = [...stepLogs].reverse().slice(0, 6);
+
   return (
-    <div
-      className="grid grid-cols-2 lg:grid-cols-5 gap-3 p-4"
-      data-testid="run-metrics"
-    >
-      <MetricCard
-        label="Total Duration"
-        value={formatDuration(metrics.total_duration_ms)}
-      />
-      <MetricCard
-        label="Token Usage"
-        value={formatNumber(metrics.total_tokens)}
-        sublabel={`${formatNumber(metrics.prompt_tokens)} prompt + ${formatNumber(metrics.completion_tokens)} completion`}
-      />
-      <MetricCard
-        label="Estimated Cost"
-        value={formatCost(metrics.estimated_cost)}
-      />
-      <MetricCard
-        label="Entity Counts"
-        value={String(
-          (metrics.classes_extracted ?? 0) + (metrics.properties_extracted ?? 0),
+    <div className="space-y-3 p-4" data-testid="run-metrics">
+      {error && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1">
+          Metrics poll failed — showing last values. {error}
+        </p>
+      )}
+
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <MetricCard
+          label="Total Duration"
+          value={formatDuration(metrics.total_duration_ms)}
+          sublabel={isLive ? "Elapsed (updates while running)" : undefined}
+          live={isLive}
+        />
+        <MetricCard
+          label="LLM Calls"
+          value={formatNumber(llmCalls)}
+          sublabel={
+            callsPerMin != null
+              ? `${callsPerMin.toFixed(1)} calls / min`
+              : isLive
+                ? "Updates as agents invoke the model"
+                : undefined
+          }
+          live={isLive}
+        />
+        <MetricCard
+          label="Token Usage"
+          value={formatNumber(metrics.total_tokens)}
+          sublabel={`${formatNumber(metrics.prompt_tokens)} prompt + ${formatNumber(metrics.completion_tokens)} completion`}
+          live={isLive}
+        />
+        <MetricCard
+          label="Estimated Cost"
+          value={formatCost(metrics.estimated_cost)}
+          live={isLive}
+        />
+        <MetricCard
+          label="Entity Counts"
+          value={String(
+            (metrics.classes_extracted ?? 0) + (metrics.properties_extracted ?? 0),
+          )}
+          sublabel={`${metrics.classes_extracted ?? 0} classes + ${metrics.properties_extracted ?? 0} properties`}
+          live={isLive}
+        />
+        <MetricCard
+          label="Agreement Rate"
+          value={formatPercent(metrics.pass_agreement_rate)}
+          sublabel="Cross-pass consistency"
+          live={isLive && (metrics.pass_agreement_rate ?? 0) > 0}
+        />
+        <MetricCard
+          label="Agents Running"
+          value={String(agentsRunning)}
+          sublabel={
+            metrics.current_step
+              ? `Current: ${formatStepLabel(metrics.current_step)}`
+              : isLive
+                ? "LangGraph pipeline"
+                : undefined
+          }
+          live={isLive}
+        />
+        {(metrics.merge_candidates_found ?? 0) > 0 && (
+          <MetricCard
+            label="ER Merge Candidates"
+            value={formatNumber(metrics.merge_candidates_found)}
+            sublabel="Entity resolution matches"
+            live={isLive}
+          />
         )}
-        sublabel={`${metrics.classes_extracted ?? 0} classes + ${metrics.properties_extracted ?? 0} properties`}
-      />
-      <MetricCard
-        label="Agreement Rate"
-        value={formatPercent(metrics.pass_agreement_rate)}
-        sublabel="Cross-pass consistency"
-      />
-      <MetricCard
-        label="Avg Confidence"
-        value={confidenceLabel}
-        sublabel={confidenceSublabel}
-      />
-      <MetricCard
-        label="Completeness"
-        value={
-          metrics.completeness_pct != null
-            ? `${metrics.completeness_pct.toFixed(1)}%`
-            : "—"
-        }
-        sublabel="Classes with properties"
-      />
-      <BeliefRevisionTiles ibr={metrics.belief_revision ?? null} />
+        <MetricCard
+          label="Avg Confidence"
+          value={confidenceLabel}
+          sublabel={confidenceSublabel}
+        />
+        <MetricCard
+          label="Completeness"
+          value={
+            metrics.completeness_pct != null
+              ? `${metrics.completeness_pct.toFixed(1)}%`
+              : "—"
+          }
+          sublabel="Classes with properties"
+        />
+        <BeliefRevisionTiles ibr={metrics.belief_revision ?? null} />
+      </div>
+
+      {isLive && recentSteps.length > 0 && (
+        <div className="rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2">
+          <p className="text-[10px] font-semibold text-emerald-800 uppercase tracking-wide mb-1.5">
+            Agent state changes
+          </p>
+          <ul className="space-y-0.5">
+            {recentSteps.map((entry, i) => {
+              if (!entry || typeof entry !== "object") return null;
+              const row = entry as Record<string, unknown>;
+              const step = typeof row.step === "string" ? row.step : "step";
+              const status = typeof row.status === "string" ? row.status : "unknown";
+              return (
+                <li
+                  key={`${step}-${String(row.started_at)}-${i}`}
+                  className="text-[11px] font-mono text-gray-700"
+                >
+                  <span className="font-semibold">{formatStepLabel(step)}</span>
+                  {": "}
+                  <span
+                    className={
+                      status === "failed"
+                        ? "text-red-700"
+                        : status === "running"
+                          ? "text-emerald-700"
+                          : "text-gray-600"
+                    }
+                  >
+                    {status}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
 
-/**
- * IBR.12 -- Pipeline Monitor tiles for the belief-revision phase.
- *
- * Three states:
- *   1. `ibr === null`            -- legacy run with no IBR data; one
- *                                   neutral "—" tile so the row stays
- *                                   even-width but the user knows
- *                                   there's no signal here.
- *   2. `status === "skipped"`    -- IBR didn't run; one tile shows
- *                                   the human-readable reason so the
- *                                   user knows it isn't a missing
- *                                   metric, it's a deliberate no-op.
- *   3. `status` is "completed"   -- four tiles: Touchpoints,
- *      / "failed"                  Verdicts (with breakdown sublabel),
- *                                   Auto-applied, Flagged for
- *                                   curation. LLM invocations is
- *                                   folded into the Verdicts sublabel
- *                                   to keep the row visually balanced
- *                                   instead of growing a 9th column.
- */
 function BeliefRevisionTiles({
   ibr,
 }: {
@@ -263,7 +352,6 @@ function BeliefRevisionTiles({
     );
   }
 
-  // status === "completed" or "failed" -- show the real numbers.
   const statusSuffix = ibr.status === "failed" ? " (failed)" : "";
   return (
     <>

@@ -25,6 +25,7 @@ from app.db.arango_database_names import resolve_arango_database_name, validate_
 from app.db.client import (
     clear_active_arango_database,
     _is_duplicate_name_error,
+    effective_arango_database_name,
     get_db,
     set_active_arango_database,
 )
@@ -218,7 +219,7 @@ def mark_run_preparation_failed(run_id: str, message: str) -> None:
         log.exception("could not mark extraction run failed", extra={"run_id": run_id})
 
 
-def schedule_prepare_and_execute_run(
+def schedule_execute_run(
     *,
     run_id: str,
     document_ids: list[str],
@@ -227,20 +228,12 @@ def schedule_prepare_and_execute_run(
     target_ontology_id: str | None = None,
     run_record: dict[str, Any] | None = None,
 ) -> None:
-    """Start UC→Arango prepare + extraction on a daemon thread.
+    """Start LangGraph extraction on a daemon thread (prep in ``prepare_arango`` node).
 
-    ``asyncio.create_task`` is unreliable under uvicorn multi-worker: the prepare
-    coroutine may never run after the HTTP response returns. A dedicated thread with
-    its own event loop keeps preparation alive independent of the request worker.
+    ``asyncio.create_task`` is unreliable under uvicorn multi-worker: the coroutine
+    may never run after the HTTP response returns. A dedicated thread with its own
+    event loop keeps the run alive independent of the request worker.
     """
-    kwargs: dict[str, Any] = {
-        "run_id": run_id,
-        "document_ids": document_ids,
-        "config_overrides": config_overrides,
-        "domain_ontology_ids": domain_ontology_ids,
-        "target_ontology_id": target_ontology_id,
-        "run_record": run_record,
-    }
     def _runner() -> None:
         # M2M: pin this app's service principal bearer for all gateway calls in this thread
         # (app.yaml arango-gateway-app-invoke CAN_USE). Eager snapshot avoids ContextVar gaps
@@ -263,15 +256,23 @@ def schedule_prepare_and_execute_run(
             update_run_progress_cache(
                 run_id,
                 stage=PREPARATION_STAGE_GATEWAY_HEALTH,
-                message="Worker scheduled — probing gateway /health…",
+                message="Worker scheduled — LangGraph prepare_arango starting…",
             )
             try:
-                asyncio.run(prepare_and_execute_run(**kwargs))
+                asyncio.run(
+                    execute_run(
+                        run_id=run_id,
+                        document_ids=document_ids,
+                        config_overrides=config_overrides,
+                        domain_ontology_ids=domain_ontology_ids,
+                        target_ontology_id=target_ontology_id,
+                    )
+                )
             except ExtractionCancelled:
                 log.info("extraction run cancelled", extra={"run_id": run_id})
                 mark_run_cancelled(run_id)
             except Exception as exc:
-                log.exception("prepare_and_execute_run thread failed", extra={"run_id": run_id})
+                log.exception("execute_run thread failed", extra={"run_id": run_id})
                 mark_run_preparation_failed(run_id, str(exc))
             finally:
                 stop_preparation_session(run_id)
@@ -291,11 +292,31 @@ def schedule_prepare_and_execute_run(
 
     thread = threading.Thread(
         target=_runner,
-        name=f"extract-prepare-{run_id[:16]}",
+        name=f"extract-run-{run_id[:16]}",
         daemon=True,
     )
     thread.start()
-    log.info("scheduled prepare_and_execute_run thread", extra={"run_id": run_id})
+    log.info("scheduled execute_run thread", extra={"run_id": run_id})
+
+
+def schedule_prepare_and_execute_run(
+    *,
+    run_id: str,
+    document_ids: list[str],
+    config_overrides: dict[str, Any] | None = None,
+    domain_ontology_ids: list[str] | None = None,
+    target_ontology_id: str | None = None,
+    run_record: dict[str, Any] | None = None,
+) -> None:
+    """Deprecated alias — prep now runs inside the ``prepare_arango`` LangGraph node."""
+    schedule_execute_run(
+        run_id=run_id,
+        document_ids=document_ids,
+        config_overrides=config_overrides,
+        domain_ontology_ids=domain_ontology_ids,
+        target_ontology_id=target_ontology_id,
+        run_record=run_record,
+    )
 
 
 def update_run_preparation(
@@ -421,7 +442,7 @@ def begin_extraction_run(
     )
     run_record["stats"]["preparation_message"] = (
         f"Queued — database {resolved_database} (created automatically if missing), "
-        "then gateway health check and UC chunk load"
+        "then LangGraph prepare_arango (gateway, UC chunks, schema)"
     )
     run_id = str(run_record["_key"])
     seed_run_progress(
@@ -434,8 +455,9 @@ def begin_extraction_run(
         doc_ids=run_record.get("doc_ids"),
         target_ontology_id=run_record.get("target_ontology_id"),
         arango_database=run_record.get("arango_database"),
+        pending_run_record=run_record,
     )
-    schedule_prepare_and_execute_run(
+    schedule_execute_run(
         run_id=run_id,
         document_ids=document_ids,
         config_overrides=config_overrides,
@@ -517,195 +539,6 @@ def create_run_record(
     return run_record
 
 
-async def prepare_and_execute_run(
-    run_id: str,
-    *,
-    document_ids: list[str],
-    config_overrides: dict[str, Any] | None = None,
-    domain_ontology_ids: list[str] | None = None,
-    target_ontology_id: str | None = None,
-    run_record: dict[str, Any] | None = None,
-) -> None:
-    """Materialize UC artifacts into Arango, apply schema, then run the agent pipeline."""
-    from app.services.extraction_gateway_checkpoints import (
-        connect_arango_checkpoint,
-        persist_run_record_checkpoint,
-        probe_gateway_health_checkpoint,
-    )
-    from app.services.extraction_materialize import load_chunks_for_extraction
-    from app.services.schema_bootstrap import ensure_ontology_schema_async
-
-    def _wrap_cancellable_progress(
-        callback: Any,
-    ) -> Any:
-        def on_progress(message: str, progress: dict[str, Any] | None = None) -> None:
-            check_extraction_cancelled(run_id)
-            callback(message, progress)
-
-        return on_progress
-
-    def _load_one_document(doc_id: str, index: int, total: int) -> list[dict[str, Any]]:
-        _apply_run_arango_database(run_id)
-
-        def on_progress(message: str, progress: dict[str, Any] | None = None) -> None:
-            merged: dict[str, Any] = {
-                "doc_id": doc_id,
-                "doc_index": index,
-                "doc_total": total,
-            }
-            if progress:
-                merged.update(progress)
-            update_run_preparation(
-                db,
-                run_id,
-                stage=PREPARATION_STAGE_LOADING_UC,
-                message=f"({index}/{total}) {message}",
-                progress=merged,
-            )
-
-        on_progress = _wrap_cancellable_progress(on_progress)
-        on_progress(f"Loading chunks from UC volume for {doc_id}")
-        return load_chunks_for_extraction(doc_id, on_progress=on_progress)
-
-    db: StandardDatabase | None = None
-    col: StandardCollection | None = None
-    try:
-        check_extraction_cancelled(run_id)
-        await asyncio.to_thread(probe_gateway_health_checkpoint, run_id)
-        check_extraction_cancelled(run_id)
-        db, col = await asyncio.to_thread(
-            connect_arango_checkpoint,
-            run_id,
-            (run_record or {}).get("arango_database"),
-        )
-        check_extraction_cancelled(run_id)
-        await asyncio.to_thread(
-            persist_run_record_checkpoint,
-            db,
-            col,
-            run_id,
-            run_record,
-        )
-
-        preloaded_chunks: list[dict[str, Any]] = []
-        total = len(document_ids)
-        for index, doc_id in enumerate(document_ids, start=1):
-            check_extraction_cancelled(run_id)
-            doc_chunks = await asyncio.to_thread(_load_one_document, doc_id, index, total)
-            preloaded_chunks.extend(doc_chunks)
-
-        def on_schema_progress(message: str, progress: dict[str, Any] | None = None) -> None:
-            merged: dict[str, Any] = {"phase": "schema_migrations"}
-            if progress:
-                merged.update(progress)
-            update_run_preparation(
-                db,
-                run_id,
-                stage=PREPARATION_STAGE_SCHEMA,
-                message=message,
-                progress=merged,
-            )
-
-        on_schema_progress = _wrap_cancellable_progress(on_schema_progress)
-        on_schema_progress(
-            "Starting ontology schema migrations through gateway…",
-            {"phase": "schema_migrations"},
-        )
-        await ensure_ontology_schema_async(db=db, on_progress=on_schema_progress)
-
-        check_extraction_cancelled(run_id)
-        launch_message = (
-            f"Schema complete — loaded {len(preloaded_chunks)} chunks from UC, "
-            "starting LangGraph agent pipeline"
-        )
-        # Cache-first: execute_run also uses the gateway; Arango status writes can
-        # block for minutes after batch schema DDL on the same HTTP client.
-        update_run_progress_cache(
-            run_id,
-            status="running",
-            stage=PREPARATION_STAGE_LAUNCHING,
-            message=launch_message,
-            progress={"phase": "launching_pipeline"},
-        )
-        try:
-            run = doc_get(col, run_id) or {}
-            stats = dict(run.get("stats") or {})
-            stats["preparation_stage"] = PREPARATION_STAGE_LAUNCHING
-            stats["preparation_message"] = launch_message
-            stats["preparation_updated_at"] = time.time()
-            stats["preparation_progress"] = {"phase": "launching_pipeline"}
-            persist_started = time.perf_counter()
-            stop_persist = threading.Event()
-
-            def _status_persist_heartbeat() -> None:
-                while not stop_persist.wait(12.0):
-                    elapsed_s = int(time.perf_counter() - persist_started)
-                    update_run_progress_cache(
-                        run_id,
-                        status="running",
-                        stage=PREPARATION_STAGE_LAUNCHING,
-                        message=f"{launch_message} — confirming in Arango ({elapsed_s}s)…",
-                        progress={
-                            "phase": "launching_pipeline",
-                            "confirm_run_status": True,
-                            "migration_elapsed_s": elapsed_s,
-                        },
-                        touch_session=False,
-                    )
-
-            status_hb = threading.Thread(
-                target=_status_persist_heartbeat,
-                name=f"run-status-hb-{run_id[:12]}",
-                daemon=True,
-            )
-            status_hb.start()
-            try:
-                col.update({"_key": run_id, "status": "running", "stats": stats})
-            finally:
-                stop_persist.set()
-                status_hb.join(timeout=1.0)
-        except Exception:
-            log.warning(
-                "arango run status update failed (file cache already running)",
-                extra={"run_id": run_id},
-            )
-
-        await execute_run(
-            run_id=run_id,
-            document_ids=document_ids,
-            config_overrides=config_overrides,
-            domain_ontology_ids=domain_ontology_ids,
-            target_ontology_id=target_ontology_id,
-            preloaded_chunks=preloaded_chunks,
-        )
-    except ExtractionCancelled:
-        raise
-    except Exception as exc:
-        log.exception("prepare_and_execute_run failed", extra={"run_id": run_id})
-        if db is None or col is None:
-            from app.db.gateway_errors import format_gateway_error
-
-            mark_run_preparation_failed(run_id, format_gateway_error(exc))
-            return
-        run = doc_get(col, run_id) or {}
-        stats = dict(run.get("stats") or {})
-        errors = list(stats.get("errors") or [])
-        errors.append(str(exc))
-        stats["errors"] = errors
-        stats["preparation_message"] = str(exc)
-        stats["preparation_updated_at"] = time.time()
-        if stats.get("preparation_stage"):
-            stats["preparation_failed_stage"] = stats.get("preparation_stage")
-        col.update(
-            {
-                "_key": run_id,
-                "status": "failed",
-                "completed_at": time.time(),
-                "stats": stats,
-            }
-        )
-
-
 def _normalize_doc_ids(
     *,
     document_id: str | None = None,
@@ -746,11 +579,27 @@ async def execute_run(
 
         event_callback = publish_event
 
-    db = get_db()
-    col = _get_collection(db, "extraction_runs")
-    run_record = doc_get(col, run_id)
-    if run_record is None:
-        raise NotFoundError(f"Extraction run '{run_id}' not found")
+    cached = get_cached_run_progress(run_id)
+    pending_run_record = (cached or {}).get("pending_run_record") if cached else None
+    deferred_prep = bool(
+        cached
+        and cached.get("status") == "preparing"
+        and isinstance(pending_run_record, dict)
+    )
+
+    db: StandardDatabase | None = None
+    col: StandardCollection | None = None
+    run_record: dict[str, Any] | None = None
+
+    if deferred_prep:
+        run_record = dict(pending_run_record)
+    else:
+        _apply_run_arango_database(run_id)
+        db = get_db()
+        col = _get_collection(db, "extraction_runs")
+        run_record = doc_get(col, run_id)
+        if run_record is None:
+            raise NotFoundError(f"Extraction run '{run_id}' not found")
 
     doc_ids = _normalize_doc_ids(document_id=document_id, document_ids=document_ids)
     if not doc_ids:
@@ -765,7 +614,7 @@ async def execute_run(
         domain_ontology_ids = run_record.get("domain_ontology_ids")
 
     domain_context = ""
-    if domain_ontology_ids:
+    if domain_ontology_ids and not deferred_prep and db is not None:
         try:
             from app.services.ontology_context import serialize_multi_domain_context
 
@@ -788,28 +637,32 @@ async def execute_run(
                 extra={"run_id": run_id},
             )
 
-    try:
-        from app.services.uc_entity_selections import format_uc_entities_for_prompt
+    if not deferred_prep:
+        try:
+            from app.services.uc_entity_selections import format_uc_entities_for_prompt
 
-        uc_block = format_uc_entities_for_prompt()
-        if uc_block:
-            domain_context = (
-                f"{domain_context}\n\n{uc_block}" if domain_context else uc_block
-            )
-    except Exception:
-        log.debug("UC entity selection context unavailable", exc_info=True)
+            uc_block = format_uc_entities_for_prompt()
+            if uc_block:
+                domain_context = (
+                    f"{domain_context}\n\n{uc_block}" if domain_context else uc_block
+                )
+        except Exception:
+            log.debug("UC entity selection context unavailable", exc_info=True)
 
-    chunks_from_uc = preloaded_chunks is not None
-    if chunks_from_uc:
+    chunks_from_uc = preloaded_chunks is not None or deferred_prep
+    if preloaded_chunks is not None:
         chunks = list(preloaded_chunks)
+    elif deferred_prep:
+        chunks = []
     else:
+        assert db is not None
         chunks = []
         for did in doc_ids:
             chunks.extend(_load_document_chunks(db, did))
 
     primary_doc_id = doc_ids[0] if doc_ids else "unknown"
 
-    if not chunks:
+    if not chunks and not deferred_prep:
         source = "UC volume" if chunks_from_uc else "Arango"
         raise ValueError(
             f"No chunks found in {source} for document(s) {doc_ids} — "
@@ -840,6 +693,11 @@ async def execute_run(
                     step_str,
                     message=f"Agent step: {step_str}",
                 )
+            data = kwargs.get("data")
+            if event_type == "step_completed" and isinstance(data, dict) and data:
+                from app.services.run_agent_diagnostics import record_live_run_metrics
+
+                await asyncio.to_thread(record_live_run_metrics, run_id, data)
             await asyncio.to_thread(
                 record_run_step_event,
                 run_id,
@@ -852,17 +710,33 @@ async def execute_run(
 
     from app.services.run_agent_diagnostics import init_agent_diagnostics
 
+    prep_message = (
+        "LangGraph prepare_arango (gateway, UC chunks, schema)…"
+        if deferred_prep
+        else f"LangGraph pipeline running ({len(chunks)} chunks)"
+    )
     await asyncio.to_thread(
         init_agent_diagnostics,
         run_id,
-        message=f"LangGraph pipeline running ({len(chunks)} chunks)",
+        message=prep_message,
     )
     await asyncio.to_thread(
         update_run_current_step,
         run_id,
-        "strategy_selector",
-        message=f"LangGraph pipeline running ({len(chunks)} chunks)",
+        "prepare_arango",
+        message=prep_message,
     )
+
+    pipeline_metadata: dict[str, Any] = {
+        "domain_ontology_ids": domain_ontology_ids or [],
+        "doc_ids": doc_ids,
+        "target_ontology_id": target_ontology_id,
+        "chunks_from_uc": chunks_from_uc,
+    }
+    if deferred_prep:
+        pipeline_metadata["pending_run_record"] = run_record
+        if run_record.get("arango_database"):
+            pipeline_metadata["arango_database"] = run_record["arango_database"]
 
     final_state: dict[str, Any] = {}
     try:
@@ -875,9 +749,45 @@ async def execute_run(
                 event_callback=publish,
                 domain_context=domain_context,
                 domain_ontology_ids=domain_ontology_ids or [],
+                doc_ids=doc_ids,
+                target_ontology_id=target_ontology_id,
+                chunks_from_uc=chunks_from_uc,
                 cancel_check=lambda: is_extraction_cancelled(run_id),
+                pipeline_metadata=pipeline_metadata,
             ),
         )
+
+        prep_result = final_state.get("prepare_arango_result") or {}
+        if prep_result.get("status") == "failed":
+            if col is None:
+                _apply_run_arango_database(run_id, run=run_record)
+                db = get_db()
+                col = _get_collection(db, "extraction_runs")
+            failed_at = time.time()
+            col.update(
+                {
+                    "_key": run_id,
+                    "status": "failed",
+                    "completed_at": failed_at,
+                    "stats": {
+                        **run_record["stats"],
+                        "errors": final_state.get("errors", []),
+                        "step_logs": [
+                            _serialize_step_log(sl) for sl in final_state.get("step_logs", [])
+                        ],
+                        "finalize_graph": final_state.get("finalize_graph_result") or {},
+                    },
+                }
+            )
+            return doc_get(col, run_id) or {}
+
+        if col is None:
+            _apply_run_arango_database(run_id, run=run_record)
+            db = get_db()
+            col = _get_collection(db, "extraction_runs")
+            refreshed = doc_get(col, run_id)
+            if refreshed:
+                run_record = refreshed
 
         completed_at = time.time()
         status = "completed"
@@ -918,6 +828,8 @@ async def execute_run(
         # frontend renders that as a neutral "no data" tile rather
         # than zeros.
         belief_revision_summary = final_state.get("belief_revision_summary")
+        finalize_result = final_state.get("finalize_graph_result") or {}
+        ontology_id_from_finalize = finalize_result.get("ontology_id")
 
         update_data: dict[str, Any] = {
             "completed_at": completed_at,
@@ -931,113 +843,40 @@ async def execute_run(
                 "properties_extracted": properties_extracted,
                 "pass_agreement_rate": pass_agreement_rate,
                 "belief_revision": belief_revision_summary,
+                "finalize_graph": finalize_result,
             },
         }
+        if ontology_id_from_finalize:
+            update_data["ontology_id"] = ontology_id_from_finalize
         col.update({"_key": run_id, **update_data})
 
-        if final_state.get("consistency_result"):
-            if chunks_from_uc:
-                from app.services.extraction_materialize import (
-                    materialize_embedding_documents_for_lineage,
-                )
-
-                def _on_lineage_progress(message: str, progress: dict[str, Any] | None = None) -> None:
-                    merged: dict[str, Any] = {"phase": "lineage_materialize"}
-                    if progress:
-                        merged.update(progress)
-                    update_run_preparation(
-                        db,
-                        run_id,
-                        stage=PREPARATION_STAGE_MATERIALIZING,
-                        message=message,
-                        progress=merged,
-                    )
-
-                await asyncio.to_thread(
-                    materialize_embedding_documents_for_lineage,
-                    doc_ids,
-                    preloaded_chunks=chunks,
-                    on_progress=_on_lineage_progress,
-                )
-
-            _store_results(db, run_id=run_id, result=final_state["consistency_result"])
-
-            if target_ontology_id:
-                ontology_id = _update_existing_ontology(
-                    db,
-                    ontology_id=target_ontology_id,
+        if (
+            final_state.get("consistency_result")
+            and finalize_result.get("status") == "completed"
+        ):
+            task = asyncio.create_task(
+                _run_qualitative_eval_background(
                     run_id=run_id,
-                    result=final_state["consistency_result"],
+                    final_state=final_state,
                 )
-            else:
-                ontology_id = _auto_register_ontology(
-                    db,
-                    run_id=run_id,
-                    document_id=primary_doc_id,
-                    result=final_state["consistency_result"],
-                )
-
-            if ontology_id:
-                col.update({"_key": run_id, "ontology_id": ontology_id})
-                for did in doc_ids:
-                    _materialize_to_graph(
-                        db,
-                        run_id=run_id,
-                        document_id=did,
-                        ontology_id=ontology_id,
-                        result=final_state["consistency_result"],
-                        faithfulness_scores=final_state.get("faithfulness_scores"),
-                        validity_scores=final_state.get("validity_scores"),
-                    )
-                _create_produced_by_edge(db, ontology_id=ontology_id, run_id=run_id)
-                try:
-                    from app.services.ontology_graphs import ensure_ontology_graph
-
-                    graph_name = ensure_ontology_graph(ontology_id, db=db)
-                    log.info("ensured per-ontology graph %s", graph_name)
-                except Exception:
-                    log.warning(
-                        "per-ontology graph creation failed",
-                        exc_info=True,
-                    )
-
-                # Track the task so it is not garbage-collected before completion.
-                task = asyncio.create_task(
-                    _run_qualitative_eval_background(
-                        run_id=run_id,
-                        final_state=final_state,
-                    )
-                )
-                _BACKGROUND_TASKS.add(task)
-                task.add_done_callback(_BACKGROUND_TASKS.discard)
-
-                # Q.2 (Stream 4) — record a quality history snapshot tagged
-                # with the originating run so the dashboard's trend chart
-                # has one data point per real ontology mutation, not one
-                # per "user opened the quality report" event. Wrapped to
-                # never break the extraction write path.
-                try:
-                    from app.db import quality_history_repo
-
-                    quality_history_repo.record_event_snapshot(
-                        ontology_id,
-                        source="extraction_completion",
-                        run_id=run_id,
-                        db=db,
-                    )
-                except Exception:
-                    log.warning(
-                        "post-extraction quality snapshot failed",
-                        extra={"run_id": run_id, "ontology_id": ontology_id},
-                        exc_info=True,
-                    )
+            )
+            _BACKGROUND_TASKS.add(task)
+            task.add_done_callback(_BACKGROUND_TASKS.discard)
 
     except ExtractionCancelled:
         mark_run_cancelled(run_id)
+        if col is None:
+            _apply_run_arango_database(run_id, run=run_record)
+            db = get_db()
+            col = _get_collection(db, "extraction_runs")
         updated = doc_get(col, run_id)
         return updated or {}
     except Exception as exc:
         log.exception("extraction pipeline failed", extra={"run_id": run_id})
+        if col is None:
+            _apply_run_arango_database(run_id, run=run_record)
+            db = get_db()
+            col = _get_collection(db, "extraction_runs")
         partial_logs: list[dict[str, Any]] = []
         partial_belief_revision: dict[str, Any] | None = None
         if final_state and final_state.get("step_logs"):
@@ -1583,11 +1422,189 @@ def get_run_cost(
 
     Also includes quality indicators (avg_confidence, completeness_pct)
     when the run has an associated ontology.
+
+    Active runs are served from the progress cache (no gateway read) so
+    Metrics cards can poll live during LangGraph execution.
     """
+    from app.services.run_progress_cache import get_cached_run_progress
+
+    cached = get_cached_run_progress(run_id)
+    cached_status = str(cached.get("status") or "") if cached else ""
+    if cached and cached_status in ("running", "paused", "preparing"):
+        return _run_cost_from_progress_cache(
+            run_id,
+            cached,
+            include_quality_metrics=False,
+        )
+
     if db is None:
         db = get_db()
 
-    run = get_run(db, run_id=run_id)
+    try:
+        run = get_run(db, run_id=run_id)
+    except NotFoundError:
+        if cached:
+            return _run_cost_from_progress_cache(
+                run_id,
+                cached,
+                include_quality_metrics=include_quality_metrics,
+            )
+        raise
+
+    payload = _run_cost_from_run_record(
+        db,
+        run_id=run_id,
+        run=run,
+        include_quality_metrics=include_quality_metrics,
+    )
+    if cached:
+        payload = _merge_live_cost_fields(payload, cached)
+    return payload
+
+
+def _run_cost_from_progress_cache(
+    run_id: str,
+    cached: dict[str, Any],
+    *,
+    include_quality_metrics: bool,
+) -> dict[str, Any]:
+    """Build cost/metrics payload from file cache only."""
+    stats = dict(cached.get("stats") or {})
+    model = stats.get("model") or settings.llm_extraction_model
+    agent_diag = dict(stats.get("agent_diagnostics") or {})
+    token_usage = dict(stats.get("token_usage") or {})
+
+    prompt_tokens = max(
+        int(token_usage.get("prompt_tokens", 0)),
+        int(agent_diag.get("prompt_tokens", 0)),
+    )
+    completion_tokens = max(
+        int(token_usage.get("completion_tokens", 0)),
+        int(agent_diag.get("completion_tokens", 0)),
+    )
+    total_tokens = max(
+        int(token_usage.get("total_tokens", 0)),
+        int(agent_diag.get("total_tokens", 0)),
+        prompt_tokens + completion_tokens,
+    )
+
+    rates = _MODEL_TOKEN_RATES_PER_MILLION.get(model, {"input": 3.0, "output": 15.0})
+    estimated_cost = (prompt_tokens / 1_000_000) * rates["input"] + (
+        completion_tokens / 1_000_000
+    ) * rates["output"]
+
+    started = cached.get("started_at") or agent_diag.get("agent_started_at") or 0
+    completed = cached.get("completed_at") or 0
+    now = time.time()
+    if started and not completed:
+        duration_ms = int((now - float(started)) * 1000)
+    elif started and completed:
+        duration_ms = int((float(completed) - float(started)) * 1000)
+    else:
+        duration_ms = 0
+
+    llm_calls = int(agent_diag.get("llm_calls", 0))
+    agent_started = agent_diag.get("agent_started_at") or started
+    llm_calls_per_min: float | None = None
+    if llm_calls > 0 and agent_started:
+        elapsed_min = max((now - float(agent_started)) / 60.0, 1.0 / 60.0)
+        llm_calls_per_min = round(llm_calls / elapsed_min, 2)
+
+    running_steps = agent_diag.get("running_steps")
+    agents_running = len(running_steps) if isinstance(running_steps, list) else 0
+
+    return {
+        "run_id": run_id,
+        "status": cached.get("status"),
+        "live": cached_status_is_live(cached.get("status")),
+        "model": model,
+        "total_duration_ms": duration_ms,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "estimated_cost": round(estimated_cost, 6),
+        "classes_extracted": int(stats.get("classes_extracted", 0)),
+        "properties_extracted": int(stats.get("properties_extracted", 0)),
+        "pass_agreement_rate": float(stats.get("pass_agreement_rate", 0.0)),
+        "merge_candidates_found": int(stats.get("merge_candidates_found", 0)),
+        "token_usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        },
+        "input_cost_per_million_tokens": rates["input"],
+        "output_cost_per_million_tokens": rates["output"],
+        "avg_confidence": None,
+        "completeness_pct": None,
+        "belief_revision": stats.get("belief_revision"),
+        "llm_calls": llm_calls,
+        "llm_calls_per_min": llm_calls_per_min,
+        "prompt_chars": int(agent_diag.get("prompt_chars", 0)),
+        "agents_running": agents_running,
+        "current_step": stats.get("current_step"),
+        "agent_diagnostics": agent_diag or None,
+        "step_logs": stats.get("step_logs", [])[-12:],
+    }
+
+
+def cached_status_is_live(status: Any) -> bool:
+    return str(status or "") in ("running", "paused", "preparing")
+
+
+def _merge_live_cost_fields(payload: dict[str, Any], cached: dict[str, Any]) -> dict[str, Any]:
+    """Overlay cache-backed live counters onto a gateway-sourced cost payload."""
+    live = _run_cost_from_progress_cache(
+        str(payload.get("run_id") or cached.get("_key") or ""),
+        cached,
+        include_quality_metrics=False,
+    )
+    merged = dict(payload)
+    for key in (
+        "classes_extracted",
+        "properties_extracted",
+        "pass_agreement_rate",
+        "merge_candidates_found",
+        "llm_calls",
+        "llm_calls_per_min",
+        "prompt_chars",
+        "agents_running",
+        "current_step",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "estimated_cost",
+        "belief_revision",
+        "agent_diagnostics",
+        "step_logs",
+    ):
+        live_val = live.get(key)
+        if live_val is None:
+            continue
+        if key in ("classes_extracted", "properties_extracted", "merge_candidates_found", "llm_calls"):
+            merged[key] = max(int(merged.get(key, 0)), int(live_val))
+        elif key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            merged[key] = max(int(merged.get(key, 0)), int(live_val))
+        elif key == "pass_agreement_rate":
+            if float(live_val) > 0:
+                merged[key] = live_val
+        elif key == "estimated_cost":
+            merged[key] = max(float(merged.get(key, 0)), float(live_val))
+        else:
+            merged[key] = live_val
+    if cached_status_is_live(cached.get("status")):
+        merged["live"] = True
+        merged["status"] = cached.get("status")
+    return merged
+
+
+def _run_cost_from_run_record(
+    db: StandardDatabase,
+    *,
+    run_id: str,
+    run: dict[str, Any],
+    include_quality_metrics: bool,
+) -> dict[str, Any]:
+    """Gateway-backed cost payload for completed or idle runs."""
     stats = run.get("stats", {})
     token_usage = stats.get("token_usage", {})
     model = run.get("model", settings.llm_extraction_model)
@@ -1649,6 +1666,8 @@ def get_run_cost(
 
     return {
         "run_id": run_id,
+        "status": run.get("status"),
+        "live": False,
         "model": model,
         "total_duration_ms": duration_ms,
         "prompt_tokens": prompt_tokens,
@@ -1658,19 +1677,20 @@ def get_run_cost(
         "classes_extracted": stats.get("classes_extracted", 0),
         "properties_extracted": stats.get("properties_extracted", 0),
         "pass_agreement_rate": stats.get("pass_agreement_rate", 0.0),
+        "merge_candidates_found": int(stats.get("merge_candidates_found", 0)),
         "token_usage": token_usage,
         "input_cost_per_million_tokens": rates["input"],
         "output_cost_per_million_tokens": rates["output"],
         "avg_confidence": avg_confidence,
         "completeness_pct": completeness_pct,
-        # IBR.12: belief-revision summary surfaced for the Pipeline
-        # Monitor's IBR tiles. ``None`` means the agent never ran on
-        # this run (legacy run pre-IBR, or a crash before the IBR
-        # node fired). A populated dict carries the touchpoint /
-        # verdict / auto-applied / flagged-for-curation counts plus
-        # ``status`` / ``reason`` so the frontend can distinguish
-        # "ran with N revisions" from "skipped: feature_flag_off".
         "belief_revision": stats.get("belief_revision"),
+        "llm_calls": 0,
+        "llm_calls_per_min": None,
+        "prompt_chars": 0,
+        "agents_running": 0,
+        "current_step": stats.get("current_step"),
+        "agent_diagnostics": stats.get("agent_diagnostics"),
+        "step_logs": (stats.get("step_logs") or [])[-12:],
     }
 
 

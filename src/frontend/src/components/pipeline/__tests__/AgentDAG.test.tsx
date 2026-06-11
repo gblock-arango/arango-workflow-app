@@ -57,7 +57,7 @@ function buildSteps(
 }
 
 describe("AgentDAG", () => {
-  it("renders all 5 pipeline nodes", () => {
+  it("renders all pipeline nodes", () => {
     const steps = buildSteps();
     render(<AgentDAG steps={steps} />);
 
@@ -70,11 +70,13 @@ describe("AgentDAG", () => {
     const steps = buildSteps();
     render(<AgentDAG steps={steps} />);
 
+    expect(screen.getByText("Prepare Arango")).toBeInTheDocument();
     expect(screen.getByText("Strategy Selector")).toBeInTheDocument();
     expect(screen.getByText("Extraction Agent")).toBeInTheDocument();
     expect(screen.getByText("Consistency Checker")).toBeInTheDocument();
     expect(screen.getByText("Entity Resolution Agent")).toBeInTheDocument();
     expect(screen.getByText("Pre-Curation Filter")).toBeInTheDocument();
+    expect(screen.getByText("Finalize Graph")).toBeInTheDocument();
   });
 
   it("shows pending status for all nodes initially", () => {

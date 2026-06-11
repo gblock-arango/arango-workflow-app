@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.services.extraction import begin_extraction_run
+from app.services.extraction import begin_extraction_run, schedule_execute_run
 from app.services.run_progress_cache import get_cached_run_progress
 
 
@@ -18,7 +18,13 @@ def progress_cache_dir(tmp_path, monkeypatch):
 
 class TestBeginExtractionRun:
     def test_returns_immediately_and_seeds_cache(self, progress_cache_dir) -> None:
-        with patch("app.services.extraction.schedule_prepare_and_execute_run") as mock_schedule:
+        with (
+            patch(
+                "app.services.extraction.resolve_arango_database_name",
+                return_value="test_graph_db",
+            ),
+            patch("app.services.extraction.schedule_execute_run") as mock_schedule,
+        ):
             run_record = begin_extraction_run(document_ids=["doc1"])
 
         assert run_record["_key"].startswith("run_")
@@ -32,4 +38,5 @@ class TestBeginExtractionRun:
         assert cached is not None
         assert cached["status"] == "preparing"
         assert cached["stats"]["preparation_stage"] == "queued"
+        assert cached.get("pending_run_record", {}).get("_key") == run_record["_key"]
 
