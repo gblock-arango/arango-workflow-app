@@ -85,6 +85,7 @@ export default function StartExtractionPanel({
   const [cancelBusy, setCancelBusy] = useState(false);
   const [error, setError] = useState("");
   const [cancelError, setCancelError] = useState("");
+  const [cancelSuccess, setCancelSuccess] = useState("");
   const restoredForRunRef = useRef<string | null>(null);
 
   const loadDocs = useCallback(async () => {
@@ -261,9 +262,17 @@ export default function StartExtractionPanel({
     }
     setCancelBusy(true);
     setCancelError("");
+    setCancelSuccess("");
     try {
-      await api.post<{ run_id: string; status: string }>(
-        `/api/v1/extraction/runs/${selectedRunId}/cancel`,
+      const result = await api.post<{
+        run_id: string;
+        status: string;
+        already_cancelled?: boolean;
+      }>(`/api/v1/extraction/runs/${selectedRunId}/cancel`);
+      setCancelSuccess(
+        result.already_cancelled
+          ? "Run was already cancelled — status should update shortly."
+          : "Cancellation requested — the worker stops at the next checkpoint and status will show Cancelled.",
       );
       onRunCancelled?.();
     } catch (err) {
@@ -387,6 +396,12 @@ export default function StartExtractionPanel({
         >
           {cancelBusy ? "Cancelling…" : "Cancel extraction"}
         </button>
+      )}
+
+      {cancelSuccess && (
+        <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded px-2 py-1">
+          {cancelSuccess}
+        </p>
       )}
 
       {cancelError && (

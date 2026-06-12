@@ -61,6 +61,7 @@ from app.db.revision_meta_repo import (
     ACTION_REVISE,
 )
 from app.extraction.agents.extractor import _get_llm
+from app.llm.databricks_serving import effective_extraction_model_name
 from app.services.revision_verdict import MechanicalRevision
 
 log = logging.getLogger(__name__)
@@ -519,7 +520,7 @@ async def revise(
         configured default).
     model_name:
         Override for the LLM model. Defaults to
-        ``settings.llm_extraction_model``.
+        ``effective_extraction_model_name()``.
     rate_limiter:
         Optional :class:`~app.services.revision_safety.RevisionRateLimiter`
         instance. Defaults to the module-level shared limiter
@@ -537,7 +538,7 @@ async def revise(
         raises.
     """
     started = time.time()
-    model = model_name or settings.llm_extraction_model
+    model = model_name or effective_extraction_model_name()
 
     # ---- Circuit breaker (Stream 11 IBR.18) -----------------------------
     # Lazy import to avoid a circular module-load between revision_agent

@@ -52,7 +52,7 @@ function PipelineMonitorInner() {
     }
   }, [searchParams]);
   const [activeTab, setActiveTab] = useState<DetailTab>("metrics");
-  const { steps, isConnected, error: wsError } = useExtractionSocket(selectedRunId);
+  const { steps, error: wsError } = useExtractionSocket(selectedRunId);
   const runProgress = useRunPreparationPoll(selectedRunId);
   const extractionInProgress =
     runProgress.progress != null &&
@@ -70,8 +70,21 @@ function PipelineMonitorInner() {
     setResetBusy(true);
     try {
       const endpoint = full ? "/api/v1/admin/reset/full" : "/api/v1/admin/reset";
-      const result = await api.post<{ reset: boolean; collections_truncated: string[] }>(endpoint);
-      alert(`Reset complete. Truncated: ${result.collections_truncated.join(", ")}`);
+      const result = await api.post<{
+        reset: boolean;
+        collections_truncated: string[];
+        run_progress_cache_cleared?: string[];
+      }>(endpoint);
+      const cacheNote =
+        result.run_progress_cache_cleared && result.run_progress_cache_cleared.length > 0
+          ? `\nCleared ${result.run_progress_cache_cleared.length} run progress cache file(s).`
+          : "\nCleared run progress cache and pipeline runtime state.";
+      alert(`Reset complete. Truncated: ${result.collections_truncated.join(", ")}${cacheNote}`);
+      try {
+        localStorage.removeItem("aoe-pipeline-extraction-selection");
+      } catch {
+        // ignore
+      }
       setSelectedRunId(null);
       router.replace(pathname, { scroll: false });
       setRunListKey((k) => k + 1);
@@ -111,16 +124,6 @@ function PipelineMonitorInner() {
         showLlmConnectivity
         actions={
           <>
-            {selectedRunId && (
-              <div className="flex items-center gap-2 text-xs">
-                <span
-                  className={`inline-block h-2 w-2 rounded-full ${isConnected ? "bg-green-500" : "bg-gray-300"}`}
-                />
-                <span className="text-gray-500">
-                  {isConnected ? "Live" : "Disconnected"}
-                </span>
-              </div>
-            )}
             <div className="relative">
               <button
                 disabled={resetBusy}
@@ -184,7 +187,9 @@ function PipelineMonitorInner() {
             extractionInProgress={extractionInProgress}
             selectedRunId={selectedRunId}
             runProgress={runProgress.progress}
-            onRunCancelled={() => setRunListKey((k) => k + 1)}
+            onRunCancelled={() => {
+              setRunListKey((k) => k + 1);
+            }}
           />
           <RunList
             key={runListKey}
@@ -235,10 +240,10 @@ function PipelineMonitorInner() {
                 </div>
               )}
 
-              {/* Agent DAG + diagnostics */}
-              <div className="p-4">
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                  <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              {/* Agent DAG + diagnostics (sibling panels) */}
+              <div className="p-4 flex flex-col lg:flex-row gap-4 lg:items-stretch min-h-[75vh]">
+                <div className="flex-1 min-w-0 flex flex-col bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between shrink-0">
                     <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
                       Agent Pipeline
                     </h2>
@@ -260,20 +265,20 @@ function PipelineMonitorInner() {
                       </a>
                     </div>
                   </div>
-                  <div className="flex flex-col lg:flex-row lg:items-stretch">
-                    <div className="flex-1 min-w-0">
-                      <AgentDAG steps={steps} />
-                    </div>
-                    <PipelineDiagnosticsPanel
-                      embedded
-                      selectedRunId={selectedRunId}
-                      progress={runProgress.progress}
-                      pollError={runProgress.pollError}
-                      pollBusy={runProgress.pollBusy}
-                      lastPolledAt={runProgress.lastPolledAt}
-                      pollAttempt={runProgress.pollAttempt}
-                    />
+                  <div className="flex-1 min-h-[400px]">
+                    <AgentDAG steps={steps} />
                   </div>
+                </div>
+                <div className="lg:w-[min(100%,380px)] lg:flex-shrink-0 flex flex-col bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-[320px] lg:min-h-0">
+                  <PipelineDiagnosticsPanel
+                    embedded
+                    selectedRunId={selectedRunId}
+                    progress={runProgress.progress}
+                    pollError={runProgress.pollError}
+                    pollBusy={runProgress.pollBusy}
+                    lastPolledAt={runProgress.lastPolledAt}
+                    pollAttempt={runProgress.pollAttempt}
+                  />
                 </div>
               </div>
 

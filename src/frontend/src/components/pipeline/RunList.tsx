@@ -203,9 +203,6 @@ export default function RunList({ onSelectRun, selectedRunId }: RunListProps) {
                     {run.duration_ms != null && run.duration_ms > 0 && (
                       <span title="Duration">{formatDuration(run.duration_ms)}</span>
                     )}
-                    {run.model && (
-                      <span className="text-gray-400" title="Model">{run.model}</span>
-                    )}
                   </div>
                 </button>
                 <button

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AGENT_DAG_HEIGHT_PX } from "@/components/pipeline/AgentDAG";
 import type { RunProgressSnapshot } from "@/lib/runStatusPoll";
 import {
+  effectiveDisplayStatus,
   effectivePreparationStage,
   isPreparationBlocked,
+  isPreparationComplete,
   isRunStatusPollTimeout,
   isSchemaBootstrapComplete,
   preparationSilenceMs,
@@ -65,11 +66,12 @@ function stepState(
   progress: RunProgressSnapshot | null,
 ): "done" | "active" | "pending" | "failed" {
   if (!progress) return "pending";
+  const order = PREPARATION_STEPS.map((s) => s.key);
+  const stepIdx = order.indexOf(stepKey);
+
   if (progress.status === "failed") {
     const stage = progress.preparation_stage ?? "queued";
-    const order = PREPARATION_STEPS.map((s) => s.key);
     const failIdx = order.indexOf(stage);
-    const stepIdx = order.indexOf(stepKey);
     if (failIdx < 0) {
       return stepIdx === 0 ? "failed" : "pending";
     }
@@ -77,13 +79,26 @@ function stepState(
     if (stepIdx === failIdx) return "failed";
     return "pending";
   }
-  if (progress.status === "running" || progress.status === "completed") {
+
+  if (progress.status === "cancelled") {
+    const stage = effectivePreparationStage(progress);
+    const activeIdx = order.indexOf(stage);
+    if (activeIdx < 0) return stepIdx === 0 ? "failed" : "pending";
+    if (stepIdx < activeIdx) return "done";
+    if (stepIdx === activeIdx) return "failed";
+    return "pending";
+  }
+
+  if (
+    progress.status === "completed" ||
+    progress.status === "completed_with_errors" ||
+    (progress.status === "running" && isPreparationComplete(progress))
+  ) {
     return "done";
   }
+
   const stage = effectivePreparationStage(progress);
-  const order = PREPARATION_STEPS.map((s) => s.key);
   const activeIdx = order.indexOf(stage);
-  const stepIdx = order.indexOf(stepKey);
   if (activeIdx < 0) return stepIdx === 0 ? "active" : "pending";
   if (stepIdx < activeIdx) return "done";
   if (stepIdx === activeIdx) return "active";
@@ -217,6 +232,10 @@ export default function PipelineDiagnosticsPanel({
   const silenceMs = preparationSilenceMs(displayProgress, nowMs);
   const prepBlocked = isPreparationBlocked(displayProgress, nowMs);
   const stage = effectivePreparationStage(displayProgress);
+  const prepAgentActive =
+    displayProgress != null &&
+    displayProgress.current_step === "prepare_arango" &&
+    !isPreparationComplete(displayProgress);
   const bootstrapFinalizing =
     displayProgress != null &&
     displayProgress.status === "preparing" &&
@@ -231,6 +250,8 @@ export default function PipelineDiagnosticsPanel({
     nowMs - prepUpdatedMs > stallThresholdMs;
 
   const checkpoints = displayProgress?.preparation_progress?.checkpoints ?? [];
+
+  const displayStatus = effectiveDisplayStatus(displayProgress);
 
   const subProgress = progressDetailLine(displayProgress);
   const pollTimedOut = pollError != null && isRunStatusPollTimeout(pollError);
@@ -255,16 +276,18 @@ export default function PipelineDiagnosticsPanel({
           {displayProgress?.status && (
             <span
               className={`shrink-0 font-medium capitalize ${
-                displayProgress.status === "failed"
+                displayStatus === "failed"
                   ? "text-red-700"
-                  : displayProgress.status === "preparing"
-                    ? "text-indigo-700"
-                    : displayProgress.status === "running"
-                      ? "text-emerald-700"
-                      : "text-gray-700"
+                  : displayStatus === "cancelled"
+                    ? "text-gray-700"
+                    : displayStatus === "preparing"
+                      ? "text-indigo-700"
+                      : displayStatus === "running"
+                        ? "text-emerald-700"
+                        : "text-gray-700"
               }`}
             >
-              {displayProgress.status.replace(/_/g, " ")}
+              {displayStatus.replace(/_/g, " ")}
             </span>
           )}
         </div>
@@ -274,16 +297,18 @@ export default function PipelineDiagnosticsPanel({
         <div className="flex items-center justify-end text-xs">
           <span
             className={`shrink-0 font-medium capitalize ${
-              displayProgress.status === "failed"
+              displayStatus === "failed"
                 ? "text-red-700"
-                : displayProgress.status === "preparing"
-                  ? "text-indigo-700"
-                  : displayProgress.status === "running"
-                    ? "text-emerald-700"
-                    : "text-gray-700"
+                : displayStatus === "cancelled"
+                  ? "text-gray-700"
+                  : displayStatus === "preparing"
+                    ? "text-indigo-700"
+                    : displayStatus === "running"
+                      ? "text-emerald-700"
+                      : "text-gray-700"
             }`}
           >
-            {displayProgress.status.replace(/_/g, " ")}
+            {displayStatus.replace(/_/g, " ")}
           </span>
         </div>
       )}
@@ -342,7 +367,17 @@ export default function PipelineDiagnosticsPanel({
             </p>
           )}
 
-          {displayProgress?.status === "running" && displayProgress.current_step && (
+          {prepAgentActive && (
+            <p className="text-[11px] text-violet-800 bg-violet-50 border border-violet-100 rounded px-2 py-1">
+              The <code className="font-mono">prepare_arango</code> agent is running gateway
+              checks, UC chunk load, and schema migrations — the checklist below tracks that
+              progress (not all steps are done yet).
+            </p>
+          )}
+
+          {displayProgress?.status === "running" &&
+            displayProgress.current_step &&
+            !prepAgentActive && (
             <p className="text-[11px] text-emerald-800 bg-emerald-50 rounded px-2 py-1">
               Agent step:{" "}
               <code className="font-mono">{displayProgress.current_step.replace(/_/g, " ")}</code>

@@ -57,6 +57,73 @@ export function isSchemaBootstrapComplete(
 }
 
 /** UI stage while status is still preparing (gateway work after bootstrap). */
+const PREP_AGENT_STEP = "prepare_arango";
+
+function normalizeAgentStep(step: string | null | undefined): string {
+  return (step ?? "").replace(/-/g, "_");
+}
+
+function isPrepareArangoAgentActive(
+  progress: Pick<RunProgressSnapshot, "current_step" | "stats">,
+): boolean {
+  const step = normalizeAgentStep(progress.current_step);
+  if (step !== PREP_AGENT_STEP) return false;
+  const logs = progress.stats?.step_logs;
+  if (!Array.isArray(logs)) return true;
+  return !logs.some(
+    (log) =>
+      normalizeAgentStep(String((log as { step?: string }).step ?? "")) ===
+        PREP_AGENT_STEP &&
+      (log as { status?: string }).status === "completed",
+  );
+}
+
+/** True when gateway/UC/schema prep is finished and post-prep agents are running. */
+export function isPreparationComplete(
+  progress: Pick<
+    RunProgressSnapshot,
+    | "status"
+    | "preparation_stage"
+    | "preparation_message"
+    | "preparation_progress"
+    | "current_step"
+    | "stats"
+  > | null,
+): boolean {
+  if (!progress) return false;
+  if (
+    progress.status === "completed" ||
+    progress.status === "completed_with_errors"
+  ) {
+    return true;
+  }
+  if (isPrepareArangoAgentActive(progress)) return false;
+  if (progress.status === "preparing" || progress.status === "queued") {
+    return false;
+  }
+
+  const logs = progress.stats?.step_logs;
+  const prepDone =
+    Array.isArray(logs) &&
+    logs.some(
+      (log) =>
+        normalizeAgentStep(String((log as { step?: string }).step ?? "")) ===
+          PREP_AGENT_STEP &&
+        (log as { status?: string }).status === "completed",
+    );
+  if (prepDone) return true;
+
+  const step = normalizeAgentStep(progress.current_step);
+  if (step && step !== PREP_AGENT_STEP) return true;
+
+  const stage = effectivePreparationStage(progress);
+  if (preparationStageRank(stage) < preparationStageRank("launching_pipeline")) {
+    return false;
+  }
+
+  return progress.status === "running";
+}
+
 export function effectivePreparationStage(
   progress: Pick<
     RunProgressSnapshot,
@@ -65,7 +132,7 @@ export function effectivePreparationStage(
 ): string {
   const stage = progress?.preparation_stage ?? "queued";
   if (
-    progress?.status === "preparing" &&
+    (progress?.status === "preparing" || progress?.status === "running") &&
     stage === "schema_migrations" &&
     isSchemaBootstrapComplete(progress)
   ) {
@@ -126,6 +193,19 @@ function runStatusRank(status: string): number {
   return STATUS_RANK[status] ?? 0;
 }
 
+export function effectiveDisplayStatus(
+  progress: Pick<RunProgressSnapshot, "status" | "current_step" | "stats"> | null,
+): string {
+  if (!progress?.status) return "unknown";
+  if (
+    (progress.status === "running" || progress.status === "preparing") &&
+    !isPreparationComplete(progress)
+  ) {
+    return "preparing";
+  }
+  return progress.status;
+}
+
 /** Ignore stale polls that regress preparation stage or active run status. */
 export function mergeRunProgressSnapshots(
   prev: RunProgressSnapshot | null,
@@ -134,9 +214,64 @@ export function mergeRunProgressSnapshots(
   if (!prev) return next;
   if (next.status === "failed" || next.status === "cancelled") return next;
 
+  // Stale cache may say "running" with no agent activity — accept a fresher "preparing".
+  if (
+    prev.status === "running" &&
+    next.status === "preparing" &&
+    !isPreparationComplete(prev)
+  ) {
+    return next;
+  }
+
   const prevStage = preparationStageRank(prev.preparation_stage);
   const nextStage = preparationStageRank(next.preparation_stage);
-  if (nextStage < prevStage) return prev;
+  if (nextStage < prevStage) {
+    // Stale in-memory snapshot advanced to launching_pipeline while server still
+    // reports gateway / UC / schema stages during prepare_arango.
+    if (
+      isPrepareArangoAgentActive(prev) ||
+      isPrepareArangoAgentActive(next) ||
+      !isPreparationComplete(prev)
+    ) {
+      return {
+        ...prev,
+        ...next,
+        status:
+          next.status === "preparing" || !isPreparationComplete(next)
+            ? "preparing"
+            : prev.status,
+        preparation_stage: next.preparation_stage ?? prev.preparation_stage,
+        preparation_message: next.preparation_message ?? prev.preparation_message,
+        preparation_updated_at:
+          next.preparation_updated_at ?? prev.preparation_updated_at,
+        preparation_progress: next.preparation_progress ?? prev.preparation_progress,
+        stats: {
+          ...prev.stats,
+          ...next.stats,
+          preparation_stage:
+            next.preparation_stage ?? next.stats?.preparation_stage ?? prev.preparation_stage,
+          preparation_message:
+            next.preparation_message ??
+            next.stats?.preparation_message ??
+            prev.preparation_message,
+          preparation_updated_at:
+            next.preparation_updated_at ??
+            next.stats?.preparation_updated_at ??
+            prev.preparation_updated_at,
+          preparation_progress:
+            next.preparation_progress ??
+            next.stats?.preparation_progress ??
+            prev.preparation_progress,
+          step_logs:
+            (next.stats?.step_logs?.length ?? 0) >= (prev.stats?.step_logs?.length ?? 0)
+              ? next.stats?.step_logs
+              : prev.stats?.step_logs,
+          current_step: next.current_step ?? next.stats?.current_step ?? prev.stats?.current_step,
+        },
+      };
+    }
+    return prev;
+  }
 
   if (
     runStatusRank(next.status) < runStatusRank(prev.status) &&
@@ -246,6 +381,10 @@ export interface RunProgressSnapshot {
     agent_diagnostics?: Record<string, unknown>;
     token_usage?: Record<string, number>;
     current_step?: string;
+    preparation_stage?: string | null;
+    preparation_message?: string | null;
+    preparation_updated_at?: number | null;
+    preparation_progress?: PreparationProgressDetail | null;
   };
 }
 

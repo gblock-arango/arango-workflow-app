@@ -66,6 +66,7 @@ from app.db.temporal_revisions_repo import (
 )
 from app.db.utils import doc_get
 from app.extraction.state import ExtractionPipelineState, StepLog
+from app.llm.databricks_serving import effective_extraction_model_name
 from app.services.revision_agent import RevisionContext, revise_batch
 from app.services.revision_safety import should_flag_for_curation
 from app.services.revision_verdict import (
@@ -652,7 +653,7 @@ def _apply_llm(
             existing_entity_id=touchpoint.existing_class_id,
             verdict=mech.verdict,
             triggering_doc_id=document_id,
-            agent_version=settings.llm_extraction_model,
+            agent_version=effective_extraction_model_name(),
         )
         return _record_from_result(
             result,

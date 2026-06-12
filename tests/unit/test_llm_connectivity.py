@@ -28,7 +28,12 @@ async def test_probe_embedding_success():
     mock_client.embeddings.create = AsyncMock(return_value=mock_response)
     with (
         patch.object(llm_connectivity.settings, "openai_api_key", "sk-test"),
-        patch.object(llm_connectivity.settings, "embedding_model", "text-embedding-3-small"),
+        patch.object(
+            llm_connectivity.settings,
+            "autograph_embedding_model_name",
+            "text-embedding-3-small",
+        ),
+        patch.object(llm_connectivity.settings, "autograph_llm_provider", "openai"),
         patch("app.services.embedding._get_client", return_value=mock_client),
     ):
         result = await llm_connectivity._probe_embedding()
@@ -49,8 +54,17 @@ async def test_probe_llm_connectivity_overall():
             new_callable=AsyncMock,
             return_value={"ok": True, "message": "ext ok", "latency_ms": 20},
         ),
-        patch.object(llm_connectivity.settings, "embedding_model", "text-embedding-3-small"),
-        patch.object(llm_connectivity.settings, "llm_extraction_model", "gpt-4o-mini"),
+        patch.object(
+            llm_connectivity.settings,
+            "autograph_embedding_model_name",
+            "text-embedding-3-small",
+        ),
+        patch.object(
+            llm_connectivity.settings,
+            "autograph_llm_model_name",
+            "gpt-4o-mini",
+        ),
+        patch.object(llm_connectivity.settings, "autograph_llm_provider", "openai"),
     ):
         payload = await llm_connectivity.probe_llm_connectivity()
     assert payload["ok"] is True
@@ -63,7 +77,12 @@ async def test_probe_extraction_uses_llm():
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="OK"))
     with (
-        patch.object(llm_connectivity.settings, "llm_extraction_model", "gpt-4o-mini"),
+        patch.object(
+            llm_connectivity.settings,
+            "autograph_llm_model_name",
+            "gpt-4o-mini",
+        ),
+        patch.object(llm_connectivity.settings, "autograph_llm_provider", "openai"),
         patch.object(llm_connectivity.settings, "openai_api_key", "sk-test"),
         patch("app.extraction.agents.extractor._get_llm", return_value=mock_llm),
     ):

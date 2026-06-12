@@ -13,9 +13,14 @@ _DEFAULT_ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE = (
 )
 
 
-def _uc_graph_volume_name_from_env() -> str:
-    v = (os.environ.get("UC_GRAPH_VOLUME_NAME") or "arango_agent_volume").strip()
-    return v if v else "arango_agent_volume"
+def _uc_workflow_volume_name_from_env() -> str:
+    explicit = (os.environ.get("UC_WORKFLOW_VOLUME_NAME") or "").strip()
+    if explicit:
+        return explicit
+    legacy = (os.environ.get("UC_GRAPH_VOLUME_NAME") or "").strip()
+    if legacy:
+        return legacy
+    return "arango_workflow_volume"
 
 
 def _uc_graph_snapshot_base() -> str:
@@ -28,8 +33,12 @@ def _uc_graph_snapshot_base() -> str:
     parts = table.split(".")
     if len(parts) >= 3:
         catalog, schema = parts[0], parts[1]
-        vol = _uc_graph_volume_name_from_env()
-        return f"/Volumes/{catalog}/{schema}/{vol}/uc_graph_snapshots"
+        snap_vol = (
+            (os.environ.get("UC_GRAPH_SNAPSHOT_VOLUME_NAME") or "").strip()
+            or (os.environ.get("UC_GRAPH_VOLUME_NAME") or "").strip()
+            or "arango_agent_volume"
+        )
+        return f"/Volumes/{catalog}/{schema}/{snap_vol}/uc_graph_snapshots"
     return ""
 
 
@@ -61,9 +70,9 @@ class AppConfig:
             or _DEFAULT_ARANGO_REGISTRY_TABLE
         )
     )
-    UC_GRAPH_VOLUME_NAME: str = field(
-        default_factory=_uc_graph_volume_name_from_env
-    )
+    UC_WORKFLOW_VOLUME_NAME: str = field(default_factory=_uc_workflow_volume_name_from_env)
+    # Deprecated alias — same as UC_WORKFLOW_VOLUME_NAME (old app.yaml name).
+    UC_GRAPH_VOLUME_NAME: str = field(default_factory=_uc_workflow_volume_name_from_env)
     UC_GRAPH_SNAPSHOT_BASE: str = field(
         default_factory=_uc_graph_snapshot_base
     )

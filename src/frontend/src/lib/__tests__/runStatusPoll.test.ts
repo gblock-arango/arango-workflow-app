@@ -1,6 +1,8 @@
 import {
+  effectiveDisplayStatus,
   effectivePreparationStage,
   isPreparationBlocked,
+  isPreparationComplete,
   isSchemaBootstrapComplete,
   mergeRunProgressSnapshots,
   pickProgress,
@@ -41,6 +43,73 @@ describe("pickProgress", () => {
     expect(snap.doc_ids).toEqual(["doc_a", "doc_b"]);
     expect(snap.doc_id).toBe("doc_a");
     expect(snap.target_ontology_id).toBe("onto_1");
+  });
+});
+
+describe("isPreparationComplete", () => {
+  it("does not treat bare running status as complete", () => {
+    const snap = pickProgress({
+      _key: "run_abc123def456",
+      status: "running",
+      preparation_stage: "materializing_arango",
+    });
+    expect(isPreparationComplete(snap)).toBe(false);
+  });
+
+  it("does not treat prepare_arango agent step as preparation complete", () => {
+    const snap = pickProgress({
+      _key: "run_abc123def456",
+      status: "running",
+      preparation_stage: "gateway_health",
+      current_step: "prepare_arango",
+    });
+    expect(isPreparationComplete(snap)).toBe(false);
+  });
+
+  it("treats running past prepare_arango as complete", () => {
+    const snap = pickProgress({
+      _key: "run_abc123def456",
+      status: "running",
+      preparation_stage: "launching_pipeline",
+      current_step: "extraction_agent",
+    });
+    expect(isPreparationComplete(snap)).toBe(true);
+  });
+});
+
+describe("mergeRunProgressSnapshots stale stage during prepare_arango", () => {
+  it("accepts a lower preparation stage when prev snapshot over-advanced", () => {
+    const prev = pickProgress({
+      _key: "run_abc123def456",
+      status: "running",
+      preparation_stage: "launching_pipeline",
+      current_step: "prepare_arango",
+      stats: {
+        step_logs: [{ step: "prepare_arango", status: "running" }],
+      },
+    });
+    const next = pickProgress({
+      _key: "run_abc123def456",
+      status: "preparing",
+      preparation_stage: "loading_uc_chunks",
+      preparation_message: "(1/1) Loading chunks from UC volume",
+    });
+    const merged = mergeRunProgressSnapshots(prev, next);
+    expect(merged.preparation_stage).toBe("loading_uc_chunks");
+    expect(merged.status).toBe("preparing");
+    expect(isPreparationComplete(merged)).toBe(false);
+  });
+});
+
+describe("effectiveDisplayStatus", () => {
+  it("shows preparing while prepare_arango is active even if status is running", () => {
+    const snap = pickProgress({
+      _key: "run_abc123def456",
+      status: "running",
+      preparation_stage: "gateway_arango",
+      current_step: "prepare_arango",
+    });
+    expect(effectiveDisplayStatus(snap)).toBe("preparing");
   });
 });
 

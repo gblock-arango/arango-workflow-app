@@ -97,3 +97,28 @@ async def test_probe_embedding_databricks_without_openai_key():
         result = await llm_connectivity._probe_embedding()
     assert result["ok"] is True
     assert result["dimension"] == 1024
+
+
+def test_effective_extraction_model_openai_uses_autograph_name():
+    with (
+        patch.object(settings, "autograph_llm_provider", "openai"),
+        patch.object(settings, "autograph_llm_model_name", "gpt-4o-mini"),
+        patch.object(settings, "llm_extraction_model", "claude-sonnet-4-20250514"),
+    ):
+        assert databricks_serving.effective_extraction_model_name() == "gpt-4o-mini"
+
+
+def test_configured_extraction_model_falls_back_to_legacy():
+    with (
+        patch.object(settings, "autograph_llm_model_name", ""),
+        patch.object(settings, "llm_extraction_model", "gpt-4o-mini"),
+    ):
+        assert settings.configured_extraction_model == "gpt-4o-mini"
+
+
+def test_configured_embedding_model_prefers_autograph():
+    with (
+        patch.object(settings, "autograph_embedding_model_name", "databricks-bge-large-en"),
+        patch.object(settings, "embedding_model", "text-embedding-3-small"),
+    ):
+        assert settings.configured_embedding_model == "databricks-bge-large-en"

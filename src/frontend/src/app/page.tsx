@@ -4,13 +4,12 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
 import AppLink from "@/components/layout/AppLink";
-import AppHeaderLogo from "@/components/layout/AppHeaderLogo";
+import WorkflowNavButtons from "@/components/layout/WorkflowNavButtons";
+import { ConnectionStatusWidget } from "@/components/connection/ConnectionStatusWidget";
 import { withBasePath } from "@/lib/base-path";
 import { useActivePipelineAgents } from "@/lib/useActivePipelineAgents";
-import {
-  useArangoConnectionStatus,
-  type ArangoConnectionState,
-} from "@/lib/useArangoConnectionStatus";
+import { useArangoConnectionStatus } from "@/lib/useArangoConnectionStatus";
+import { rememberWorkflowLane } from "@/lib/workflow-nav";
 import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
 
 interface LibraryStats {
@@ -20,7 +19,8 @@ interface LibraryStats {
 const img = (path: string) => withBasePath(path);
 
 export default function Home() {
-  const { health, healthDetail } = useArangoConnectionStatus();
+  const { health, healthDetail, profileName, connectionMeta } =
+    useArangoConnectionStatus();
   const [ontologyCount, setOntologyCount] = useState<number | null>(null);
   const [statsError, setStatsError] = useState(false);
 
@@ -43,8 +43,8 @@ export default function Home() {
     <main className="min-h-screen bg-gradient-to-b from-slate-100 via-gray-50 to-gray-50 text-gray-900">
       {/* Hero */}
       <header className="border-b border-gray-200/80 bg-white/90 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col gap-6 lg:flex-row lg:items-center lg:gap-8">
-          <div className="flex-shrink-0 flex justify-center lg:justify-start">
+        <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">
+          <div className="flex-shrink-0 flex flex-col items-center lg:items-start gap-4">
             <Image
               src={img("/images/arangoai-mascot.png")}
               alt="ArangoAI mascot"
@@ -52,6 +52,14 @@ export default function Home() {
               height={140}
               className="h-28 w-auto sm:h-32 object-contain drop-shadow-md"
               priority
+            />
+            <ConnectionStatusWidget
+              health={health}
+              healthDetail={healthDetail}
+              profileName={profileName}
+              connectionMeta={connectionMeta}
+              linkToConnection
+              align="left"
             />
           </div>
 
@@ -64,11 +72,7 @@ export default function Home() {
               Genie-driven Q&amp;A, GraphRAG, GraphML, anomaly detection, and
               adaptive CDC.
             </p>
-          </div>
-
-          <div className="flex-shrink-0 flex flex-col items-center lg:items-end gap-2">
-            <AppHeaderLogo />
-            <HeroConnectionStatus health={health} healthDetail={healthDetail} />
+            <WorkflowNavButtons className="mt-4 justify-center lg:justify-start" />
           </div>
         </div>
       </header>
@@ -123,6 +127,7 @@ export default function Home() {
 
           <div className="space-y-2">
             <WorkflowLane
+              laneId="build-graph"
               title="Build Your Graph"
               badge="AutoGraph"
               badgeClassName="bg-indigo-100 text-indigo-800"
@@ -156,6 +161,7 @@ export default function Home() {
             />
 
             <WorkflowLane
+              laneId="auto-detect"
               title="Recognize Anomalies in Streams"
               badge="AutoDetect"
               badgeClassName="bg-emerald-100 text-emerald-800"
@@ -179,6 +185,7 @@ export default function Home() {
             />
 
             <WorkflowLane
+              laneId="auto-enrich"
               title="Smarten Your Catalog"
               badge="AutoEnrich"
               badgeClassName="bg-amber-100 text-amber-900"
@@ -204,53 +211,6 @@ export default function Home() {
         </section>
       </div>
     </main>
-  );
-}
-
-function HeroConnectionStatus({
-  health,
-  healthDetail,
-}: {
-  health: ArangoConnectionState;
-  healthDetail: string;
-}) {
-  const statusLabel =
-    health === "loading"
-      ? "Checking…"
-      : health === "connected"
-        ? "Connected"
-        : "Unavailable";
-
-  return (
-    <div className="text-center lg:text-right -translate-x-[5px]">
-      <div className="flex items-center justify-center lg:justify-end gap-2">
-        <span
-          className={`inline-block h-2 w-2 rounded-full shrink-0 ${
-            health === "loading"
-              ? "bg-yellow-400 animate-pulse"
-              : health === "connected"
-                ? "bg-emerald-500"
-                : "bg-red-500"
-          }`}
-        />
-        <span
-          className={`text-sm font-medium ${
-            health === "connected" ? "text-emerald-600" : "text-gray-600"
-          }`}
-        >
-          {statusLabel}
-        </span>
-      </div>
-      {healthDetail && (
-        <p
-          className={`mt-1 text-xs max-w-[220px] line-clamp-2 ${
-            health === "error" ? "text-red-600" : "text-gray-500"
-          }`}
-        >
-          {healthDetail}
-        </p>
-      )}
-    </div>
   );
 }
 
@@ -341,11 +301,13 @@ function NavButton({
 }
 
 function WorkflowLane({
+  laneId,
   title,
   badge,
   badgeClassName,
   actions,
 }: {
+  laneId: string;
   title: string;
   badge: string;
   badgeClassName: string;
@@ -368,7 +330,7 @@ function WorkflowLane({
       </div>
       <div className="p-5 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
         {actions.map((action) => (
-          <WorkflowAction key={action.label} {...action} />
+          <WorkflowAction key={action.label} laneId={laneId} {...action} />
         ))}
       </div>
     </div>
@@ -376,11 +338,13 @@ function WorkflowLane({
 }
 
 function WorkflowAction({
+  laneId,
   label,
   href,
   description,
   disabled,
 }: {
+  laneId: string;
   label: string;
   href: string;
   description: string;
@@ -408,7 +372,11 @@ function WorkflowAction({
   }
 
   return (
-    <AppLink href={href} className={className}>
+    <AppLink
+      href={href}
+      className={className}
+      onClick={() => rememberWorkflowLane(laneId)}
+    >
       {inner}
     </AppLink>
   );

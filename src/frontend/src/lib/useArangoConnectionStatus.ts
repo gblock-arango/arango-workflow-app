@@ -3,13 +3,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, apiFetch } from "@/lib/api-client";
 
-export type ArangoConnectionState = "loading" | "connected" | "error";
+export type ArangoConnectionState = "loading" | "connected" | "unset" | "failed";
+
+interface ConnectionUiPayload {
+  ui_variant?: "connected" | "unset" | "failed";
+  ui_message?: string;
+  active_profile?: string;
+  active_profile_display_name?: string;
+  has_saved_profiles?: boolean;
+}
 
 interface HealthStatus {
   status?: string;
   database?: string;
   gateway?: string;
   detail?: string;
+  connection?: ConnectionUiPayload;
   probe?: {
     status?: string;
     details?: {
@@ -23,6 +32,14 @@ interface HealthStatus {
   };
 }
 
+export interface ArangoConnectionStatus {
+  health: ArangoConnectionState;
+  healthDetail: string;
+  profileName: string;
+  /** Arango version and cluster when connected, e.g. ``Arango 3.12.4 | local-minikube-dev``. */
+  connectionMeta: string;
+}
+
 /** Drop probe latency segments like ``258ms`` from display detail. */
 export function stripLatencyFromDetail(detail: string): string {
   const parts = detail
@@ -32,10 +49,10 @@ export function stripLatencyFromDetail(detail: string): string {
   return parts.join(" · ");
 }
 
-function detailFromGatewayStartupJson(data: HealthStatus): string | null {
+function connectionMetaFromGatewayStartupJson(data: HealthStatus): string {
   const probeOk = data.probe?.status === "ok";
   const registryOk = data.registry?.status === "ok";
-  if (!probeOk || !registryOk) return null;
+  if (!probeOk || !registryOk) return "";
   const parts: string[] = [];
   const preview = data.probe?.details?.response_preview;
   if (preview) {
@@ -48,80 +65,76 @@ function detailFromGatewayStartupJson(data: HealthStatus): string | null {
   }
   const cluster = data.registry?.cluster_name;
   if (cluster) parts.push(cluster);
-  return parts.length > 0 ? parts.join(" · ") : "Connected";
+  return parts.length > 0 ? parts.join(" | ") : "";
 }
 
-function notReadyDetail(data: HealthStatus): string {
-  const mapped =
-    (typeof data.gateway === "string" && data.gateway.trim()) ||
-    (typeof data.detail === "string" && data.detail.trim()) ||
-    (typeof data.database === "string" && data.database.trim()) ||
-    "";
-  if (mapped && !/^probe=error,\s*registry=error$/i.test(mapped)) {
-    return mapped;
-  }
-  const parts: string[] = [];
-  const probe = data.probe;
-  const registry = data.registry;
-  if (probe?.status && probe.status !== "ok") {
-    const probeErr =
-      (probe as { error?: string }).error ||
-      probe.details?.response_preview ||
-      probe.status;
-    parts.push(`probe: ${probeErr}`);
-  }
-  if (registry?.status && registry.status !== "ok") {
-    const regErr =
-      (registry as { error?: string; message?: string }).error ||
-      (registry as { message?: string }).message ||
-      registry.status;
-    parts.push(`registry: ${regErr}`);
-  }
-  return parts.join(" · ") || mapped || "Database not ready";
+function detailFromGatewayStartupJson(data: HealthStatus): string | null {
+  const meta = connectionMetaFromGatewayStartupJson(data);
+  return meta ? meta.replace(/ \| /g, " · ") : null;
 }
 
-function parseReadyResponse(data: HealthStatus): {
-  health: ArangoConnectionState;
-  detail: string;
-} {
-  // Trust mapped ``status`` first — nested probe/registry may be absent or stale.
+export function parseReadyResponse(data: HealthStatus): ArangoConnectionStatus {
+  const connection = data.connection;
+
   if (data.status === "ready") {
-    const gatewayDetail = detailFromGatewayStartupJson(data);
-    const detail = stripLatencyFromDetail(
-      gatewayDetail ||
-        (typeof data.detail === "string" && data.detail.trim()) ||
-        [data.database, data.gateway].filter(Boolean).join(" · ") ||
-        "connected",
-    );
-    return { health: "connected", detail: detail || "Connected" };
-  }
-  if (data.status === "not_ready") {
-    return { health: "error", detail: notReadyDetail(data) };
-  }
-  const gatewayDetail = detailFromGatewayStartupJson(data);
-  if (gatewayDetail) {
+    const profileName =
+      connection?.active_profile_display_name?.trim() ||
+      connection?.ui_message?.trim() ||
+      (typeof data.detail === "string" ? data.detail.trim() : "") ||
+      "Connected";
+    const connectionMeta = connectionMetaFromGatewayStartupJson(data);
+    const extra = detailFromGatewayStartupJson(data);
+    const healthDetail =
+      extra && !extra.includes(profileName)
+        ? stripLatencyFromDetail(`${profileName} · ${extra}`)
+        : stripLatencyFromDetail(extra || profileName);
     return {
       health: "connected",
-      detail: stripLatencyFromDetail(gatewayDetail),
+      profileName,
+      healthDetail,
+      connectionMeta,
     };
   }
-  return { health: "error", detail: notReadyDetail(data) };
+
+  if (connection?.ui_variant === "unset") {
+    return {
+      health: "unset",
+      profileName: "",
+      healthDetail: connection.ui_message || "Click to Connect",
+      connectionMeta: "",
+    };
+  }
+
+  if (connection?.ui_variant === "failed" || data.status === "not_ready") {
+    const profileName = connection?.active_profile_display_name?.trim() || "";
+    return {
+      health: "failed",
+      profileName,
+      healthDetail: connection?.ui_message || "Connection Failed",
+      connectionMeta: "",
+    };
+  }
+
+  return {
+    health: "unset",
+    profileName: "",
+    healthDetail: "Click to Connect",
+    connectionMeta: "",
+  };
 }
 
 interface CachedStatus {
   health: "connected";
   detail: string;
+  profileName: string;
+  connectionMeta: string;
   at: number;
 }
 
-const CACHE_KEYS = ["aoe_arango_ready_v5", "aoe_arango_ready_v4"] as const;
-/** Client timeout for ``GET /ready`` (server should answer from cache in under 1s). */
+const CACHE_KEYS = ["aoe_arango_ready_v6", "aoe_arango_ready_v5"] as const;
 export const ARANGO_READY_FETCH_TIMEOUT_MS = 12_000;
-/** Poll server cache while on the home page (no gateway ``refresh=true``). */
 export const ARANGO_READY_REFRESH_MS = 60_000;
-/** Occasional deep refresh (gateway re-probes Arango). */
 export const ARANGO_READY_DEEP_REFRESH_MS = 300_000;
-/** Reuse a successful connected status on remount for this long. */
 const CONNECTED_CACHE_MAX_AGE_MS = 120_000;
 
 function readConnectedCache(): CachedStatus | null {
@@ -136,6 +149,7 @@ function readConnectedCache(): CachedStatus | null {
       return {
         ...parsed,
         detail: stripLatencyFromDetail(parsed.detail),
+        connectionMeta: parsed.connectionMeta ?? "",
       };
     } catch {
       continue;
@@ -144,12 +158,18 @@ function readConnectedCache(): CachedStatus | null {
   return null;
 }
 
-function writeConnectedCache(detail: string): void {
+function writeConnectedCache(
+  detail: string,
+  profileName: string,
+  connectionMeta: string,
+): void {
   if (typeof window === "undefined") return;
   try {
     const entry = JSON.stringify({
       health: "connected",
       detail: stripLatencyFromDetail(detail),
+      profileName,
+      connectionMeta,
       at: Date.now(),
     } satisfies CachedStatus);
     for (const key of CACHE_KEYS) {
@@ -163,10 +183,7 @@ function writeConnectedCache(detail: string): void {
 async function fetchReady(
   signal: AbortSignal,
   refresh: boolean,
-): Promise<{
-  health: ArangoConnectionState;
-  detail: string;
-}> {
+): Promise<ArangoConnectionStatus> {
   const path = refresh ? "/ready?refresh=true" : "/ready";
   const res = await apiFetch(path, { signal }, ARANGO_READY_FETCH_TIMEOUT_MS);
   const data = (await res.json().catch(() => ({}))) as HealthStatus;
@@ -188,14 +205,12 @@ async function fetchReady(
 }
 
 /**
- * Home-page "Connection to Arango" widget.
+ * Home-page and Connection page Arango status widget.
  *
- * Only caches successful ``connected`` state (never caches errors/timeouts), so
- * navigating back to home does not flash offline from a stale failed probe.
+ * Never surfaces raw probe/registry diagnostics — only user-facing connection copy.
  */
-export function useArangoConnectionStatus(): {
-  health: ArangoConnectionState;
-  healthDetail: string;
+export function useArangoConnectionStatus(): ArangoConnectionStatus & {
+  refresh: (opts?: { force?: boolean }) => void;
 } {
   const connectedCache = readConnectedCache();
   const [health, setHealth] = useState<ArangoConnectionState>(() =>
@@ -203,6 +218,12 @@ export function useArangoConnectionStatus(): {
   );
   const [healthDetail, setHealthDetail] = useState(
     () => connectedCache?.detail ?? "",
+  );
+  const [profileName, setProfileName] = useState(
+    () => connectedCache?.profileName ?? "",
+  );
+  const [connectionMeta, setConnectionMeta] = useState(
+    () => connectedCache?.connectionMeta ?? "",
   );
   const healthRef = useRef(health);
   healthRef.current = health;
@@ -221,9 +242,15 @@ export function useArangoConnectionStatus(): {
     try {
       const result = await fetchReady(controller.signal, opts.refresh);
       setHealth(result.health);
-      setHealthDetail(result.detail);
+      setHealthDetail(result.healthDetail);
+      setProfileName(result.profileName);
+      setConnectionMeta(result.connectionMeta);
       if (result.health === "connected") {
-        writeConnectedCache(result.detail);
+        writeConnectedCache(
+          result.healthDetail,
+          result.profileName,
+          result.connectionMeta,
+        );
       }
     } catch (err) {
       const message =
@@ -234,14 +261,16 @@ export function useArangoConnectionStatus(): {
             : String(err);
 
       if (opts.silent && healthRef.current === "connected") {
-        setHealthDetail((prev) =>
-          prev ? `${stripLatencyFromDetail(prev)} · recheck pending` : message,
-        );
         return;
       }
 
-      setHealth("error");
-      setHealthDetail(message);
+      setHealth("failed");
+      setHealthDetail("Connection Failed");
+      setProfileName("");
+      setConnectionMeta("");
+      if (!opts.silent && message !== "Connection Failed") {
+        setHealthDetail(message);
+      }
     } finally {
       window.clearTimeout(timer);
     }
@@ -263,5 +292,9 @@ export function useArangoConnectionStatus(): {
     };
   }, [runCheck]);
 
-  return { health, healthDetail };
+  const refresh = useCallback((opts?: { force?: boolean }) => {
+    void runCheck({ silent: false, refresh: Boolean(opts?.force) });
+  }, [runCheck]);
+
+  return { health, healthDetail, profileName, connectionMeta, refresh };
 }

@@ -134,8 +134,15 @@ def fetch_arango_startup_status() -> dict[str, Any]:
     table_name = (cfg.get("ARANGO_REGISTRY_TABLE") or "").strip()
     warehouse_id = (cfg.get("DATABRICKS_SQL_WAREHOUSE_ID") or "").strip()
     timeout_seconds = float(os.environ.get("ARANGO_PING_TIMEOUT_SECONDS", "5"))
-    auth_user = (os.environ.get("ARANGO_PING_BASIC_AUTH_USER") or "").strip()
-    auth_password = os.environ.get("ARANGO_PING_BASIC_AUTH_PASSWORD")
+    auth_user, auth_password = None, None
+    connection_ctx: dict[str, Any] = {}
+    try:
+        from app.services.arango_connection_profiles import get_active_profile_auth, get_connection_ui_context
+
+        auth_user, auth_password = get_active_profile_auth()
+        connection_ctx = get_connection_ui_context()
+    except Exception as exc:
+        log.debug("active profile auth unavailable: %s", exc)
     verify_tls = (os.environ.get("ARANGO_PING_TLS_VERIFY", "true").strip().lower() != "false")
 
     status: dict[str, Any] = {
@@ -143,9 +150,12 @@ def fetch_arango_startup_status() -> dict[str, Any]:
         "registry_table": table_name,
         "warehouse_id_present": bool(warehouse_id),
         "secrets": {
+            "source": "uc_connection_profile" if auth_user else "missing",
             "auth_user_present": bool(auth_user),
             "auth_password_present": bool(auth_password),
+            "active_profile": connection_ctx.get("active_profile") or "",
         },
+        "connection": connection_ctx,
         "registry": {"status": "unknown"},
         "probe": {"status": "skipped"},
         "source": "uc_registry_direct",

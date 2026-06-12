@@ -15,6 +15,7 @@ from app.config import settings
 from app.extraction.judges.faithfulness import judge_faithfulness
 from app.extraction.judges.semantic_validator import validate_semantics
 from app.extraction.state import ExtractionPipelineState, StepLog
+from app.llm.databricks_serving import effective_extraction_model_name
 from app.models.ontology import ExtractedClass
 
 log = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ async def quality_judge_node(state: ExtractionPipelineState) -> dict[str, Any]:
     consistency_result = state.get("consistency_result")
     chunks = state.get("document_chunks", [])
     config = state.get("strategy_config", {})
-    model_name = config.get("model_name", settings.llm_extraction_model)
+    model_name = config.get("model_name", effective_extraction_model_name())
 
     if consistency_result is None or not consistency_result.classes:
         log.warning(

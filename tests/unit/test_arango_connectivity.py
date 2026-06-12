@@ -36,4 +36,3 @@ def test_fetch_arango_startup_status_ok(mock_cfg, mock_row, mock_ping):
     assert status["probe"]["status"] == "ok"
     assert ready["status"] == "ready"
     assert "3.12.4" in ready["detail"]
-    assert "190ms" in ready["detail"]

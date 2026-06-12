@@ -1,6 +1,6 @@
 """Vector embedding service using OpenAI's embedding API.
 
-Supports configurable model (via ``settings.embedding_model``) and batching.
+Supports configurable model (via ``effective_embedding_model_name()``) and batching.
 Uses async client with concurrent requests capped by a semaphore.
 Batches are constructed dynamically to stay under the 300K token-per-request limit.
 

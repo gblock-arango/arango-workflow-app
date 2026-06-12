@@ -11,6 +11,7 @@ from app.services.extraction import (
     fetch_run_status_from_gateway,
     get_run_status_for_poll,
     read_run_status_poll_fast,
+    update_run_current_step,
 )
 from app.services.run_progress_cache import drop_run_progress_cache, seed_run_progress
 
@@ -68,3 +69,19 @@ class TestRunStatusPoll:
             snap = get_run_status_for_poll(self.run_id)
             mock_get_db.assert_not_called()
         assert snap["preparation_stage"] == "run_persisted"
+
+    def test_prepare_arango_current_step_does_not_force_launching_pipeline(
+        self, progress_cache_dir
+    ) -> None:
+        seed_run_progress(
+            self.run_id,
+            status="preparing",
+            stage="gateway_health",
+            message="probing gateway",
+        )
+        update_run_current_step(self.run_id, "prepare_arango", message="Agent step: prepare_arango")
+        snap = read_run_status_poll_fast(self.run_id)
+        assert snap is not None
+        assert snap["status"] == "preparing"
+        assert snap["stats"]["preparation_stage"] == "gateway_health"
+        assert snap["stats"]["current_step"] == "prepare_arango"

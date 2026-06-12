@@ -38,7 +38,7 @@ def _config_hints(
     elif not (settings.openai_api_key or "").strip():
         hints.append(
             "OPENAI_API_KEY is not set (required for chunk embeddings via "
-            f"{settings.embedding_model})."
+            f"{effective_embedding_model_name()})."
         )
 
     if uses_databricks_serving_for_extraction():
@@ -47,7 +47,7 @@ def _config_hints(
             f"({effective_extraction_model_name()}) via workspace OAuth."
         )
     else:
-        ext_model = settings.llm_extraction_model
+        ext_model = effective_extraction_model_name()
         if "claude" in ext_model.lower() or "anthropic" in ext_model.lower():
             if not (settings.anthropic_api_key or "").strip():
                 hints.append(
@@ -88,19 +88,13 @@ def _config_hints(
 def _failure_summary(embedding: dict[str, Any], extraction: dict[str, Any]) -> str:
     parts: list[str] = []
     if not embedding.get("ok"):
-        emb_label = (
-            effective_embedding_model_name()
-            if uses_databricks_serving_for_embeddings()
-            else settings.embedding_model
+        parts.append(
+            f"Embedding ({effective_embedding_model_name()}): {embedding.get('message', 'failed')}"
         )
-        parts.append(f"Embedding ({emb_label}): {embedding.get('message', 'failed')}")
     if not extraction.get("ok"):
-        ext_label = (
-            effective_extraction_model_name()
-            if uses_databricks_serving_for_extraction()
-            else settings.llm_extraction_model
+        parts.append(
+            f"Extraction ({effective_extraction_model_name()}): {extraction.get('message', 'failed')}"
         )
-        parts.append(f"Extraction ({ext_label}): {extraction.get('message', 'failed')}")
     return " · ".join(parts) if parts else "All probes passed"
 
 
@@ -143,16 +137,8 @@ async def probe_llm_connectivity(*, force: bool = False) -> dict[str, Any]:
         if overall_ok
         else _failure_summary(embedding, extraction)
     )
-    emb_model = (
-        effective_embedding_model_name()
-        if uses_databricks_serving_for_embeddings()
-        else settings.embedding_model
-    )
-    ext_model = (
-        effective_extraction_model_name()
-        if uses_databricks_serving_for_extraction()
-        else settings.llm_extraction_model
-    )
+    emb_model = effective_embedding_model_name()
+    ext_model = effective_extraction_model_name()
     configured_emb = (settings.autograph_embedding_model_name or "").strip() or None
     payload = {
         "ok": overall_ok,
@@ -186,16 +172,8 @@ def _probe_busy_payload() -> dict[str, Any]:
     return {
         "ok": False,
         "provider": "busy",
-        "embedding_model": (
-            effective_embedding_model_name()
-            if uses_databricks_serving_for_embeddings()
-            else settings.embedding_model
-        ),
-        "extraction_model": (
-            effective_extraction_model_name()
-            if uses_databricks_serving_for_extraction()
-            else settings.llm_extraction_model
-        ),
+        "embedding_model": effective_embedding_model_name(),
+        "extraction_model": effective_extraction_model_name(),
         "embedding": {
             "ok": False,
             "message": "Probe skipped — workflow API busy",
@@ -222,8 +200,8 @@ def _curl_examples() -> list[str]:
             "'databricks serving-endpoints query <ENDPOINT_NAME>' with your profile."
         ]
     base = (settings.openai_base_url or "https://api.openai.com/v1").rstrip("/")
-    emb = settings.embedding_model
-    ext = settings.llm_extraction_model
+    emb = effective_embedding_model_name()
+    ext = effective_extraction_model_name()
     return [
         (
             f'curl -sS "{base}/embeddings" -H "Authorization: Bearer $OPENAI_API_KEY" '
@@ -241,7 +219,7 @@ def _curl_examples() -> list[str]:
 def _primary_provider_label() -> str:
     if uses_databricks_serving_for_extraction() or uses_databricks_serving_for_embeddings():
         return "databricks_serving"
-    model = (settings.llm_extraction_model or "").lower()
+    model = settings.configured_extraction_model.lower()
     if "claude" in model or "anthropic" in model:
         return "anthropic"
     if settings.openai_api_key or settings.openai_base_url:
@@ -296,10 +274,8 @@ async def _probe_embedding() -> dict[str, Any]:
 
 
 async def _probe_extraction() -> dict[str, Any]:
-    if uses_databricks_serving_for_extraction():
-        model = effective_extraction_model_name()
-    else:
-        model = settings.llm_extraction_model
+    model = effective_extraction_model_name()
+    if not uses_databricks_serving_for_extraction():
         model_lower = model.lower()
 
         if ("claude" in model_lower or "anthropic" in model_lower) and not (

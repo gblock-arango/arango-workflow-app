@@ -77,6 +77,8 @@ def ready_payload_from_startup_status(
 
     Connected when ``probe.status`` and ``registry.status`` are both ``ok``.
     """
+    from app.services.arango_connection_profiles import connection_ui_for_ready
+
     probe = payload.get("probe") if isinstance(payload.get("probe"), dict) else {}
     registry = payload.get("registry") if isinstance(payload.get("registry"), dict) else {}
     probe_status = str(probe.get("status") or "")
@@ -97,51 +99,37 @@ def ready_payload_from_startup_status(
     cluster = str(registry.get("cluster_name") or "")
 
     ok = probe_status == "ok" and registry_status == "ok"
+    connection = connection_ui_for_ready(probe_ok=ok, registry_ok=ok)
 
     detail_parts: list[str] = []
+    if ok and connection.get("active_profile_display_name"):
+        detail_parts.append(str(connection["active_profile_display_name"]))
     if version:
         detail_parts.append(f"Arango {version}")
-    if cluster:
+    elif cluster and cluster not in detail_parts:
         detail_parts.append(cluster)
 
     summary = " · ".join(detail_parts)
 
+    base_payload = {
+        "connection": connection,
+        "gateway_url": gateway_base_url.rstrip("/"),
+    }
+
     if ok:
         return {
+            **base_payload,
             "status": "ready",
             "gateway": "Gateway startup-status ok",
             "database": detail_parts[0] if detail_parts else "Arango reachable",
-            "detail": summary or "Connected",
-            "gateway_url": gateway_base_url.rstrip("/"),
+            "detail": summary or str(connection.get("ui_message") or "Connected"),
         }
 
-    err_parts: list[str] = []
-    if probe_status != "ok":
-        probe_details = probe.get("details") if isinstance(probe.get("details"), dict) else {}
-        if probe_details.get("status_code") == 401:
-            err_parts.append(
-                "Arango basic auth failed — set ARANGO_PING_BASIC_AUTH_PASSWORD "
-                "(same value as arango-gateway-app)"
-            )
-        else:
-            probe_err = probe.get("error") or probe_details.get("error")
-            if probe_err:
-                err_parts.append(f"Arango probe: {probe_err}")
-            elif probe_status == "unreachable":
-                err_parts.append("Arango probe unreachable (tunnel or TLS)")
-            else:
-                err_parts.append(f"probe={probe_status or 'unknown'}")
-    if registry_status != "ok":
-        registry_err = registry.get("error") or registry.get("message")
-        if registry_err:
-            err_parts.append(f"Registry: {registry_err}")
-        else:
-            err_parts.append(f"registry={registry_status or 'unknown'}")
-    message = ", ".join(err_parts) or "Arango connectivity check failed"
+    ui_message = str(connection.get("ui_message") or "Connection Failed")
     return {
+        **base_payload,
         "status": "not_ready",
-        "gateway": message,
-        "database": message,
-        "detail": summary or message,
-        "gateway_url": gateway_base_url.rstrip("/"),
+        "gateway": ui_message,
+        "database": ui_message,
+        "detail": ui_message,
     }

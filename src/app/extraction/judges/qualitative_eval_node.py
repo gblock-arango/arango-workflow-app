@@ -22,6 +22,7 @@ from langchain_core.messages import HumanMessage
 
 from app.config import settings
 from app.extraction.agents.extractor import _batch_chunks, _get_llm
+from app.llm.databricks_serving import effective_extraction_model_name
 from app.models.ontology import ExtractedClass
 
 log = logging.getLogger(__name__)
@@ -331,7 +332,7 @@ async def run_qualitative_evaluation(
     if not classes:
         return {"strengths": [], "weaknesses": ["No classes extracted"]}
 
-    resolved_model = model_name or settings.llm_extraction_model
+    resolved_model = model_name or effective_extraction_model_name()
     llm = _get_llm(resolved_model)
 
     try:

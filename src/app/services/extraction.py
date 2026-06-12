@@ -35,6 +35,7 @@ from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, insert_temporal_edge_if_absent, run_aql
 from app.extraction.judges.qualitative_eval_node import run_qualitative_evaluation
 from app.extraction.pipeline import run_pipeline
+from app.llm.databricks_serving import effective_extraction_model_name
 from app.models.common import PaginatedResponse
 from app.services.confidence import compute_class_confidence
 from app.services.edge_repair import resolve_range_class
@@ -68,6 +69,10 @@ def clear_extraction_cancel(run_id: str) -> None:
     _cancelled_runs.discard(run_id)
 
 
+def clear_all_extraction_cancels() -> None:
+    _cancelled_runs.clear()
+
+
 def is_extraction_cancelled(run_id: str) -> bool:
     return run_id in _cancelled_runs
 
@@ -85,6 +90,18 @@ PREPARATION_STAGE_MATERIALIZING = "materializing_arango"
 PREPARATION_STAGE_SCHEMA = "schema_migrations"
 PREPARATION_STAGE_LAUNCHING = "launching_pipeline"
 
+PREPARATION_PIPELINE_STAGES = frozenset(
+    {
+        "queued",
+        PREPARATION_STAGE_GATEWAY_HEALTH,
+        PREPARATION_STAGE_GATEWAY_ARANGO,
+        PREPARATION_STAGE_RUN_PERSISTED,
+        PREPARATION_STAGE_LOADING_UC,
+        PREPARATION_STAGE_MATERIALIZING,
+        PREPARATION_STAGE_SCHEMA,
+    }
+)
+
 _MODEL_TOKEN_RATES_PER_MILLION: dict[str, dict[str, float]] = {
     "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
     "claude-3-5-sonnet-20241022": {"input": 3.0, "output": 15.0},
@@ -95,6 +112,52 @@ _MODEL_TOKEN_RATES_PER_MILLION: dict[str, dict[str, float]] = {
 
 def _generate_run_id() -> str:
     return f"run_{uuid.uuid4().hex[:12]}"
+
+
+def prepare_arango_step_completed(stats: dict[str, Any] | None) -> bool:
+    if not stats:
+        return False
+    for entry in stats.get("step_logs") or []:
+        if (
+            isinstance(entry, dict)
+            and entry.get("step") == "prepare_arango"
+            and entry.get("status") == "completed"
+        ):
+            return True
+    return False
+
+
+def preparation_still_active(
+    run: dict[str, Any] | None,
+    *,
+    stats: dict[str, Any] | None = None,
+) -> bool:
+    """True while gateway / UC / schema work runs inside the prepare_arango LangGraph node."""
+    if not run:
+        return False
+    st = stats if stats is not None else run.get("stats")
+    if not isinstance(st, dict):
+        st = {}
+    if prepare_arango_step_completed(st):
+        return False
+    if st.get("current_step") == "prepare_arango":
+        return True
+    stage = str(st.get("preparation_stage") or "queued")
+    if stage in PREPARATION_PIPELINE_STAGES:
+        return True
+    if stage == PREPARATION_STAGE_LAUNCHING:
+        return True
+    status = str(run.get("status") or "")
+    return status in ("preparing", "queued")
+
+
+def effective_status_for_ui(run: dict[str, Any]) -> str:
+    """Map premature ``running`` cache flags back to ``preparing`` for list/diagnostics."""
+    status = str(run.get("status") or "unknown")
+    stats = run.get("stats") if isinstance(run.get("stats"), dict) else {}
+    if status == "running" and preparation_still_active(run, stats=stats):
+        return "preparing"
+    return status
 
 
 def _get_collection(db: StandardDatabase, name: str) -> StandardCollection:
@@ -385,7 +448,7 @@ def build_run_record(
         "_key": resolved_run_id,
         "doc_id": doc_ids[0],
         "doc_ids": doc_ids,
-        "model": settings.llm_extraction_model,
+        "model": effective_extraction_model_name(),
         "prompt_version": prompt_version,
         "started_at": now,
         "completed_at": None,
@@ -719,12 +782,7 @@ async def execute_run(
         init_agent_diagnostics,
         run_id,
         message=prep_message,
-    )
-    await asyncio.to_thread(
-        update_run_current_step,
-        run_id,
-        "prepare_arango",
-        message=prep_message,
+        preserve_preparation_status=deferred_prep,
     )
 
     pipeline_metadata: dict[str, Any] = {
@@ -1034,6 +1092,37 @@ def get_run(
     raise NotFoundError(f"Extraction run '{run_id}' not found")
 
 
+def overlay_run_with_progress_cache(run: dict[str, Any]) -> dict[str, Any]:
+    """Prefer UC/file progress cache over stale Arango rows (multi-worker + deleted DB)."""
+    run_id = str(run.get("_key") or "")
+    if not run_id:
+        return run
+    cached = get_cached_run_progress(run_id)
+    if cached is None:
+        return run
+    from app.services.run_progress_cache import merge_run_progress_for_poll
+
+    merged = merge_run_progress_for_poll(cached, run)
+    out = dict(run)
+    if merged.get("status") is not None:
+        out["status"] = merged["status"]
+    merged_stats = merged.get("stats")
+    if isinstance(merged_stats, dict):
+        stats = dict(out.get("stats") or {})
+        stats.update(merged_stats)
+        out["stats"] = stats
+        for key in (
+            "preparation_stage",
+            "preparation_message",
+            "preparation_updated_at",
+            "preparation_progress",
+        ):
+            if merged_stats.get(key) is not None:
+                out[key] = merged_stats[key]
+    out["status"] = effective_status_for_ui(out)
+    return out
+
+
 def enrich_run_for_client(run: dict[str, Any]) -> dict[str, Any]:
     """Flatten ``stats`` preparation fields for polling UIs."""
     out = dict(run)
@@ -1138,7 +1227,7 @@ def build_run_status_snapshot(run: dict[str, Any]) -> dict[str, Any]:
         errors = []
     agent_diagnostics = stats.get("agent_diagnostics")
     token_usage = stats.get("token_usage")
-    return {
+    snapshot = {
         "_key": enriched.get("_key"),
         "status": enriched.get("status"),
         "started_at": enriched.get("started_at"),
@@ -1169,20 +1258,33 @@ def build_run_status_snapshot(run: dict[str, Any]) -> dict[str, Any]:
             "current_step": stats.get("current_step"),
         },
     }
+    snapshot["status"] = effective_status_for_ui(
+        {**snapshot, "stats": snapshot["stats"]},
+    )
+    return snapshot
 
 
 def update_run_current_step(run_id: str, step: str, *, message: str | None = None) -> None:
     """Best-effort progress marker while LangGraph runs (polled by UI)."""
     now = time.time()
     msg = message or f"Agent step: {step}"
-    update_run_progress_cache(
-        run_id,
-        status="running",
-        stage="launching_pipeline",
-        message=msg,
-        stats_patch={"current_step": step},
-        touch_session=False,
-    )
+    # prepare_arango still runs gateway / UC / schema — keep preparation_stage intact.
+    if step == "prepare_arango":
+        update_run_progress_cache(
+            run_id,
+            message=msg,
+            stats_patch={"current_step": step},
+            touch_session=False,
+        )
+    else:
+        update_run_progress_cache(
+            run_id,
+            status="running",
+            stage="launching_pipeline",
+            message=msg,
+            stats_patch={"current_step": step},
+            touch_session=False,
+        )
     try:
         db = get_db()
         col = _get_collection(db, "extraction_runs")
@@ -1253,9 +1355,13 @@ def record_run_step_event(
         logs,
         current_step=str(current_step) if current_step else step,
     )
+    cached_after = get_cached_run_progress(run_id)
+    status_patch: str | None = "running"
+    if preparation_still_active(cached_after):
+        status_patch = "preparing"
     update_run_progress_cache(
         run_id,
-        status="running",
+        status=status_patch,
         message=f"Agent step: {step} ({event_type.replace('step_', '')})",
         touch_session=False,
     )
@@ -1290,7 +1396,7 @@ def list_runs(
         filters: dict[str, Any] = {}
         if status:
             filters["status"] = status
-        return paginate(
+        page = paginate(
             db,
             collection="extraction_runs",
             sort_field="started_at",
@@ -1300,6 +1406,8 @@ def list_runs(
             filters=filters if filters else None,
             extra_aql='FILTER NOT STARTS_WITH(doc._key, "results_")',
         )
+        page.data = [overlay_run_with_progress_cache(row) for row in page.data]
+        return page
 
     from app.db.arango_database_names import discover_extraction_databases
     from app.db.client import clear_active_arango_database
@@ -1330,6 +1438,33 @@ def list_runs(
         finally:
             clear_active_arango_database()
 
+    known_ids = {str(row.get("_key")) for row in merged}
+    from app.services.run_progress_cache import list_cached_run_ids
+
+    for run_id in list_cached_run_ids():
+        if run_id in known_ids:
+            continue
+        cached = get_cached_run_progress(run_id)
+        if cached is None:
+            continue
+        stats = dict(cached.get("stats") or {})
+        merged.append(
+            {
+                "_key": run_id,
+                "status": cached.get("status") or "preparing",
+                "started_at": cached.get("started_at")
+                or stats.get("preparation_updated_at")
+                or time.time(),
+                "stats": stats,
+                "doc_id": cached.get("doc_id"),
+                "doc_ids": cached.get("doc_ids"),
+                "arango_database": cached.get("arango_database"),
+                "target_ontology_id": cached.get("target_ontology_id"),
+            }
+        )
+        known_ids.add(run_id)
+
+    merged = [overlay_run_with_progress_cache(row) for row in merged]
     merged.sort(key=lambda row: float(row.get("started_at") or 0), reverse=True)
     if cursor:
         try:
@@ -1470,7 +1605,7 @@ def _run_cost_from_progress_cache(
 ) -> dict[str, Any]:
     """Build cost/metrics payload from file cache only."""
     stats = dict(cached.get("stats") or {})
-    model = stats.get("model") or settings.llm_extraction_model
+    model = stats.get("model") or effective_extraction_model_name()
     agent_diag = dict(stats.get("agent_diagnostics") or {})
     token_usage = dict(stats.get("token_usage") or {})
 
@@ -1607,7 +1742,7 @@ def _run_cost_from_run_record(
     """Gateway-backed cost payload for completed or idle runs."""
     stats = run.get("stats", {})
     token_usage = stats.get("token_usage", {})
-    model = run.get("model", settings.llm_extraction_model)
+    model = run.get("model") or effective_extraction_model_name()
 
     prompt_tokens = token_usage.get("prompt_tokens", 0)
     completion_tokens = token_usage.get("completion_tokens", 0)

@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.config import settings
 from app.extraction.prompts import get_template
 from app.extraction.state import ExtractionPipelineState, StepLog, TokenUsage
+from app.llm.databricks_serving import effective_extraction_model_name
 from app.models.ontology import ExtractionResult
 
 log = logging.getLogger(__name__)
@@ -390,7 +391,7 @@ async def extractor_node(state: ExtractionPipelineState) -> dict[str, Any]:
     config = state.get("strategy_config", {})
     errors = list(state.get("errors", []))
 
-    model_name = config.get("model_name", settings.llm_extraction_model)
+    model_name = config.get("model_name", effective_extraction_model_name())
     template_key = config.get("prompt_template_key", "tier1_standard")
     batch_size = config.get("chunk_batch_size", 5)
     num_passes = config.get("num_passes", settings.extraction_passes)

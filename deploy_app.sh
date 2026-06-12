@@ -21,7 +21,7 @@ set -euo pipefail
 #
 # On first run, if the App does not exist yet, the script runs ``databricks apps create`` before deploy.
 # A brand-new app often shows ``app_status=UNAVAILABLE`` until the first deploy; see
-# ``ensure_app_running_before_deploy`` (do not ``apps start`` in that state — it races with ``apps deploy``).
+# ``scripts/_databricks_apps_deploy_lib.sh`` (skip ``apps start`` when compute ACTIVE; retry deploy on lock).
 #
 # After deploy: ./scripts/set_user_api_scopes.sh (User authorization / OBO for peer App calls).
 # Serving: app.yaml declares autograph-* serving_endpoint resources (CAN_QUERY on deploy);
@@ -121,87 +121,8 @@ _databricks() {
 # shellcheck source=scripts/_deploy_app_print_urls.sh
 source "${SCRIPT_DIR}/scripts/_deploy_app_print_urls.sh"
 
-_app_active_deployment_state() {
-  local json="$1"
-  "${PYTHON_BIN}" -c 'import json,sys; d=json.load(sys.stdin); print((d.get("active_deployment") or {}).get("status",{}).get("state",""))' <<< "${json}" 2>/dev/null || true
-}
-
-_wait_for_active_deployment_idle() {
-  local json deploy_state waited=0
-  local max_wait="${DEPLOY_WAIT_ACTIVE_DEPLOYMENT_SEC:-900}"
-  local poll="${DEPLOY_WAIT_ACTIVE_DEPLOYMENT_POLL_SEC:-10}"
-  while (( waited < max_wait )); do
-    if ! json="$(_databricks apps get "${APP_NAME}" --output json 2>/dev/null)"; then
-      return 1
-    fi
-    deploy_state="$(_app_active_deployment_state "${json}")"
-    if [[ -z "${deploy_state}" || "${deploy_state}" == "SUCCEEDED" || "${deploy_state}" == "FAILED" || "${deploy_state}" == "CANCELLED" ]]; then
-      return 0
-    fi
-    echo "  App deployment in progress (active_deployment.status.state=${deploy_state}); waiting ${poll}s…"
-    sleep "${poll}"
-    waited=$((waited + poll))
-  done
-  echo "ERROR: timed out after ${max_wait}s waiting for app deployment to finish." >&2
-  return 1
-}
-
-ensure_app_running_before_deploy() {
-  local json app_state compute_state app_msg
-  if ! json="$(_databricks apps get "${APP_NAME}" --output json 2>/dev/null)"; then
-    return 0
-  fi
-  app_state="$(
-    "${PYTHON_BIN}" -c 'import json,sys; d=json.load(sys.stdin); print((d.get("app_status") or {}).get("state",""))' <<< "${json}" 2>/dev/null || true
-  )"
-  compute_state="$(
-    "${PYTHON_BIN}" -c 'import json,sys; d=json.load(sys.stdin); print((d.get("compute_status") or {}).get("state",""))' <<< "${json}" 2>/dev/null || true
-  )"
-  app_msg="$(
-    "${PYTHON_BIN}" -c 'import json,sys; d=json.load(sys.stdin); print((d.get("app_status") or {}).get("message",""))' <<< "${json}" 2>/dev/null || true
-  )"
-  if [[ "${app_state}" == "RUNNING" ]]; then
-    echo "App '${APP_NAME}' is RUNNING; proceeding to deploy."
-    return 0
-  fi
-  # After `apps create`, compute is often ACTIVE while app_status stays UNAVAILABLE until the first
-  # `apps deploy`. Starting the app in that state kicks off a deployment that races with deploy.
-  if [[ "${app_state}" == "UNAVAILABLE" && "${compute_state}" == "ACTIVE" ]]; then
-    if echo "${app_msg}" | grep -qiE 'not been deployed|deploy(ing)?[[:space:]]+source|run your app by deploying'; then
-      echo "NOTE: App '${APP_NAME}' has no source deployment yet (app_status=UNAVAILABLE, compute_status=ACTIVE)."
-      echo "      Skipping \`databricks apps start\`; the next step (\`databricks apps deploy\`) uploads code and should make the app available."
-      return 0
-    fi
-  fi
-  echo "App '${APP_NAME}' is not RUNNING (app_status=${app_state:-unknown}, compute_status=${compute_state:-unknown})."
-  echo "Trying \`databricks apps start\` so compute is ready (deploy may still succeed if the platform accepts it)..."
-  if [[ "${SKIP_APPS_START_BEFORE_DEPLOY:-}" == "1" ]]; then
-    echo "SKIP_APPS_START_BEFORE_DEPLOY=1: skipping databricks apps start; deploy may fail." >&2
-    return 0
-  fi
-  _databricks apps start "${APP_NAME}"
-  _wait_for_active_deployment_idle || true
-}
-
-_deploy_app() {
-  local deploy_out deploy_rc
-  set +e
-  deploy_out="$(_databricks apps deploy "${APP_NAME}" --source-code-path "${SOURCE_CODE_PATH}" 2>&1)"
-  deploy_rc=$?
-  set -e
-  if [[ "${deploy_rc}" -eq 0 ]]; then
-    return 0
-  fi
-  if echo "${deploy_out}" | grep -qiE 'active deployment in progress|deployment in progress'; then
-    echo "NOTE: ${deploy_out}"
-    echo "Another deployment is already running (often from \`databricks apps start\`). Waiting, then retrying deploy…"
-    _wait_for_active_deployment_idle
-    _databricks apps deploy "${APP_NAME}" --source-code-path "${SOURCE_CODE_PATH}"
-    return $?
-  fi
-  echo "${deploy_out}" >&2
-  return "${deploy_rc}"
-}
+# shellcheck source=scripts/_databricks_apps_deploy_lib.sh
+source "${SCRIPT_DIR}/scripts/_databricks_apps_deploy_lib.sh"
 
 echo "NOTE: Arango cluster credentials live on arango-gateway-app; this app uses gateway HTTP + UC URL registries."
 
@@ -417,8 +338,9 @@ if [[ -f "${GRANT_PEER_APPS_SCRIPT}" ]]; then
   echo "Granting CAN_USE on peer apps (arango-gateway-app, mcp-arango-agent) to workflow app SP…"
   _peer_grant_args=(--app-name "${APP_NAME}" --service-principal-id "${APP_SERVICE_PRINCIPAL_CLIENT_ID}")
   if ! "${PYTHON_BIN}" "${GRANT_PEER_APPS_SCRIPT}" "${_peer_grant_args[@]}"; then
-    echo "NOTE: grant_peer_app_can_use.py failed — extraction prepare thread may 401 on gateway /health until fixed." >&2
+    echo "ERROR: grant_peer_app_can_use.py failed — extraction uses M2M to arango-gateway-app and needs CAN_USE." >&2
     echo "  Re-run: PYTHONPATH=src ${PYTHON_BIN} ${GRANT_PEER_APPS_SCRIPT} ${_peer_grant_args[*]}" >&2
+    exit 1
   fi
 else
   echo "NOTE: ${GRANT_PEER_APPS_SCRIPT} missing; skip peer-app CAN_USE grants." >&2
@@ -438,6 +360,7 @@ echo "Granting UC privileges to app service principal '${APP_SERVICE_PRINCIPAL_C
 run_sql_statement "GRANT USE CATALOG ON CATALOG workspace TO \`${APP_SERVICE_PRINCIPAL_CLIENT_ID}\`"
 run_sql_statement "GRANT USE SCHEMA ON SCHEMA workspace.default TO \`${APP_SERVICE_PRINCIPAL_CLIENT_ID}\`"
 run_sql_statement "GRANT SELECT ON TABLE ${REGISTRY_TABLE} TO \`${APP_SERVICE_PRINCIPAL_CLIENT_ID}\`"
+run_sql_statement "GRANT MODIFY ON TABLE ${REGISTRY_TABLE} TO \`${APP_SERVICE_PRINCIPAL_CLIENT_ID}\`"
 
 echo "Granting SELECT on gateway URL registry (${ARANGO_GATEWAY_REGISTRY_TABLE})…"
 if ! run_sql_statement "GRANT SELECT ON TABLE ${ARANGO_GATEWAY_REGISTRY_TABLE} TO \`${APP_SERVICE_PRINCIPAL_CLIENT_ID}\`"; then
@@ -456,7 +379,7 @@ fi
 
 REGISTRY_CATALOG="$(echo "${REGISTRY_TABLE}" | cut -d. -f1)"
 REGISTRY_SCHEMA="$(echo "${REGISTRY_TABLE}" | cut -d. -f2)"
-UC_GRAPH_VOLUME_NAME="${UC_GRAPH_VOLUME_NAME:-arango_workflow_volume}"
+UC_WORKFLOW_VOLUME_NAME="${UC_WORKFLOW_VOLUME_NAME:-${UC_GRAPH_VOLUME_NAME:-arango_workflow_volume}}"
 
 echo "Granting UC table metadata read + annotation write (Add Tables /api/v1/uc) on ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}…"
 echo "  SELECT ON SCHEMA — list tables, read table/column metadata via WorkspaceClient"
@@ -468,15 +391,15 @@ if ! run_sql_statement "GRANT MODIFY ON SCHEMA ${REGISTRY_CATALOG}.${REGISTRY_SC
   echo "NOTE: GRANT MODIFY ON SCHEMA ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA} failed — Add Tables cannot push annotations to UC." >&2
 fi
 
-echo "Ensuring UC workflow-data volume ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_GRAPH_VOLUME_NAME}…"
-run_sql_statement "CREATE VOLUME IF NOT EXISTS ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_GRAPH_VOLUME_NAME}"
-run_sql_statement "GRANT READ VOLUME, WRITE VOLUME ON VOLUME ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_GRAPH_VOLUME_NAME} TO \`${APP_SERVICE_PRINCIPAL_CLIENT_ID}\`"
+echo "Ensuring UC workflow-data volume ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_WORKFLOW_VOLUME_NAME}…"
+run_sql_statement "CREATE VOLUME IF NOT EXISTS ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_WORKFLOW_VOLUME_NAME}"
+run_sql_statement "GRANT READ VOLUME, WRITE VOLUME ON VOLUME ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_WORKFLOW_VOLUME_NAME} TO \`${APP_SERVICE_PRINCIPAL_CLIENT_ID}\`"
 
 if [[ "${WORKFLOW_DATA_SEED_AT_DEPLOY:-1}" != "0" ]]; then
   SEED_SCRIPT="${SCRIPT_DIR}/scripts/seed_workflow_volume_datasets.py"
   if [[ -f "${SEED_SCRIPT}" ]]; then
     echo "Seeding datasets/<domain>/ → UC workflow-data/builtin/<domain>/ (Files API)…"
-    _seed_args=(--catalog "${REGISTRY_CATALOG}" --schema "${REGISTRY_SCHEMA}" --volume "${UC_GRAPH_VOLUME_NAME}")
+    _seed_args=(--catalog "${REGISTRY_CATALOG}" --schema "${REGISTRY_SCHEMA}" --volume "${UC_WORKFLOW_VOLUME_NAME}")
     if [[ -n "${PROFILE}" ]]; then
       _seed_args+=(--profile "${PROFILE}")
     fi

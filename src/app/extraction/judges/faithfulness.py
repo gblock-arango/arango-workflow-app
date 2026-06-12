@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.config import settings
 from app.extraction.agents.extractor import _get_llm
+from app.llm.databricks_serving import effective_extraction_model_name
 from app.models.ontology import ExtractedClass
 
 log = logging.getLogger(__name__)
@@ -103,7 +104,7 @@ async def judge_faithfulness(
         log.warning("faithfulness judge: no chunks available, returning defaults")
         return {uri: _DEFAULT_SCORE for uri in class_uris}
 
-    resolved_model = model_name or settings.llm_extraction_model
+    resolved_model = model_name or effective_extraction_model_name()
 
     try:
         llm = _get_llm(resolved_model)

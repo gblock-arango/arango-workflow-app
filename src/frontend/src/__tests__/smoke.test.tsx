@@ -20,6 +20,11 @@ function stubHealthy() {
             status: "ready",
             database: "Arango 3.12.4",
             gateway: "Gateway reachable",
+            connection: {
+              ui_variant: "connected",
+              ui_message: "Local Minikube",
+              active_profile_display_name: "Local Minikube",
+            },
             probe: {
               status: "ok",
               details: {
@@ -61,16 +66,25 @@ describe("Home page", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows Connected with Arango detail when backend is healthy", async () => {
+  it("shows profile name when backend is healthy", async () => {
     stubHealthy();
     render(<Home />);
     await waitFor(() => {
-      expect(screen.getByText("Connected")).toBeInTheDocument();
+      expect(screen.getByText("Local Minikube")).toBeInTheDocument();
       expect(screen.getByText(/Arango 3\.12\.4 · local-minikube-dev/)).toBeInTheDocument();
     });
   });
 
-  it("shows Unavailable when backend is down", async () => {
+  it("renders Connection link beside status widget", () => {
+    stubHealthy();
+    render(<Home />);
+    expect(screen.getByRole("link", { name: "Connection" })).toHaveAttribute(
+      "href",
+      "/connection",
+    );
+  });
+
+  it("shows Click to Connect when no profile is saved", async () => {
     mockFetch.mockImplementation((url: string) => {
       if (typeof url === "string" && url.endsWith("/ready")) {
         return Promise.resolve({
@@ -79,8 +93,10 @@ describe("Home page", () => {
           json: () =>
             Promise.resolve({
               status: "not_ready",
-              database: "Gateway health HTTP 401",
-              gateway: "Gateway health HTTP 401",
+              connection: {
+                ui_variant: "unset",
+                ui_message: "Click to Connect",
+              },
             }),
         });
       }
@@ -94,7 +110,7 @@ describe("Home page", () => {
     });
     render(<Home />);
     await waitFor(() => {
-      expect(screen.getByText("Unavailable")).toBeInTheDocument();
+      expect(screen.getByText("Click to Connect")).toBeInTheDocument();
     });
   });
 

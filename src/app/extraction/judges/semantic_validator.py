@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.config import settings
 from app.extraction.agents.extractor import _get_llm
+from app.llm.databricks_serving import effective_extraction_model_name
 from app.models.ontology import ExtractedClass
 
 log = logging.getLogger(__name__)
@@ -149,7 +150,7 @@ async def validate_semantics(
         return {}
 
     class_uris = {c.uri for c in classes}
-    resolved_model = model_name or settings.llm_extraction_model
+    resolved_model = model_name or effective_extraction_model_name()
 
     try:
         llm = _get_llm(resolved_model)

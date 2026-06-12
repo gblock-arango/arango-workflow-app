@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse
 from app.api import (
     admin,
     auth,
+    connection,
     curation,
     documents,
     embedding,
@@ -147,6 +148,7 @@ app.include_router(quality.router)
 app.include_router(revisions.router)
 app.include_router(system.router)
 app.include_router(uc_catalog.router)
+app.include_router(connection.router)
 app.include_router(workflow_dashboard.router)
 app.include_router(ws_extraction.router)
 app.include_router(ws_curation.router)

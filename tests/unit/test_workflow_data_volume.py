@@ -12,7 +12,7 @@ from app.workflow_platform import workflow_data_volume as vol
 
 def test_builtin_uc_path_uses_domain_folders_not_corpora(monkeypatch):
     monkeypatch.setenv("ARANGO_REGISTRY_TABLE", "workspace.default.arango_connection_registry")
-    monkeypatch.setenv("UC_GRAPH_VOLUME_NAME", "arango_workflow_volume")
+    monkeypatch.setenv("UC_WORKFLOW_VOLUME_NAME", "arango_workflow_volume")
 
     uc_path = vol.workflow_data_builtin_uc_path()
     assert uc_path.endswith("/workflow-data/builtin")
@@ -101,7 +101,7 @@ def test_use_local_mount_when_explicit(monkeypatch):
 
 def test_write_bytes_uses_files_api_when_configured(monkeypatch):
     monkeypatch.setenv("ARANGO_REGISTRY_TABLE", "workspace.default.arango_connection_registry")
-    monkeypatch.setenv("UC_GRAPH_VOLUME_NAME", "arango_workflow_volume")
+    monkeypatch.setenv("UC_WORKFLOW_VOLUME_NAME", "arango_workflow_volume")
     monkeypatch.setattr(vol, "use_files_api_for_io", lambda: True)
 
     with patch.object(vol, "_write_via_files_api", return_value="uploads/x/a.md") as mock_write:
@@ -113,7 +113,7 @@ def test_write_bytes_uses_files_api_when_configured(monkeypatch):
 
 def test_list_files_falls_back_to_files_api_when_unmounted(monkeypatch):
     monkeypatch.setenv("ARANGO_REGISTRY_TABLE", "workspace.default.arango_connection_registry")
-    monkeypatch.setenv("UC_GRAPH_VOLUME_NAME", "arango_workflow_volume")
+    monkeypatch.setenv("UC_WORKFLOW_VOLUME_NAME", "arango_workflow_volume")
     monkeypatch.setattr(vol, "local_mount_available", lambda: False)
 
     entry = MagicMock()

@@ -17,7 +17,6 @@ import {
 
 interface UseExtractionSocketReturn {
   steps: Map<string, StepStatus>;
-  isConnected: boolean;
   error: string | null;
 }
 
@@ -195,7 +194,6 @@ export function useExtractionSocket(
   runId: string | null,
 ): UseExtractionSocketReturn {
   const [steps, setSteps] = useState<Map<string, StepStatus>>(buildInitialSteps);
-  const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -322,7 +320,6 @@ export function useExtractionSocket(
   useEffect(() => {
     if (!runId) {
       setSteps(buildInitialSteps());
-      setIsConnected(false);
       setError(null);
       return;
     }
@@ -343,7 +340,6 @@ export function useExtractionSocket(
 
       ws.onopen = () => {
         if (!mountedRef.current) return;
-        setIsConnected(true);
         setError(null);
         retriesRef.current = 0;
       };
@@ -364,7 +360,6 @@ export function useExtractionSocket(
 
       ws.onclose = () => {
         if (!mountedRef.current) return;
-        setIsConnected(false);
         wsRef.current = null;
 
         retriesRef.current += 1;
@@ -399,5 +394,5 @@ export function useExtractionSocket(
     };
   }, [runId, applyEvent, clearTimer]);
 
-  return { steps, isConnected, error };
+  return { steps, error };
 }

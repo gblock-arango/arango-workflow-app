@@ -195,16 +195,18 @@ def effective_embedding_model_name() -> str:
 
     if settings.use_databricks_for_embeddings():
         return resolved_embedding_model_name()
-    return settings.embedding_model
+    return settings.configured_embedding_model
 
 
 def effective_extraction_model_name(requested: str | None = None) -> str:
-    """Serving endpoint or provider model name for ``_get_llm``."""
+    """Serving endpoint or provider model name for ``_get_llm`` and connectivity probes."""
     from app.config import settings
 
     if settings.use_databricks_for_extraction():
         return resolved_chat_model_name()
-    return (requested or settings.llm_extraction_model).strip()
+    if requested:
+        return requested.strip()
+    return settings.configured_extraction_model
 
 
 def default_embedding_dimension_for_model(model_name: str) -> int:

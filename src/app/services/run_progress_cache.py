@@ -311,6 +311,42 @@ def get_cached_run_progress(run_id: str) -> dict[str, Any] | None:
     return _snapshot(entry, run_id)
 
 
+def list_cached_run_ids() -> list[str]:
+    """Return run IDs with entries in the shared progress store."""
+    ids: list[str] = []
+    if _use_volume_files_api():
+        try:
+            from app.workflow_platform.workflow_data_volume import list_files
+
+            for entry in list_files(prefix="instance_data/run-progress", max_entries=500):
+                name = str(entry.get("name") or "")
+                if name.startswith("run_") and name.endswith(".json"):
+                    ids.append(name[: -len(".json")])
+        except Exception:
+            log.debug("could not list run progress cache via UC Files API", exc_info=True)
+        return ids
+
+    cache_dir = _cache_dir()
+    try:
+        if cache_dir.is_dir():
+            for path in cache_dir.glob("run_*.json"):
+                ids.append(path.stem)
+    except OSError:
+        log.debug("could not list run progress cache dir", exc_info=True)
+    return ids
+
+
+def clear_all_run_progress_cache() -> list[str]:
+    """Remove every run progress cache file (UC volume or local dir)."""
+    cleared: list[str] = []
+    for run_id in list_cached_run_ids():
+        drop_run_progress_cache(run_id)
+        cleared.append(run_id)
+    with _lock:
+        _l1.clear()
+    return cleared
+
+
 def drop_run_progress_cache(run_id: str) -> None:
     try:
         _validate_run_id(run_id)
@@ -356,9 +392,31 @@ def merge_run_progress_for_poll(
 
     cached_stage = cached_stats.get("preparation_stage")
     gateway_stage = gateway_stats.get("preparation_stage")
-    if preparation_stage_rank(str(cached_stage or "")) >= preparation_stage_rank(
-        str(gateway_stage or "")
-    ):
+    cached_rank = preparation_stage_rank(str(cached_stage or ""))
+    gateway_rank = preparation_stage_rank(str(gateway_stage or ""))
+
+    try:
+        from app.services.extraction import prepare_arango_step_completed
+
+        prep_done = prepare_arango_step_completed(cached_stats) or prepare_arango_step_completed(
+            gateway_stats
+        )
+    except Exception:
+        prep_done = False
+
+    if prep_done and cached_rank >= gateway_rank:
+        stats["preparation_stage"] = cached_stage
+        stats["preparation_message"] = cached_stats.get("preparation_message")
+        stats["preparation_updated_at"] = cached_stats.get("preparation_updated_at")
+        if cached_stats.get("preparation_progress") is not None:
+            stats["preparation_progress"] = cached_stats.get("preparation_progress")
+    elif not prep_done and gateway_stage and gateway_rank < cached_rank:
+        stats["preparation_stage"] = gateway_stage
+        stats["preparation_message"] = gateway_stats.get("preparation_message")
+        stats["preparation_updated_at"] = gateway_stats.get("preparation_updated_at")
+        if gateway_stats.get("preparation_progress") is not None:
+            stats["preparation_progress"] = gateway_stats.get("preparation_progress")
+    elif cached_rank >= gateway_rank:
         stats["preparation_stage"] = cached_stage
         stats["preparation_message"] = cached_stats.get("preparation_message")
         stats["preparation_updated_at"] = cached_stats.get("preparation_updated_at")
@@ -405,4 +463,10 @@ def merge_run_progress_for_poll(
     gateway_status = merged.get("status")
     if run_status_rank(str(cached_status or "")) >= run_status_rank(str(gateway_status or "")):
         merged["status"] = cached_status
+    try:
+        from app.services.extraction import effective_status_for_ui
+
+        merged["status"] = effective_status_for_ui({**merged, "stats": stats})
+    except Exception:
+        pass
     return merged

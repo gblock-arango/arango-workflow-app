@@ -8,6 +8,7 @@ from typing import Any
 
 from app.config import settings
 from app.extraction.state import ExtractionPipelineState, StepLog, StrategyConfig
+from app.llm.databricks_serving import effective_extraction_model_name
 
 log = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ _LONG_DOC_THRESHOLD = 50
 
 _STRATEGIES: dict[str, StrategyConfig] = {
     "short_technical": StrategyConfig(
-        model_name=settings.llm_extraction_model,
+        model_name=effective_extraction_model_name(),
         prompt_template_key="tier1_technical",
         chunk_batch_size=5,
         num_passes=settings.extraction_passes,
@@ -24,7 +25,7 @@ _STRATEGIES: dict[str, StrategyConfig] = {
         document_type="short_technical",
     ),
     "long_narrative": StrategyConfig(
-        model_name=settings.llm_extraction_model,
+        model_name=effective_extraction_model_name(),
         prompt_template_key="tier1_standard",
         chunk_batch_size=3,
         num_passes=settings.extraction_passes,
@@ -32,7 +33,7 @@ _STRATEGIES: dict[str, StrategyConfig] = {
         document_type="long_narrative",
     ),
     "tabular_structured": StrategyConfig(
-        model_name=settings.llm_extraction_model,
+        model_name=effective_extraction_model_name(),
         prompt_template_key="tier1_technical",
         chunk_batch_size=8,
         num_passes=max(2, settings.extraction_passes - 1),
@@ -40,7 +41,7 @@ _STRATEGIES: dict[str, StrategyConfig] = {
         document_type="tabular_structured",
     ),
     "default": StrategyConfig(
-        model_name=settings.llm_extraction_model,
+        model_name=effective_extraction_model_name(),
         prompt_template_key="tier1_standard",
         chunk_batch_size=5,
         num_passes=settings.extraction_passes,

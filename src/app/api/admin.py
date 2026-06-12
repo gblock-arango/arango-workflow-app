@@ -58,6 +58,81 @@ ONTOLOGY_COLLECTIONS = [
 ALL_COLLECTIONS = [*ONTOLOGY_COLLECTIONS, "documents", "chunks"]
 
 
+def _clear_pipeline_runtime_state() -> dict[str, Any]:
+    """Drop UC/file run-progress cache, heartbeats, and in-memory cancel flags."""
+    from app.services.extraction import clear_all_extraction_cancels
+    from app.services.preparation_heartbeat import stop_all_preparation_sessions
+    from app.services.run_progress_cache import clear_all_run_progress_cache
+
+    cleared_runs = clear_all_run_progress_cache()
+    stopped_sessions = stop_all_preparation_sessions()
+    clear_all_extraction_cancels()
+
+    uc_invalidated: list[str] = []
+    for name, fn in (
+        ("gateway_url", _try_invalidate_gateway_uc),
+        ("arango_agent_url", _try_invalidate_agent_uc),
+        ("bronze_injector", _try_invalidate_bronze_uc),
+        ("workflow_url", _try_invalidate_workflow_uc),
+    ):
+        if fn():
+            uc_invalidated.append(name)
+
+    return {
+        "run_progress_cache_cleared": cleared_runs,
+        "preparation_sessions_stopped": stopped_sessions,
+        "uc_caches_invalidated": uc_invalidated,
+    }
+
+
+def _try_invalidate_gateway_uc() -> bool:
+    try:
+        from app.workflow_platform.services.gateway_url_registry import (
+            invalidate_gateway_url_uc_cache,
+        )
+
+        invalidate_gateway_url_uc_cache()
+        return True
+    except Exception:
+        return False
+
+
+def _try_invalidate_agent_uc() -> bool:
+    try:
+        from app.workflow_platform.services.agent_url_registry import (
+            invalidate_arango_agent_url_uc_cache,
+        )
+
+        invalidate_arango_agent_url_uc_cache()
+        return True
+    except Exception:
+        return False
+
+
+def _try_invalidate_bronze_uc() -> bool:
+    try:
+        from app.workflow_platform.services.bronze_injector_uc_registry import (
+            invalidate_bronze_injector_uc_cache,
+        )
+
+        invalidate_bronze_injector_uc_cache()
+        return True
+    except Exception:
+        return False
+
+
+def _try_invalidate_workflow_uc() -> bool:
+    try:
+        from app.workflow_platform.services.workflow_url_registry import (
+            invalidate_workflow_url_uc_cache,
+        )
+
+        invalidate_workflow_url_uc_cache()
+        return True
+    except Exception:
+        return False
+
+
 def _remove_ontology_graphs(db: StandardDatabase) -> list[str]:
     """Remove all per-ontology named graphs (ontology_*)."""
     removed: list[str] = []
@@ -101,8 +176,14 @@ async def reset_ontology_data() -> dict[str, Any]:
             db.collection(name).truncate()
             truncated.append(name)
     graphs_removed = _remove_ontology_graphs(db)
+    pipeline_runtime = _clear_pipeline_runtime_state()
     log.warning("system reset: truncated %s, removed graphs %s", truncated, graphs_removed)
-    return {"reset": True, "collections_truncated": truncated, "graphs_removed": graphs_removed}
+    return {
+        "reset": True,
+        "collections_truncated": truncated,
+        "graphs_removed": graphs_removed,
+        **pipeline_runtime,
+    }
 
 
 @router.post("/reset/full")
@@ -116,8 +197,14 @@ async def reset_all_data() -> dict[str, Any]:
             db.collection(name).truncate()
             truncated.append(name)
     graphs_removed = _remove_ontology_graphs(db)
+    pipeline_runtime = _clear_pipeline_runtime_state()
     log.warning("full system reset: truncated %s, removed graphs %s", truncated, graphs_removed)
-    return {"reset": True, "collections_truncated": truncated, "graphs_removed": graphs_removed}
+    return {
+        "reset": True,
+        "collections_truncated": truncated,
+        "graphs_removed": graphs_removed,
+        **pipeline_runtime,
+    }
 
 
 @router.post("/ontology/{ontology_id}/repair-edges")

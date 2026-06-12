@@ -54,15 +54,31 @@ def _running_steps_from_logs(logs: list[dict[str, Any]]) -> list[str]:
     ]
 
 
-def init_agent_diagnostics(run_id: str, *, message: str | None = None) -> None:
+def init_agent_diagnostics(
+    run_id: str,
+    *,
+    message: str | None = None,
+    preserve_preparation_status: bool = False,
+) -> None:
     """Seed agent telemetry when LangGraph starts."""
     now = time.time()
     diag = {**_EMPTY_DIAG, "agent_started_at": now}
+    msg = message or "LangGraph extraction pipeline running"
+    if preserve_preparation_status:
+        # Deferred prep: gateway/UC/schema still run inside prepare_arango — do not
+        # flip status to running or stage to launching_pipeline yet.
+        update_run_progress_cache(
+            run_id,
+            message=msg,
+            stats_patch={"agent_diagnostics": diag},
+            touch_session=False,
+        )
+        return
     update_run_progress_cache(
         run_id,
         status="running",
         stage="launching_pipeline",
-        message=message or "LangGraph extraction pipeline running",
+        message=msg,
         stats_patch={"agent_diagnostics": diag},
         touch_session=False,
     )
@@ -78,6 +94,8 @@ def record_llm_call(
 ) -> None:
     """Increment LLM counters in the shared progress cache (no gateway I/O)."""
     try:
+        from app.services.extraction import preparation_still_active
+
         diag = _read_agent_diagnostics(run_id)
         now = time.time()
         diag["llm_calls"] = int(diag.get("llm_calls", 0)) + 1
@@ -90,9 +108,13 @@ def record_llm_call(
             diag["last_llm_step"] = step
         if diag.get("agent_started_at") is None:
             diag["agent_started_at"] = now
+        cached = get_cached_run_progress(run_id)
+        status_patch: str | None = "running"
+        if preparation_still_active(cached):
+            status_patch = None
         update_run_progress_cache(
             run_id,
-            status="running",
+            status=status_patch,
             stats_patch={"agent_diagnostics": diag},
             touch_session=False,
         )
@@ -108,14 +130,22 @@ def sync_agent_diagnostics_from_step_logs(
 ) -> None:
     """Refresh running agent list from step_logs without blocking on Arango."""
     try:
+        from app.services.extraction import preparation_still_active
+
         diag = _read_agent_diagnostics(run_id)
         diag["running_steps"] = _running_steps_from_logs(step_logs)
         patch: dict[str, Any] = {"agent_diagnostics": diag, "step_logs": step_logs}
         if current_step is not None:
             patch["current_step"] = current_step
+        cached = get_cached_run_progress(run_id)
+        status_patch: str | None = "running"
+        preview = dict(cached or {})
+        preview["stats"] = {**(dict(preview.get("stats") or {})), **patch}
+        if preparation_still_active(preview):
+            status_patch = "preparing"
         update_run_progress_cache(
             run_id,
-            status="running",
+            status=status_patch,
             stats_patch=patch,
             touch_session=False,
         )
@@ -147,9 +177,16 @@ def record_live_run_metrics(run_id: str, patch: dict[str, Any]) -> None:
         for key in _LIVE_METRIC_KEYS:
             if key in patch and patch[key] is not None:
                 stats[key] = patch[key]
+        from app.services.extraction import preparation_still_active
+
+        status_patch: str | None = "running"
+        preview = dict(cached or {})
+        preview["stats"] = stats
+        if preparation_still_active(preview):
+            status_patch = None
         update_run_progress_cache(
             run_id,
-            status="running",
+            status=status_patch,
             stats_patch=stats,
             touch_session=False,
         )

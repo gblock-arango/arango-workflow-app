@@ -65,8 +65,20 @@ def _registry_catalog_schema() -> tuple[str, str]:
     return "workspace", "default"
 
 
+def uc_workflow_volume_name() -> str:
+    """Volume segment for workflow-data (shared env name with arango-gateway-app)."""
+    explicit = (os.environ.get("UC_WORKFLOW_VOLUME_NAME") or "").strip()
+    if explicit:
+        return explicit
+    legacy = (os.environ.get("UC_GRAPH_VOLUME_NAME") or "").strip()
+    if legacy:
+        return legacy
+    return "arango_workflow_volume"
+
+
 def uc_graph_volume_name() -> str:
-    return (os.environ.get("UC_GRAPH_VOLUME_NAME") or "arango_workflow_volume").strip() or "arango_workflow_volume"
+    """Deprecated alias — use :func:`uc_workflow_volume_name`."""
+    return uc_workflow_volume_name()
 
 
 def workflow_data_root() -> Path:

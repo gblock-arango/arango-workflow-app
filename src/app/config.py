@@ -99,8 +99,17 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = ""
     anthropic_api_key: str = ""
-    llm_extraction_model: str = "claude-sonnet-4-20250514"
-    embedding_model: str = "text-embedding-3-small"
+    llm_extraction_model: str = Field(
+        default="claude-sonnet-4-20250514",
+        validation_alias=AliasChoices(
+            "LLM_EXTRACTION_MODEL",
+            "LLM_MODEL",
+        ),
+    )
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        validation_alias=AliasChoices("EMBEDDING_MODEL"),
+    )
     #: ``auto`` on Databricks uses Model Serving when ``AUTOGRAPH_*_MODEL_NAME`` or resolve
     #: queries are set; ``openai`` / ``anthropic`` force external APIs; ``databricks_serving``
     #: requires workspace OAuth and serving endpoint names.
@@ -111,7 +120,7 @@ class Settings(BaseSettings):
             "LLM_PROVIDER",
         ),
     )
-    #: Databricks serving endpoint **name** for LangGraph extraction (not a full URL).
+    #: Extraction model id — Databricks serving endpoint name **or** OpenAI/Anthropic model id.
     autograph_llm_model_name: str = Field(
         default="",
         validation_alias=AliasChoices(
@@ -126,7 +135,7 @@ class Settings(BaseSettings):
             "AUTOGRAPH_LLM_FOUNDATION_MODEL_QUERY",
         ),
     )
-    #: Databricks serving endpoint **name** for chunk/ER embeddings.
+    #: Embedding model id — Databricks serving endpoint name **or** OpenAI embedding model id.
     autograph_embedding_model_name: str = Field(
         default="",
         validation_alias=AliasChoices(
@@ -359,6 +368,22 @@ class Settings(BaseSettings):
             (self.autograph_embedding_model_name or "").strip()
             or (self.autograph_embedding_resolve_query or "").strip()
         )
+
+    @property
+    def configured_extraction_model(self) -> str:
+        """Primary extraction model: ``AUTOGRAPH_LLM_MODEL_NAME``, else legacy ``LLM_EXTRACTION_MODEL``."""
+        explicit = (self.autograph_llm_model_name or "").strip()
+        if explicit:
+            return explicit
+        return (self.llm_extraction_model or "").strip()
+
+    @property
+    def configured_embedding_model(self) -> str:
+        """Primary embedding model: ``AUTOGRAPH_EMBEDDING_MODEL_NAME``, else legacy ``EMBEDDING_MODEL``."""
+        explicit = (self.autograph_embedding_model_name or "").strip()
+        if explicit:
+            return explicit
+        return (self.embedding_model or "").strip()
 
     def use_databricks_for_extraction(self) -> bool:
         provider = self.llm_provider_normalized

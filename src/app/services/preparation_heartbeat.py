@@ -129,6 +129,15 @@ def stop_preparation_session(run_id: str) -> None:
         session.stop()
 
 
+def stop_all_preparation_sessions() -> int:
+    """Stop every active preparation heartbeat (used by admin reset)."""
+    with _lock:
+        run_ids = list(_sessions.keys())
+    for run_id in run_ids:
+        stop_preparation_session(run_id)
+    return len(run_ids)
+
+
 def record_preparation_session(
     run_id: str,
     *,

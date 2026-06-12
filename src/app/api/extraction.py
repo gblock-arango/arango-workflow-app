@@ -348,5 +348,8 @@ def _delete_run_sync(run_id: str) -> dict[str, Any]:
     results_key = f"results_{run_id}"
     if col.has(results_key):
         col.delete(results_key)
+    from app.services.run_progress_cache import drop_run_progress_cache
+
+    drop_run_progress_cache(run_id)
     log.info("deleted extraction run %s", run_id)
     return {"deleted": True, "run_id": run_id}

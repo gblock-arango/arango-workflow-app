@@ -19,23 +19,30 @@ env:
       (Required) SQL warehouse id for UC reads — gateway, mcp-agent, and workflow URL registries.
     value: "473d40703241ee4c"
 
-  # LLM — Databricks Model Serving (Autograph / LangGraph). OpenAI keys optional when set.
+  # LLM — Autograph / LangGraph (same model names for Databricks serving and OpenAI/Anthropic).
   - name: AUTOGRAPH_LLM_PROVIDER
     description: "auto | databricks_serving | openai | anthropic. On Databricks, auto uses serving when AUTOGRAPH_*_MODEL_NAME is set."
     value: "databricks_serving"
   - name: AUTOGRAPH_LLM_MODEL_NAME
-    description: "Serving endpoint name for LangGraph extraction (model name, not a URL)."
+    description: >-
+      Extraction model for all providers: Databricks serving endpoint name (e.g.
+      databricks-meta-llama-3-3-70b-instruct) or OpenAI/Anthropic model id (e.g. gpt-4o-mini)
+      when AUTOGRAPH_LLM_PROVIDER=openai|anthropic.
     value: "databricks-meta-llama-3-3-70b-instruct"
   - name: AUTOGRAPH_EMBEDDING_MODEL_NAME
-    description: "Foundation Model API serving endpoint. Default databricks-bge-large-en; aliases bge_large_en_v1_5, gte_large_en_v1_5."
+    description: >-
+      Embedding model for all providers: Databricks endpoint (e.g. databricks-bge-large-en)
+      or OpenAI id (e.g. text-embedding-3-small) when not using Databricks serving.
     value: "databricks-bge-large-en"
   - name: AUTOGRAPH_EMBEDDING_DIMENSION
     description: "Embedding dimension (e.g., for FAISS): 1024 large, 768 base, 384 small (must match model)."
     value: "1024"
-
+  - name: OPENAI_API_KEY
+    description: "Required when AUTOGRAPH_LLM_PROVIDER=openai (embeddings + extraction). Optional for databricks_serving."
+    value: ""
 
   # ---------------------------------------------------------------------------
-  # LLM — Optional + OpenAI Model Serving (Autograph / LangGraph). OpenAI keys optional when set.
+  # LLM — Optional resolve queries and OpenAI credentials
   # ---------------------------------------------------------------------------
   - name: AUTOGRAPH_LLM_RESOLVE_QUERY
     description: "Optional; resolve READY endpoint when AUTOGRAPH_LLM_MODEL_NAME is empty."
@@ -46,15 +53,7 @@ env:
   - name: AUTOGRAPH_RESOLVE_ENDPOINT_DEEP
     description: "Call serving_endpoints.get when list() omits foundation_model metadata."
     value: "false"
-  - name: OPENAI_API_KEY
-    description: "Optional; OpenAI API key (injected at deploy). Not required when AUTOGRAPH_LLM_PROVIDER=databricks_serving."
-    value: "${OPENAI_API_KEY}"
-  - name: LLM_EXTRACTION_MODEL
-    description: "Optional; Extraction model when not using Databricks serving"
-    value: "gpt-4o-mini"
-  - name: EMBEDDING_MODEL
-    description: "Optional; Embedding model when not using Databricks serving"
-    value: "text-embedding-3-small"
+
 
   # ---------------------------------------------------------------------------
   # Peer apps (UC registries; optional URL overrides)
@@ -77,12 +76,6 @@ env:
   - name: ARANGO_REGISTRY_TABLE
     description: "Arango connection registry (read-only here; gateway owns upstream cluster row)"
     value: "workspace.default.arango_connection_registry"
-  - name: ARANGO_PING_BASIC_AUTH_USER
-    description: "Basic auth user for /ready Arango probe (match arango-gateway-app)"
-    value: "root"
-  - name: ARANGO_PING_BASIC_AUTH_PASSWORD
-    description: "Arango basic-auth password for /ready probe (must match arango-gateway-app)"
-    value: "8c1bc9344c886819859534a5ac951412c650870662228617cfbb69023489afd2"
   - name: ARANGO_PING_TIMEOUT_SECONDS
     description: "Timeout seconds for /ready Arango HTTP probe"
     value: "5"
@@ -109,12 +102,13 @@ env:
     description: "UC Delta table for parse/chunk/embed pipeline status (catalog.schema.table)"
     value: "workspace.default.embedding_status"
 
-  - name: UC_GRAPH_VOLUME_NAME
+  - name: UC_WORKFLOW_VOLUME_NAME
+    description: >-
+      UC volume for workflow-data (Connection profiles, document uploads, builtin datasets).
+      Same variable and default as arango-gateway-app.
     value: "arango_workflow_volume"
-  - name: UC_GRAPH_SNAPSHOT_BASE
-    value: ""
   - name: UC_WORKFLOW_DATA_SUBDIR
-    description: "Subdirectory on UC_GRAPH_VOLUME_NAME for document uploads and builtin sample domains"
+    description: "Subdirectory on UC_WORKFLOW_VOLUME_NAME for document uploads and builtin sample domains"
     value: "workflow-data"
   - name: UC_WORKFLOW_DATA_IO_MODE
     description: >-
