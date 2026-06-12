@@ -84,10 +84,22 @@ class TestHasChunkEdges:
 
         return mock_db, collections
 
-    def test_creates_has_chunk_edges_for_each_chunk(self):
+    def test_creates_has_chunk_edges_for_each_chunk(self, monkeypatch):
         from app.services.extraction import _materialize_to_graph
 
-        mock_db, cols = self._make_mock_db(chunk_keys=["chunk_0", "chunk_1", "chunk_2"])
+        captured: dict[str, list] = {"docs": [], "temporal": []}
+
+        def bulk_docs(db, collection, documents, **kwargs):
+            captured["docs"].append((collection, list(documents), kwargs))
+            return len(documents)
+
+        monkeypatch.setattr("app.services.extraction.bulk_insert_documents", bulk_docs)
+        monkeypatch.setattr(
+            "app.services.extraction.bulk_insert_temporal_edges_if_absent",
+            lambda *_a, **_k: 0,
+        )
+
+        mock_db, _cols = self._make_mock_db(chunk_keys=["chunk_0", "chunk_1", "chunk_2"])
 
         mock_result = MagicMock()
         mock_result.classes = []
@@ -100,20 +112,31 @@ class TestHasChunkEdges:
             result=mock_result,
         )
 
-        has_chunk_col = cols["has_chunk"]
-        assert has_chunk_col.insert.call_count == 3
+        has_chunk = next(docs for name, docs, _kw in captured["docs"] if name == "has_chunk")
+        assert len(has_chunk) == 3
 
-        inserted_edges = [call[0][0] for call in has_chunk_col.insert.call_args_list]
-        for edge in inserted_edges:
+        for edge in has_chunk:
             assert edge["_from"] == "documents/doc_1"
             assert edge["expired"] == NEVER_EXPIRES
             assert "created" in edge
 
-        to_values = {e["_to"] for e in inserted_edges}
+        to_values = {e["_to"] for e in has_chunk}
         assert to_values == {"chunks/chunk_0", "chunks/chunk_1", "chunks/chunk_2"}
 
-    def test_no_has_chunk_edges_when_no_chunks_collection(self):
+    def test_no_has_chunk_edges_when_no_chunks_collection(self, monkeypatch):
         from app.services.extraction import _materialize_to_graph
+
+        captured: dict[str, list] = {"docs": [], "temporal": []}
+
+        def bulk_docs(db, collection, documents, **kwargs):
+            captured["docs"].append((collection, list(documents), kwargs))
+            return len(documents)
+
+        monkeypatch.setattr("app.services.extraction.bulk_insert_documents", bulk_docs)
+        monkeypatch.setattr(
+            "app.services.extraction.bulk_insert_temporal_edges_if_absent",
+            lambda *_a, **_k: 0,
+        )
 
         mock_db = MagicMock()
         existing = {
@@ -146,4 +169,4 @@ class TestHasChunkEdges:
             result=mock_result,
         )
 
-        cols["has_chunk"].insert.assert_not_called()
+        assert not any(name == "has_chunk" for name, _docs, _kw in captured["docs"])

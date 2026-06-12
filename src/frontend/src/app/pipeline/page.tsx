@@ -309,6 +309,7 @@ function PipelineMonitorInner() {
                 <div className="max-h-[300px] overflow-y-auto">
                   {activeTab === "metrics" && (
                     <RunMetrics
+                      compact
                       runId={selectedRunId}
                       runStatus={runProgress.progress?.status}
                       agentSteps={steps}

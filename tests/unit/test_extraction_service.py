@@ -1364,11 +1364,32 @@ class TestRetryRun:
 # ---------------------------------------------------------------------------
 
 
+def _patch_bulk_writes(monkeypatch) -> dict[str, list]:
+    """Capture batched writes from ``_materialize_to_graph``."""
+    captured: dict[str, list] = {"docs": [], "temporal": []}
+
+    def bulk_docs(db, collection, documents, **kwargs):
+        captured["docs"].append((collection, list(documents), kwargs))
+        return len(documents)
+
+    def bulk_temporal(db, collection, edges, **kwargs):
+        captured["temporal"].append((collection, list(edges)))
+        return len(edges)
+
+    monkeypatch.setattr("app.services.extraction.bulk_insert_documents", bulk_docs)
+    monkeypatch.setattr(
+        "app.services.extraction.bulk_insert_temporal_edges_if_absent",
+        bulk_temporal,
+    )
+    return captured
+
+
 class TestMaterializeToGraph:
-    def test_inserts_classes_and_properties(self):
+    def test_inserts_classes_and_properties(self, monkeypatch):
         from app.services.extraction import _materialize_to_graph
 
-        mock_db, cols = _mock_db(chunk_keys=[])
+        captured = _patch_bulk_writes(monkeypatch)
+        mock_db, _cols = _mock_db(chunk_keys=[])
         class_evidence = [
             {
                 "source_chunk_ids": ["chunk_1"],
@@ -1415,10 +1436,8 @@ class TestMaterializeToGraph:
             result=result,
         )
 
-        # Class inserted
-        cls_col = cols["ontology_classes"]
-        assert cls_col.insert.call_count == 1
-        cls_doc = cls_col.insert.call_args[0][0]
+        by_col = {name: docs for name, docs, _kw in captured["docs"]}
+        cls_doc = by_col["ontology_classes"][0]
         assert cls_doc["_key"] == "Animal"
         assert cls_doc["label"] == "Animal"
         assert cls_doc["ontology_id"] == "onto_1"
@@ -1428,27 +1447,21 @@ class TestMaterializeToGraph:
         assert cls_doc["evidence"] == class_evidence
         assert cls_doc["expired"] == NEVER_EXPIRES
 
-        # Datatype property inserted ("species" → xsd:string)
-        dt_col = cols["ontology_datatype_properties"]
-        assert dt_col.insert.call_count == 1
-        dt_doc = dt_col.insert.call_args[0][0]
+        dt_doc = by_col["ontology_datatype_properties"][0]
         assert dt_doc["evidence"] == attribute_evidence
 
-        # rdfs_domain edges (one for the datatype property)
-        rd_col = cols["rdfs_domain"]
-        assert rd_col.insert.call_count >= 1
+        rd_edges = next(edges for c, edges in captured["temporal"] if c == "rdfs_domain")
+        assert len(rd_edges) >= 1
 
-        # extracted_from edge
-        ef_col = cols["extracted_from"]
-        assert ef_col.insert.call_count == 1
-        ef_doc = ef_col.insert.call_args[0][0]
+        ef_doc = by_col["extracted_from"][0]
         assert ef_doc["_from"] == "ontology_classes/Animal"
         assert ef_doc["_to"] == "documents/doc_1"
 
-    def test_inserts_subclass_edges(self):
+    def test_inserts_subclass_edges(self, monkeypatch):
         from app.services.extraction import _materialize_to_graph
 
-        mock_db, cols = _mock_db(chunk_keys=[])
+        captured = _patch_bulk_writes(monkeypatch)
+        mock_db, _cols = _mock_db(chunk_keys=[])
         parent_evidence = [
             {
                 "source_chunk_ids": ["chunk_parent"],
@@ -1484,18 +1497,25 @@ class TestMaterializeToGraph:
             result=result,
         )
 
-        sub_col = cols["subclass_of"]
-        assert sub_col.insert.call_count == 1
-        edge = sub_col.insert.call_args[0][0]
+        by_col = {name: docs for name, docs, _kw in captured["docs"]}
+        edge = by_col["subclass_of"][0]
         assert edge["_from"] == "ontology_classes/Animal"
         assert edge["_to"] == "ontology_classes/LivingThing"
         assert edge["evidence"] == parent_evidence
 
-    def test_handles_class_insert_failure_gracefully(self):
+    def test_handles_class_insert_failure_gracefully(self, monkeypatch):
         from app.services.extraction import _materialize_to_graph
 
-        mock_db, cols = _mock_db(chunk_keys=[])
-        cols["ontology_classes"].insert.side_effect = Exception("duplicate key")
+        def _raise(*_args, **_kwargs):
+            raise Exception("duplicate key")
+
+        monkeypatch.setattr("app.services.extraction.bulk_insert_documents", _raise)
+        monkeypatch.setattr(
+            "app.services.extraction.bulk_insert_temporal_edges_if_absent",
+            lambda *_a, **_k: 0,
+        )
+
+        mock_db, _cols = _mock_db(chunk_keys=[])
 
         result = _make_result(
             classes=[
@@ -1538,10 +1558,11 @@ class TestMaterializeToGraph:
         assert "rdfs_domain" in created
         assert "rdfs_range_class" in created
 
-    def test_property_rdf_type_object_vs_datatype(self):
+    def test_property_rdf_type_object_vs_datatype(self, monkeypatch):
         from app.services.extraction import _materialize_to_graph
 
-        mock_db, cols = _mock_db(chunk_keys=[])
+        captured = _patch_bulk_writes(monkeypatch)
+        mock_db, _cols = _mock_db(chunk_keys=[])
         relationship_evidence = [
             {
                 "source_chunk_ids": ["chunk_rel"],
@@ -1575,21 +1596,21 @@ class TestMaterializeToGraph:
             result=result,
         )
 
-        dt_col = cols["ontology_datatype_properties"]
-        dt_inserts = [c[0][0] for c in dt_col.insert.call_args_list]
-        name_prop = next(p for p in dt_inserts if p["label"] == "name")
+        by_col = {name: docs for name, docs, _kw in captured["docs"]}
+        name_prop = next(p for p in by_col["ontology_datatype_properties"] if p["label"] == "name")
         assert name_prop["range_datatype"] == "xsd:string"
 
-        obj_col = cols["ontology_object_properties"]
-        obj_inserts = [c[0][0] for c in obj_col.insert.call_args_list]
-        related_prop = next(p for p in obj_inserts if p["label"] == "relatedTo")
+        related_prop = next(
+            p for p in by_col["ontology_object_properties"] if p["label"] == "relatedTo"
+        )
         assert related_prop["label"] == "relatedTo"
         assert related_prop["evidence"] == relationship_evidence
 
-    def test_has_chunk_edges_created(self):
+    def test_has_chunk_edges_created(self, monkeypatch):
         from app.services.extraction import _materialize_to_graph
 
-        mock_db, cols = _mock_db(chunk_keys=["ck_0", "ck_1"])
+        captured = _patch_bulk_writes(monkeypatch)
+        mock_db, _cols = _mock_db(chunk_keys=["ck_0", "ck_1"])
 
         result = _make_result(classes=[])
 
@@ -1601,10 +1622,9 @@ class TestMaterializeToGraph:
             result=result,
         )
 
-        hc = cols["has_chunk"]
-        assert hc.insert.call_count == 2
-        edges = [c[0][0] for c in hc.insert.call_args_list]
-        assert {e["_to"] for e in edges} == {"chunks/ck_0", "chunks/ck_1"}
+        has_chunk = next(docs for name, docs, _kw in captured["docs"] if name == "has_chunk")
+        assert len(has_chunk) == 2
+        assert {e["_to"] for e in has_chunk} == {"chunks/ck_0", "chunks/ck_1"}
 
     def test_no_chunks_collection(self):
         from app.services.extraction import _materialize_to_graph

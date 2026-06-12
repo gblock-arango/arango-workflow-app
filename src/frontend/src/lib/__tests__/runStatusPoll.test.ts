@@ -133,6 +133,8 @@ describe("preparationStallThresholdMs", () => {
   it("allows longer stalls for gateway-heavy stages", () => {
     expect(preparationStallThresholdMs("run_persisted")).toBeGreaterThan(60_000);
     expect(preparationStallThresholdMs("gateway_health")).toBeGreaterThan(60_000);
+    expect(preparationStallThresholdMs("worker_auth")).toBe(90_000);
+    expect(preparationStallThresholdMs("langgraph_startup")).toBe(120_000);
     expect(preparationStallThresholdMs("queued")).toBe(20_000);
   });
 });
@@ -140,6 +142,15 @@ describe("preparationStallThresholdMs", () => {
 describe("preparationStageRank", () => {
   it("orders known preparation stages", () => {
     expect(preparationStageRank("queued")).toBeLessThan(
+      preparationStageRank("worker_auth"),
+    );
+    expect(preparationStageRank("worker_auth")).toBeLessThan(
+      preparationStageRank("langgraph_startup"),
+    );
+    expect(preparationStageRank("langgraph_startup")).toBeLessThan(
+      preparationStageRank("gateway_health"),
+    );
+    expect(preparationStageRank("gateway_health")).toBeLessThan(
       preparationStageRank("launching_pipeline"),
     );
   });

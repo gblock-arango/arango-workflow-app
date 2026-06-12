@@ -83,6 +83,13 @@ class Settings(BaseSettings):
         le=500,
         validation_alias=AliasChoices("ARANGO_CHUNK_INSERT_BATCH_SIZE"),
     )
+    #: Documents/edges per batched AQL INSERT or gateway bulk write (finalize, imports).
+    arango_write_batch_size: int = Field(
+        default=500,
+        ge=1,
+        le=5000,
+        validation_alias=AliasChoices("ARANGO_WRITE_BATCH_SIZE"),
+    )
 
     # -- ArangoDB (AMP / managed platform — future ArangoDB 4.0) -----------
     arango_graph_api_key_id: str = ""

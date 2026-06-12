@@ -22,7 +22,17 @@ const PREPARATION_STEPS: {
   {
     key: "queued",
     label: "Run accepted",
-    detail: "Run ID returned; background worker starting gateway checks",
+    detail: "Run ID returned; preparation worker starting",
+  },
+  {
+    key: "worker_auth",
+    label: "Service principal auth",
+    detail: "Databricks M2M token for arango-gateway-app (CAN_USE)",
+  },
+  {
+    key: "langgraph_startup",
+    label: "LangGraph startup",
+    detail: "Compile and load extraction pipeline (cached after first run on this app VM)",
   },
   {
     key: "gateway_health",
@@ -115,6 +125,14 @@ function formatPolledAt(ms: number | null): string {
 function progressDetailLine(progress: RunProgressSnapshot | null): string | null {
   if (!progress?.preparation_progress) return null;
   const p = progress.preparation_progress;
+  if (p.phase === "worker_auth") {
+    return "Obtaining service principal bearer for gateway calls…";
+  }
+  if (p.phase === "langgraph_startup") {
+    if (p.pipeline_cached === true) return "LangGraph pipeline loaded from cache";
+    if (p.compile_ms != null) return `LangGraph compile/load (${p.compile_ms}ms)`;
+    return "Compiling LangGraph extraction pipeline…";
+  }
   if (p.phase === "gateway_health" || p.phase === "gateway_arango" || p.phase === "run_persisted") {
     const parts: string[] = [];
     if (p.gateway_ok === true) parts.push("gateway OK");
@@ -349,7 +367,11 @@ export default function PipelineDiagnosticsPanel({
               Preparation has not advanced at stage{" "}
               <strong>{stage}</strong>
               {` for ${Math.round(stallThresholdMs / 1000)}s`}
-              {stage === "gateway_health" || stage === "gateway_arango"
+              {stage === "worker_auth"
+                ? " — Databricks M2M token fetch can take 30–90s on a cold app VM."
+                : stage === "langgraph_startup"
+                  ? " — first compile loads all agent modules; later runs use an in-process cache."
+                  : stage === "gateway_health" || stage === "gateway_arango"
                 ? " — gateway may be cold-starting or workers busy (first /health after redeploy is often 10–60s)."
                 : stage === "run_persisted"
                   ? " — Arango write/read via gateway+tunnel can take 30–90s; see checkpoint lines below."

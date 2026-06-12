@@ -20,6 +20,7 @@ from typing import Any
 
 from app.db.types import StandardDatabase
 
+from app.db.bulk_write import bulk_insert_documents
 from app.db.client import get_db
 from app.db.ontology_repo import create_class, create_edge
 from app.db.registry_repo import create_registry_entry, update_registry_entry
@@ -40,7 +41,6 @@ _DEFAULT_VERTEX_COLLECTIONS = frozenset(
     }
 )
 _DEFAULT_EDGE_COLLECTION = "edges"
-_INSERT_BATCH_SIZE = 500
 
 
 def is_rdf_json_ld_payload(data: Any) -> bool:
@@ -135,16 +135,7 @@ def _bulk_insert_documents(
     collection: str,
     documents: list[dict[str, Any]],
 ) -> int:
-    """Insert documents with batched AQL INSERT (Arango's document write API).
-
-    Example shape executed per batch::
-
-        FOR doc IN @docs
-          INSERT doc INTO @@col
-          OPTIONS { overwriteMode: "replace" }
-
-    Returns the number of documents written.
-    """
+    """Insert documents with batched AQL INSERT (Arango's document write API)."""
     if not documents:
         return 0
 
@@ -155,33 +146,13 @@ def _bulk_insert_documents(
         _ensure_vertex_collection(db, collection)
         is_edge = False
 
-    written = 0
-
-    for offset in range(0, len(documents), _INSERT_BATCH_SIZE):
-        batch = documents[offset : offset + _INSERT_BATCH_SIZE]
-        if is_edge:
-            run_aql(
-                db,
-                """
-                FOR doc IN @docs
-                  INSERT MERGE({ _from: doc._from, _to: doc._to }, doc) INTO @@col
-                  OPTIONS { overwriteMode: "replace" }
-                """,
-                bind_vars={"docs": batch, "@col": collection},
-            )
-        else:
-            run_aql(
-                db,
-                """
-                FOR doc IN @docs
-                  INSERT doc INTO @@col
-                  OPTIONS { overwriteMode: "replace" }
-                """,
-                bind_vars={"docs": batch, "@col": collection},
-            )
-        written += len(batch)
-
-    return written
+    return bulk_insert_documents(
+        db,
+        collection,
+        documents,
+        overwrite_mode="replace",
+        is_edge=is_edge,
+    )
 
 
 def _normalize_edge_doc(doc: dict[str, Any]) -> dict[str, Any]:

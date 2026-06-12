@@ -24,6 +24,8 @@ log = logging.getLogger(__name__)
 _RUN_ID_RE = re.compile(r"^run_[0-9a-f]{12}$")
 PREPARATION_STAGE_ORDER: tuple[str, ...] = (
     "queued",
+    "worker_auth",
+    "langgraph_startup",
     "gateway_health",
     "gateway_arango",
     "run_persisted",

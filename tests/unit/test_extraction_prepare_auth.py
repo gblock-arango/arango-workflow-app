@@ -71,3 +71,55 @@ class TestExtractionPrepareAuth:
             _join_prepare_thread(self.run_id)
 
         assert seen_headers == [{"Authorization": "Bearer sp-m2m-token"}]
+
+    def test_prepare_thread_reports_auth_and_langgraph_stages(self, progress_cache_dir) -> None:
+        stages: list[str] = []
+
+        async def fake_execute(**_kwargs: object) -> None:
+            return None
+
+        def fake_pin() -> tuple[object, object]:
+            return (
+                set_outbound_bearer_override("sp-m2m-token"),
+                set_outbound_service_principal_mode(True),
+            )
+
+        from app.services.run_progress_cache import get_cached_run_progress
+
+        original_update = __import__(
+            "app.services.run_progress_cache",
+            fromlist=["update_run_progress_cache"],
+        ).update_run_progress_cache
+
+        def tracking_update(run_id: str, **kwargs: object) -> None:
+            stage = kwargs.get("stage")
+            if stage:
+                stages.append(str(stage))
+            original_update(run_id, **kwargs)
+
+        with patch(
+            "app.services.extraction.execute_run",
+            new=fake_execute,
+        ), patch(
+            "app.services.extraction.pin_outbound_service_principal_bearer",
+            side_effect=fake_pin,
+        ), patch(
+            "app.services.extraction.release_outbound_service_principal_bearer",
+        ), patch(
+            "app.services.extraction.update_run_progress_cache",
+            side_effect=tracking_update,
+        ):
+            schedule_execute_run(
+                run_id=self.run_id,
+                document_ids=["doc1"],
+            )
+            _join_prepare_thread(self.run_id)
+
+        assert stages[:4] == [
+            "queued",
+            "worker_auth",
+            "langgraph_startup",
+        ]
+        cached = get_cached_run_progress(self.run_id)
+        assert cached is not None
+        assert cached["stats"]["preparation_stage"] == "langgraph_startup"

@@ -8,6 +8,8 @@ describe("PREPARATION_STAGE_ORDER", () => {
   it("includes gateway checkpoint stages before materialize", () => {
     expect(PREPARATION_STAGE_ORDER).toEqual([
       "queued",
+      "worker_auth",
+      "langgraph_startup",
       "gateway_health",
       "gateway_arango",
       "run_persisted",
@@ -27,6 +29,8 @@ describe("PipelineDiagnosticsPanel source", () => {
     );
     expect(src).toContain("gateway_health");
     expect(src).toContain("Gateway /health");
+    expect(src).toContain("worker_auth");
+    expect(src).toContain("langgraph_startup");
     expect(src).not.toContain('label: "Worker started"');
   });
 

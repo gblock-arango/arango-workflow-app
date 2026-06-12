@@ -13,6 +13,7 @@ from typing import Any, cast
 from app.db.types import StandardDatabase
 
 from app.config import settings
+from app.db.bulk_write import insert_many_via_http_batch
 from app.db.client import get_db
 from app.db.pagination import paginate
 from app.db.utils import doc_get, run_aql
@@ -385,6 +386,24 @@ def create_chunks(
     insert_many = getattr(col, "insert_many", None)
     if not callable(insert_many):
         return _create_chunks_one_by_one(col, chunks)
+
+    batched = insert_many_via_http_batch(
+        db,
+        CHUNKS_COLLECTION,
+        chunks,
+        batch_size=size,
+        on_batch_progress=on_batch_progress,
+    )
+    if batched is not None:
+        if not batched:
+            raise RuntimeError("chunk gateway batch insert returned no documents")
+        log.info(
+            "inserted %d/%d chunks via gateway HTTP batch (batch size up to %d)",
+            len(batched),
+            len(chunks),
+            size,
+        )
+        return batched
 
     inserted: list[dict[str, Any]] = []
     first_error: Exception | None = None

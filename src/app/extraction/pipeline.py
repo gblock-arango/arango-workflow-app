@@ -8,6 +8,8 @@ Human-in-the-loop breakpoint after pre-curation filter (before graph persist).
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -29,6 +31,9 @@ from app.extraction.state import ExtractionPipelineState
 log = logging.getLogger(__name__)
 
 _EVENT_BUS: dict[str, Any] | None = None
+
+_compiled_lock = threading.Lock()
+_compiled_interrupt_after_filter: Any | None = None
 
 _NEXT_STEPS: dict[str, list[str]] = {
     "prepare_arango": ["strategy_selector"],
@@ -186,6 +191,25 @@ def compile_pipeline(
     return compiled
 
 
+def reset_compiled_pipeline_cache() -> None:
+    """Drop cached compiled graph (tests only)."""
+    global _compiled_interrupt_after_filter
+    with _compiled_lock:
+        _compiled_interrupt_after_filter = None
+
+
+def get_compiled_pipeline(*, interrupt_after_filter: bool = False) -> tuple[Any, bool]:
+    """Return ``(compiled_graph, was_cached)``. Caches the interrupt-after-filter variant."""
+    global _compiled_interrupt_after_filter
+    if not interrupt_after_filter:
+        return compile_pipeline(interrupt_after_filter=False), False
+    with _compiled_lock:
+        if _compiled_interrupt_after_filter is not None:
+            return _compiled_interrupt_after_filter, True
+        _compiled_interrupt_after_filter = compile_pipeline(interrupt_after_filter=True)
+        return _compiled_interrupt_after_filter, False
+
+
 async def run_pipeline(
     *,
     run_id: str,
@@ -202,7 +226,31 @@ async def run_pipeline(
     pipeline_metadata: dict[str, Any] | None = None,
 ) -> ExtractionPipelineState:
     """Execute the extraction pipeline end-to-end."""
-    compiled = compile_pipeline(interrupt_after_filter=True)
+    from app.services.extraction_gateway_checkpoints import format_duration_ms
+    from app.services.run_progress_cache import update_run_progress_cache
+
+    compile_started = time.perf_counter()
+    compiled, pipeline_cached = get_compiled_pipeline(interrupt_after_filter=True)
+    compile_ms = int((time.perf_counter() - compile_started) * 1000)
+    compile_label = format_duration_ms(compile_ms)
+    if pipeline_cached:
+        pipeline_msg = (
+            f"LangGraph pipeline ready (cached, {compile_label}) — entering prepare_arango…"
+        )
+    else:
+        pipeline_msg = (
+            f"LangGraph pipeline compiled ({compile_label}) — entering prepare_arango…"
+        )
+    update_run_progress_cache(
+        run_id,
+        stage="langgraph_startup",
+        message=pipeline_msg,
+        progress={
+            "phase": "langgraph_startup",
+            "pipeline_cached": pipeline_cached,
+            "compile_ms": compile_ms,
+        },
+    )
 
     metadata = {
         "domain_ontology_ids": domain_ontology_ids or [],

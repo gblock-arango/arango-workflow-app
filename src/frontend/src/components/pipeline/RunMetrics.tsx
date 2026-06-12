@@ -31,6 +31,52 @@ interface RunMetricsProps {
   runId: string | null;
   runStatus?: string | null;
   agentSteps?: Map<string, StepStatus>;
+  /** Smaller metric tiles (Pipeline page Metrics tab only). */
+  compact?: boolean;
+}
+
+type MetricsSize = "default" | "compact";
+
+function metricsSizeClasses(size: MetricsSize) {
+  const compact = size === "compact";
+  return {
+    card: compact
+      ? "bg-white rounded-lg border border-gray-200 p-2 shadow-sm"
+      : "bg-white rounded-xl border border-gray-200 p-4 shadow-sm",
+    headerRow: compact ? "flex items-center gap-1 mb-1" : "flex items-center gap-1.5 mb-2",
+    label: compact
+      ? "text-[10px] font-semibold text-gray-500 uppercase tracking-wide leading-tight"
+      : "text-xs font-semibold text-gray-500 uppercase tracking-wide",
+    liveBadge: compact
+      ? "text-[8px] font-semibold uppercase tracking-wide text-emerald-600 bg-emerald-50 px-0.5 py-px rounded"
+      : "text-[9px] font-semibold uppercase tracking-wide text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded",
+    value: compact
+      ? "text-lg font-bold text-gray-900 leading-tight"
+      : "text-2xl font-bold text-gray-900",
+    sublabel: compact
+      ? "text-[10px] text-gray-400 mt-0.5 leading-snug"
+      : "text-xs text-gray-400 mt-1",
+    skeletonCard: compact
+      ? "bg-white rounded-lg border border-gray-200 p-2 shadow-sm animate-pulse"
+      : "bg-white rounded-xl border border-gray-200 p-4 shadow-sm animate-pulse",
+    skeletonLabel: compact ? "h-2 w-16 bg-gray-200 rounded mb-1.5" : "h-3 w-20 bg-gray-200 rounded mb-3",
+    skeletonValue: compact ? "h-4 w-12 bg-gray-200 rounded" : "h-7 w-16 bg-gray-200 rounded",
+    pad: compact ? "p-2" : "p-4",
+    gridGap: compact ? "gap-1.5" : "gap-3",
+    spaceY: compact ? "space-y-1.5" : "space-y-3",
+    errorBanner: compact
+      ? "text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5"
+      : "text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1",
+    agentPanel: compact
+      ? "rounded-lg border border-emerald-100 bg-emerald-50/40 px-2 py-1"
+      : "rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2",
+    agentHeader: compact
+      ? "text-[9px] font-semibold text-emerald-800 uppercase tracking-wide mb-1"
+      : "text-[10px] font-semibold text-emerald-800 uppercase tracking-wide mb-1.5",
+    agentRow: compact
+      ? "text-[10px] font-mono text-gray-700 leading-snug"
+      : "text-[11px] font-mono text-gray-700",
+  };
 }
 
 function formatDuration(ms: number | undefined): string {
@@ -72,34 +118,29 @@ interface MetricCardProps {
   value: string;
   sublabel?: string;
   live?: boolean;
+  size?: MetricsSize;
 }
 
-function MetricCard({ label, value, sublabel, live }: MetricCardProps) {
+function MetricCard({ label, value, sublabel, live, size = "default" }: MetricCardProps) {
+  const c = metricsSizeClasses(size);
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-      <div className="flex items-center gap-1.5 mb-2">
-        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-          {label}
-        </div>
-        {live && (
-          <span className="text-[9px] font-semibold uppercase tracking-wide text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded">
-            live
-          </span>
-        )}
+    <div className={c.card}>
+      <div className={c.headerRow}>
+        <div className={c.label}>{label}</div>
+        {live && <span className={c.liveBadge}>live</span>}
       </div>
-      <div className="text-2xl font-bold text-gray-900">{value}</div>
-      {sublabel && (
-        <div className="text-xs text-gray-400 mt-1">{sublabel}</div>
-      )}
+      <div className={c.value}>{value}</div>
+      {sublabel && <div className={c.sublabel}>{sublabel}</div>}
     </div>
   );
 }
 
-function SkeletonCard() {
+function SkeletonCard({ size = "default" }: { size?: MetricsSize }) {
+  const c = metricsSizeClasses(size);
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm animate-pulse">
-      <div className="h-3 w-20 bg-gray-200 rounded mb-3" />
-      <div className="h-7 w-16 bg-gray-200 rounded" />
+    <div className={c.skeletonCard}>
+      <div className={c.skeletonLabel} />
+      <div className={c.skeletonValue} />
     </div>
   );
 }
@@ -108,7 +149,10 @@ export default function RunMetrics({
   runId,
   runStatus,
   agentSteps,
+  compact = false,
 }: RunMetricsProps) {
+  const size: MetricsSize = compact ? "compact" : "default";
+  const layout = metricsSizeClasses(size);
   const [metrics, setMetrics] = useState<RunCostResponse | null>(null);
   const [initialLoading, setInitialLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -150,7 +194,7 @@ export default function RunMetrics({
 
   if (!runId) {
     return (
-      <div className="text-sm text-gray-400 p-4" data-testid="metrics-empty">
+      <div className={`text-sm text-gray-400 ${layout.pad}`} data-testid="metrics-empty">
         Select a run to view metrics.
       </div>
     );
@@ -158,7 +202,7 @@ export default function RunMetrics({
 
   if (error && !metrics) {
     return (
-      <div className="text-sm text-red-500 p-4" data-testid="metrics-error">
+      <div className={`text-sm text-red-500 ${layout.pad}`} data-testid="metrics-error">
         {error}
       </div>
     );
@@ -166,9 +210,12 @@ export default function RunMetrics({
 
   if (initialLoading || !metrics) {
     return (
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 p-4" data-testid="metrics-loading">
+      <div
+        className={`grid grid-cols-2 lg:grid-cols-5 ${layout.gridGap} ${layout.pad}`}
+        data-testid="metrics-loading"
+      >
         {Array.from({ length: 5 }).map((_, i) => (
-          <SkeletonCard key={i} />
+          <SkeletonCard key={i} size={size} />
         ))}
       </div>
     );
@@ -200,21 +247,19 @@ export default function RunMetrics({
   const recentSteps = [...stepLogs].reverse().slice(0, 6);
 
   return (
-    <div className="space-y-3 p-4" data-testid="run-metrics">
-      {error && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1">
-          Metrics poll failed — showing last values. {error}
-        </p>
-      )}
+    <div className={`${layout.spaceY} ${layout.pad}`} data-testid="run-metrics">
+      {error && <p className={layout.errorBanner}>Metrics poll failed — showing last values. {error}</p>}
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className={`grid grid-cols-2 lg:grid-cols-5 ${layout.gridGap}`}>
         <MetricCard
+          size={size}
           label="Total Duration"
           value={formatDuration(metrics.total_duration_ms)}
           sublabel={isLive ? "Elapsed (updates while running)" : undefined}
           live={isLive}
         />
         <MetricCard
+          size={size}
           label="LLM Calls"
           value={formatNumber(llmCalls)}
           sublabel={
@@ -227,17 +272,20 @@ export default function RunMetrics({
           live={isLive}
         />
         <MetricCard
+          size={size}
           label="Token Usage"
           value={formatNumber(metrics.total_tokens)}
           sublabel={`${formatNumber(metrics.prompt_tokens)} prompt + ${formatNumber(metrics.completion_tokens)} completion`}
           live={isLive}
         />
         <MetricCard
+          size={size}
           label="Estimated Cost"
           value={formatCost(metrics.estimated_cost)}
           live={isLive}
         />
         <MetricCard
+          size={size}
           label="Entity Counts"
           value={String(
             (metrics.classes_extracted ?? 0) + (metrics.properties_extracted ?? 0),
@@ -246,12 +294,14 @@ export default function RunMetrics({
           live={isLive}
         />
         <MetricCard
+          size={size}
           label="Agreement Rate"
           value={formatPercent(metrics.pass_agreement_rate)}
           sublabel="Cross-pass consistency"
           live={isLive && (metrics.pass_agreement_rate ?? 0) > 0}
         />
         <MetricCard
+          size={size}
           label="Agents Running"
           value={String(agentsRunning)}
           sublabel={
@@ -265,6 +315,7 @@ export default function RunMetrics({
         />
         {(metrics.merge_candidates_found ?? 0) > 0 && (
           <MetricCard
+            size={size}
             label="ER Merge Candidates"
             value={formatNumber(metrics.merge_candidates_found)}
             sublabel="Entity resolution matches"
@@ -272,11 +323,13 @@ export default function RunMetrics({
           />
         )}
         <MetricCard
+          size={size}
           label="Avg Confidence"
           value={confidenceLabel}
           sublabel={confidenceSublabel}
         />
         <MetricCard
+          size={size}
           label="Completeness"
           value={
             metrics.completeness_pct != null
@@ -285,14 +338,12 @@ export default function RunMetrics({
           }
           sublabel="Classes with properties"
         />
-        <BeliefRevisionTiles ibr={metrics.belief_revision ?? null} />
+        <BeliefRevisionTiles ibr={metrics.belief_revision ?? null} size={size} />
       </div>
 
       {isLive && recentSteps.length > 0 && (
-        <div className="rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2">
-          <p className="text-[10px] font-semibold text-emerald-800 uppercase tracking-wide mb-1.5">
-            Agent state changes
-          </p>
+        <div className={layout.agentPanel}>
+          <p className={layout.agentHeader}>Agent state changes</p>
           <ul className="space-y-0.5">
             {recentSteps.map((entry, i) => {
               if (!entry || typeof entry !== "object") return null;
@@ -302,7 +353,7 @@ export default function RunMetrics({
               return (
                 <li
                   key={`${step}-${String(row.started_at)}-${i}`}
-                  className="text-[11px] font-mono text-gray-700"
+                  className={layout.agentRow}
                 >
                   <span className="font-semibold">{formatStepLabel(step)}</span>
                   {": "}
@@ -329,12 +380,15 @@ export default function RunMetrics({
 
 function BeliefRevisionTiles({
   ibr,
+  size = "default",
 }: {
   ibr: BeliefRevisionSummary | null;
+  size?: MetricsSize;
 }) {
   if (ibr == null) {
     return (
       <MetricCard
+        size={size}
         label="Belief Revision"
         value="—"
         sublabel="No IBR data on this run"
@@ -345,6 +399,7 @@ function BeliefRevisionTiles({
   if (ibr.status === "skipped") {
     return (
       <MetricCard
+        size={size}
         label="Belief Revision"
         value="Skipped"
         sublabel={ibrReasonLabel(ibr.reason)}
@@ -356,11 +411,13 @@ function BeliefRevisionTiles({
   return (
     <>
       <MetricCard
+        size={size}
         label={`IBR Touchpoints${statusSuffix}`}
         value={formatNumber(ibr.touchpoints_discovered)}
         sublabel={`${ibr.llm_invocations} LLM call${ibr.llm_invocations === 1 ? "" : "s"}`}
       />
       <MetricCard
+        size={size}
         label="IBR Verdicts"
         value={formatNumber(
           Object.values(ibr.verdict_counts).reduce((a, b) => a + b, 0),
@@ -368,6 +425,7 @@ function BeliefRevisionTiles({
         sublabel={verdictsSublabel(ibr.verdict_counts)}
       />
       <MetricCard
+        size={size}
         label="IBR Auto-applied"
         value={formatNumber(ibr.auto_applied)}
         sublabel={
@@ -377,6 +435,7 @@ function BeliefRevisionTiles({
         }
       />
       <MetricCard
+        size={size}
         label="IBR Flagged for Curation"
         value={formatNumber(ibr.flagged_for_curation)}
         sublabel={

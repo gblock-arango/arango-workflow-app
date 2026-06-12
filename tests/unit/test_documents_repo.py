@@ -114,6 +114,27 @@ class TestCreateChunks:
 
         assert seen == [(2, 3, 2), (3, 3, 2)]
 
+    def test_create_chunks_uses_gateway_http_batch_when_available(self):
+        db = _db_with_collections("chunks")
+        col = MagicMock()
+        db.collection.return_value = col
+        db._client = MagicMock()
+        db.name = "OntoExtract"
+
+        gateway_rows = [
+            {"_key": f"c{i}", "_id": f"chunks/c{i}"} for i in range(50)
+        ] + [{"_key": f"c{i}", "_id": f"chunks/c{i}"} for i in range(50, 100)]
+
+        with patch(
+            "app.db.documents_repo.insert_many_via_http_batch",
+            return_value=gateway_rows,
+        ) as mock_gateway_batch:
+            result = documents_repo.create_chunks(self._chunks(100), db=db, batch_size=50)
+
+        assert len(result) == 100
+        mock_gateway_batch.assert_called_once()
+        col.insert_many.assert_not_called()
+
     def test_create_chunks_respects_settings_default_batch_size(self):
         db = _db_with_collections("chunks")
         col = MagicMock()

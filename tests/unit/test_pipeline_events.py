@@ -34,7 +34,7 @@ class TestPipelineStepEvents:
         mock_compiled.astream = lambda *a, **kw: _empty_stream()
         mock_compiled.get_state.return_value = None
 
-        with patch("app.extraction.pipeline.compile_pipeline", return_value=mock_compiled):
+        with patch("app.extraction.pipeline.get_compiled_pipeline", return_value=(mock_compiled, True)):
             await run_pipeline(
                 run_id="r1",
                 document_id="d1",
@@ -60,7 +60,7 @@ class TestPipelineStepEvents:
         mock_compiled.astream = lambda *a, **kw: fake_stream()
         mock_compiled.get_state.return_value = None
 
-        with patch("app.extraction.pipeline.compile_pipeline", return_value=mock_compiled):
+        with patch("app.extraction.pipeline.get_compiled_pipeline", return_value=(mock_compiled, True)):
             await run_pipeline(
                 run_id="r1",
                 document_id="d1",
@@ -91,7 +91,7 @@ class TestPipelineStepEvents:
         mock_compiled.astream = lambda *a, **kw: fake_stream()
         mock_compiled.get_state.return_value = None
 
-        with patch("app.extraction.pipeline.compile_pipeline", return_value=mock_compiled):
+        with patch("app.extraction.pipeline.get_compiled_pipeline", return_value=(mock_compiled, True)):
             await run_pipeline(
                 run_id="r1",
                 document_id="d1",
@@ -116,7 +116,7 @@ class TestPipelineStepEvents:
         mock_compiled.astream = lambda *a, **kw: _empty_stream()
         mock_compiled.get_state.return_value = None
 
-        with patch("app.extraction.pipeline.compile_pipeline", return_value=mock_compiled):
+        with patch("app.extraction.pipeline.get_compiled_pipeline", return_value=(mock_compiled, True)):
             await run_pipeline(
                 run_id="r1",
                 document_id="d1",
@@ -144,7 +144,7 @@ class TestPipelineErrorEvents:
         mock_compiled = MagicMock()
         mock_compiled.astream = lambda *a, **kw: failing_stream()
 
-        with patch("app.extraction.pipeline.compile_pipeline", return_value=mock_compiled):
+        with patch("app.extraction.pipeline.get_compiled_pipeline", return_value=(mock_compiled, True)):
             result = await run_pipeline(
                 run_id="r1",
                 document_id="d1",
@@ -174,7 +174,7 @@ class TestPipelineErrorEvents:
         mock_compiled = MagicMock()
         mock_compiled.astream = lambda *a, **kw: immediate_fail()
 
-        with patch("app.extraction.pipeline.compile_pipeline", return_value=mock_compiled):
+        with patch("app.extraction.pipeline.get_compiled_pipeline", return_value=(mock_compiled, True)):
             await run_pipeline(
                 run_id="r1",
                 document_id="d1",
@@ -196,7 +196,7 @@ class TestPipelineErrorEvents:
         mock_compiled = MagicMock()
         mock_compiled.astream = lambda *a, **kw: failing_stream()
 
-        with patch("app.extraction.pipeline.compile_pipeline", return_value=mock_compiled):
+        with patch("app.extraction.pipeline.get_compiled_pipeline", return_value=(mock_compiled, True)):
             result = await run_pipeline(
                 run_id="r1",
                 document_id="d1",

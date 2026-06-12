@@ -18,6 +18,8 @@ from app.extraction.pipeline import (
     _should_retry_extraction,
     build_pipeline,
     compile_pipeline,
+    get_compiled_pipeline,
+    reset_compiled_pipeline_cache,
     set_event_bus,
 )
 
@@ -114,8 +116,18 @@ class TestCompilePipeline:
         assert compiled is not None
 
     def test_compiles_with_interrupt_after_filter(self):
+        reset_compiled_pipeline_cache()
         compiled = compile_pipeline(interrupt_after_filter=True)
         assert compiled is not None
+
+    def test_get_compiled_pipeline_caches_interrupt_variant(self):
+        reset_compiled_pipeline_cache()
+        first, cached1 = get_compiled_pipeline(interrupt_after_filter=True)
+        second, cached2 = get_compiled_pipeline(interrupt_after_filter=True)
+        assert first is second
+        assert cached1 is False
+        assert cached2 is True
+        reset_compiled_pipeline_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +195,7 @@ class TestRunPipelinePaused:
         mock_compiled.astream = lambda *a, **kw: fake_stream()
         mock_compiled.get_state.return_value = mock_snapshot
 
-        with patch("app.extraction.pipeline.compile_pipeline", return_value=mock_compiled):
+        with patch("app.extraction.pipeline.get_compiled_pipeline", return_value=(mock_compiled, True)):
             from app.extraction.pipeline import run_pipeline
 
             await run_pipeline(

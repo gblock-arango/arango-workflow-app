@@ -32,7 +32,8 @@ from app.db.client import (
 from app.db.gateway_database import GatewayAPIError
 from app.db.pagination import decode_cursor, encode_cursor, paginate
 from app.db.temporal_constants import NEVER_EXPIRES
-from app.db.utils import doc_get, insert_temporal_edge_if_absent, run_aql
+from app.db.bulk_write import bulk_insert_documents, bulk_insert_temporal_edges_if_absent
+from app.db.utils import doc_get, run_aql
 from app.extraction.judges.qualitative_eval_node import run_qualitative_evaluation
 from app.extraction.pipeline import run_pipeline
 from app.llm.databricks_serving import effective_extraction_model_name
@@ -81,6 +82,8 @@ def check_extraction_cancelled(run_id: str) -> None:
     if is_extraction_cancelled(run_id):
         raise ExtractionCancelled(f"Extraction run {run_id} cancelled")
 
+PREPARATION_STAGE_WORKER_AUTH = "worker_auth"
+PREPARATION_STAGE_LANGGRAPH_STARTUP = "langgraph_startup"
 PREPARATION_STAGE_GATEWAY_HEALTH = "gateway_health"
 PREPARATION_STAGE_GATEWAY_ARANGO = "gateway_arango"
 PREPARATION_STAGE_RUN_PERSISTED = "run_persisted"
@@ -93,6 +96,8 @@ PREPARATION_STAGE_LAUNCHING = "launching_pipeline"
 PREPARATION_PIPELINE_STAGES = frozenset(
     {
         "queued",
+        PREPARATION_STAGE_WORKER_AUTH,
+        PREPARATION_STAGE_LANGGRAPH_STARTUP,
         PREPARATION_STAGE_GATEWAY_HEALTH,
         PREPARATION_STAGE_GATEWAY_ARANGO,
         PREPARATION_STAGE_RUN_PERSISTED,
@@ -298,10 +303,29 @@ def schedule_execute_run(
     event loop keeps the run alive independent of the request worker.
     """
     def _runner() -> None:
-        # M2M: pin this app's service principal bearer for all gateway calls in this thread
-        # (app.yaml arango-gateway-app-invoke CAN_USE). Eager snapshot avoids ContextVar gaps
-        # across asyncio.to_thread workers.
+        from app.services.extraction_gateway_checkpoints import format_duration_ms
+        from app.services.preparation_heartbeat import (
+            start_preparation_session,
+            stop_preparation_session,
+        )
+
+        start_preparation_session(run_id)
+        update_run_progress_cache(
+            run_id,
+            status="preparing",
+            stage="queued",
+            message="Run accepted — starting preparation worker…",
+        )
+        update_run_progress_cache(
+            run_id,
+            stage=PREPARATION_STAGE_WORKER_AUTH,
+            message="Authenticating service principal for gateway (M2M)…",
+            progress={"phase": "worker_auth"},
+        )
+        auth_started = time.perf_counter()
+        # Pin SP bearer for all gateway calls in this thread (app.yaml CAN_USE on gateway).
         sp_auth = pin_outbound_service_principal_bearer()
+        auth_ms = int((time.perf_counter() - auth_started) * 1000)
         active_db = (
             str(run_record["arango_database"])
             if run_record and run_record.get("arango_database")
@@ -310,16 +334,14 @@ def schedule_execute_run(
         if active_db:
             set_active_arango_database(active_db)
         try:
-            from app.services.preparation_heartbeat import (
-                start_preparation_session,
-                stop_preparation_session,
-            )
-
-            start_preparation_session(run_id)
             update_run_progress_cache(
                 run_id,
-                stage=PREPARATION_STAGE_GATEWAY_HEALTH,
-                message="Worker scheduled — LangGraph prepare_arango starting…",
+                stage=PREPARATION_STAGE_LANGGRAPH_STARTUP,
+                message=(
+                    f"Service principal ready ({format_duration_ms(auth_ms)}) — "
+                    "loading LangGraph extraction pipeline…"
+                ),
+                progress={"phase": "langgraph_startup", "auth_ms": auth_ms},
             )
             try:
                 asyncio.run(
@@ -1987,19 +2009,16 @@ def _materialize_to_graph(
         if not db.has_collection(col_name):
             db.create_collection(col_name, edge=(col_name in edge_collections))
 
-    cls_col = db.collection("ontology_classes")
-    dt_prop_col = db.collection("ontology_datatype_properties")
-    obj_prop_col = db.collection("ontology_object_properties")
-    rdfs_domain_col = db.collection("rdfs_domain")
-    rdfs_range_col = db.collection("rdfs_range_class")
-    extracted_col = db.collection("extracted_from")
-    subclass_col = db.collection("subclass_of")
 
     class_keys: dict[str, str] = {}  # label -> key (legacy name; really label_to_key)
     uri_to_key: dict[str, str] = {}  # full URI -> key
     fragment_to_key: dict[str, str] = {}  # URI fragment -> key (for resolver tier 2)
     class_parent_uris: list[tuple[str, str, list[dict[str, Any]]]] = []
     deferred_rels: list[dict[str, Any]] = []
+    class_docs: list[dict[str, Any]] = []
+    dt_prop_docs: list[dict[str, Any]] = []
+    rdfs_domain_edges: list[dict[str, Any]] = []
+    extracted_from_edges: list[dict[str, Any]] = []
 
     for cls in classes:
         cls_data = cls.model_dump() if hasattr(cls, "model_dump") else dict(cls)
@@ -2023,10 +2042,7 @@ def _materialize_to_graph(
             "created": now,
             "expired": NEVER_EXPIRES,
         }
-        try:
-            cls_col.insert(class_doc, overwrite=True)
-        except Exception as exc:
-            log.warning("class insert failed for %s: %s", key, exc)
+        class_docs.append(class_doc)
         class_keys[label] = key
         uri_to_key[uri] = key
         # Index by URI fragment (post ``#`` / final path segment) so the
@@ -2087,10 +2103,7 @@ def _materialize_to_graph(
                 "created": now,
                 "expired": NEVER_EXPIRES,
             }
-            try:
-                dt_prop_col.insert(prop_doc, overwrite=True)
-            except Exception as exc:
-                log.warning("datatype property insert failed for %s: %s", prop_key, exc)
+            dt_prop_docs.append(prop_doc)
 
             # Idempotent: a re-extraction of the same class from a
             # second document used to silently insert a duplicate
@@ -2098,15 +2111,15 @@ def _materialize_to_graph(
             # same logical (datatype-property, class) pair. See
             # ``app.db.utils.insert_temporal_edge_if_absent`` for the
             # full bug-history rationale.
-            with contextlib.suppress(Exception):
-                insert_temporal_edge_if_absent(
-                    db,
-                    rdfs_domain_col,
-                    from_id=f"ontology_datatype_properties/{prop_key}",
-                    to_id=f"ontology_classes/{key}",
-                    ontology_id=ontology_id,
-                    now=now,
-                )
+            rdfs_domain_edges.append(
+                {
+                    "_from": f"ontology_datatype_properties/{prop_key}",
+                    "_to": f"ontology_classes/{key}",
+                    "ontology_id": ontology_id,
+                    "created": now,
+                    "expired": NEVER_EXPIRES,
+                }
+            )
 
         # Collect relationships for deferred processing (need all class_keys first)
         for rel in relationships:
@@ -2131,38 +2144,39 @@ def _materialize_to_graph(
                 }
             )
 
-        with contextlib.suppress(Exception):
-            extracted_col.insert(
-                {
-                    "_from": f"ontology_classes/{key}",
-                    "_to": f"documents/{document_id}",
-                    "run_id": run_id,
-                    "ontology_id": ontology_id,
-                    "created": now,
-                    "expired": NEVER_EXPIRES,
-                }
-            )
+        extracted_from_edges.append(
+            {
+                "_from": f"ontology_classes/{key}",
+                "_to": f"documents/{document_id}",
+                "run_id": run_id,
+                "ontology_id": ontology_id,
+                "created": now,
+                "expired": NEVER_EXPIRES,
+            }
+        )
 
-    # subclass_of edges
+    subclass_edges: list[dict[str, Any]] = []
     for child_key, parent_uri, parent_evidence in class_parent_uris:
         parent_key = uri_to_key.get(parent_uri)
         if not parent_key:
             parent_frag = parent_uri.split("#")[-1].split("/")[-1]
             parent_key = class_keys.get(parent_frag) or class_keys.get(parent_uri)
         if parent_key and parent_key != child_key:
-            with contextlib.suppress(Exception):
-                subclass_col.insert(
-                    {
-                        "_from": f"ontology_classes/{child_key}",
-                        "_to": f"ontology_classes/{parent_key}",
-                        "ontology_id": ontology_id,
-                        "evidence": parent_evidence,
-                        "created": now,
-                        "expired": NEVER_EXPIRES,
-                    }
-                )
+            subclass_edges.append(
+                {
+                    "_from": f"ontology_classes/{child_key}",
+                    "_to": f"ontology_classes/{parent_key}",
+                    "ontology_id": ontology_id,
+                    "evidence": parent_evidence,
+                    "created": now,
+                    "expired": NEVER_EXPIRES,
+                }
+            )
         elif parent_key == child_key:
             log.warning("skipping self-referential subclass_of: %s", child_key)
+
+    obj_prop_docs: list[dict[str, Any]] = []
+    rdfs_range_edges: list[dict[str, Any]] = []
 
     # Deferred relationships → ontology_object_properties + rdfs_domain + rdfs_range_class
     #
@@ -2200,33 +2214,18 @@ def _materialize_to_graph(
             "created": now,
             "expired": NEVER_EXPIRES,
         }
-        try:
-            obj_prop_col.insert(prop_doc, overwrite=True)
-        except Exception as exc:
-            log.warning("object property insert failed for %s: %s", prop_key, exc)
+        obj_prop_docs.append(prop_doc)
 
         domain_key = rel["domain_key"]
-        # Idempotent (see datatype-property branch above for the bug
-        # rationale). The previous bare insert here was the dominant
-        # source of duplicate live rdfs_domain edges in the wild --
-        # an audit on WTW Ontology found 6 duplicated pairs, all
-        # from object-property re-extraction across documents.
-        try:
-            insert_temporal_edge_if_absent(
-                db,
-                rdfs_domain_col,
-                from_id=f"ontology_object_properties/{prop_key}",
-                to_id=f"ontology_classes/{domain_key}",
-                ontology_id=ontology_id,
-                now=now,
-            )
-        except Exception as exc:
-            log.warning(
-                "rdfs_domain insert failed for object property %s -> %s: %s",
-                prop_key,
-                domain_key,
-                exc,
-            )
+        rdfs_domain_edges.append(
+            {
+                "_from": f"ontology_object_properties/{prop_key}",
+                "_to": f"ontology_classes/{domain_key}",
+                "ontology_id": ontology_id,
+                "created": now,
+                "expired": NEVER_EXPIRES,
+            }
+        )
 
         if resolution.class_key:
             if resolution.tier == "label":
@@ -2242,29 +2241,15 @@ def _materialize_to_graph(
                     resolution.class_key,
                     resolution.target_label,
                 )
-            # Idempotent: live audit on WTW Ontology found zero
-            # duplicate pairs here (rdfs_range_class is more
-            # brittle to re-resolve, so the second extraction
-            # often skipped this insert anyway), but the fix is
-            # cheap and the contract is the same as rdfs_domain --
-            # one live edge per logical (property, range-class)
-            # pair, no exceptions.
-            try:
-                insert_temporal_edge_if_absent(
-                    db,
-                    rdfs_range_col,
-                    from_id=f"ontology_object_properties/{prop_key}",
-                    to_id=f"ontology_classes/{resolution.class_key}",
-                    ontology_id=ontology_id,
-                    now=now,
-                )
-            except Exception as exc:
-                log.warning(
-                    "rdfs_range_class insert failed for object property %s -> %s: %s",
-                    prop_key,
-                    resolution.class_key,
-                    exc,
-                )
+            rdfs_range_edges.append(
+                {
+                    "_from": f"ontology_object_properties/{prop_key}",
+                    "_to": f"ontology_classes/{resolution.class_key}",
+                    "ontology_id": ontology_id,
+                    "created": now,
+                    "expired": NEVER_EXPIRES,
+                }
+            )
         else:
             # All four resolver tiers missed. The property still exists with
             # its rdfs_domain edge and persisted target_class_{uri,label},
@@ -2280,18 +2265,7 @@ def _materialize_to_graph(
                 resolution.target_label,
             )
 
-    # has_chunk edges
-    if db.has_collection("has_chunk"):
-        has_chunk_col = db.collection("has_chunk")
-    else:
-        # ``create_collection`` is typed as ``StandardCollection | AsyncJob |
-        # BatchJob | None`` because the same handle is reused for batch / async
-        # execution; on a ``StandardDatabase`` only ``StandardCollection`` is
-        # ever returned for a successful create.
-        has_chunk_col = cast(
-            StandardCollection,
-            db.create_collection("has_chunk", edge=True),
-        )
+    has_chunk_edges: list[dict[str, Any]] = []
     if db.has_collection("chunks"):
         chunk_docs = list(
             run_aql(
@@ -2300,19 +2274,90 @@ def _materialize_to_graph(
                 bind_vars={"doc_id": document_id},
             )
         )
-        for chunk_key in chunk_docs:
-            with contextlib.suppress(Exception):
-                has_chunk_col.insert(
-                    {
-                        "_from": f"documents/{document_id}",
-                        "_to": f"chunks/{chunk_key}",
-                        "ontology_id": ontology_id,
-                        "run_id": run_id,
-                        "created": now,
-                        "expired": NEVER_EXPIRES,
-                    },
-                    overwrite=True,
-                )
+        has_chunk_edges = [
+            {
+                "_from": f"documents/{document_id}",
+                "_to": f"chunks/{chunk_key}",
+                "ontology_id": ontology_id,
+                "run_id": run_id,
+                "created": now,
+                "expired": NEVER_EXPIRES,
+            }
+            for chunk_key in chunk_docs
+        ]
+
+    def _bulk(name: str, fn: Any, *args: Any, **kwargs: Any) -> None:
+        try:
+            fn(*args, **kwargs)
+        except Exception as exc:
+            log.warning("batched %s write failed: %s", name, exc, exc_info=True)
+
+    if class_docs:
+        _bulk("ontology_classes", bulk_insert_documents, db, "ontology_classes", class_docs, overwrite_mode="replace")
+    if dt_prop_docs:
+        _bulk(
+            "ontology_datatype_properties",
+            bulk_insert_documents,
+            db,
+            "ontology_datatype_properties",
+            dt_prop_docs,
+            overwrite_mode="replace",
+        )
+    if obj_prop_docs:
+        _bulk(
+            "ontology_object_properties",
+            bulk_insert_documents,
+            db,
+            "ontology_object_properties",
+            obj_prop_docs,
+            overwrite_mode="replace",
+        )
+    if rdfs_domain_edges:
+        _bulk(
+            "rdfs_domain",
+            bulk_insert_temporal_edges_if_absent,
+            db,
+            "rdfs_domain",
+            rdfs_domain_edges,
+        )
+    if rdfs_range_edges:
+        _bulk(
+            "rdfs_range_class",
+            bulk_insert_temporal_edges_if_absent,
+            db,
+            "rdfs_range_class",
+            rdfs_range_edges,
+        )
+    if extracted_from_edges:
+        _bulk(
+            "extracted_from",
+            bulk_insert_documents,
+            db,
+            "extracted_from",
+            extracted_from_edges,
+            is_edge=True,
+            overwrite_mode="replace",
+        )
+    if subclass_edges:
+        _bulk(
+            "subclass_of",
+            bulk_insert_documents,
+            db,
+            "subclass_of",
+            subclass_edges,
+            is_edge=True,
+            overwrite_mode="replace",
+        )
+    if has_chunk_edges:
+        _bulk(
+            "has_chunk",
+            bulk_insert_documents,
+            db,
+            "has_chunk",
+            has_chunk_edges,
+            is_edge=True,
+            overwrite_mode="replace",
+        )
 
     _recompute_multi_signal_confidence(
         db,

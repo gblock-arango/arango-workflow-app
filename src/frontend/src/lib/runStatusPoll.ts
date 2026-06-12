@@ -20,6 +20,8 @@ const STAGE_ALIASES: Record<string, string> = {
 /** Min ms without a preparation update before the UI shows a stall warning. */
 export const PREPARATION_STALL_MS_BY_STAGE: Record<string, number> = {
   queued: 20_000,
+  worker_auth: 90_000,
+  langgraph_startup: 120_000,
   gateway_health: 70_000,
   gateway_arango: 70_000,
   run_persisted: 120_000,
@@ -160,6 +162,8 @@ export function isPreparationBlocked(
 
 export const PREPARATION_STAGE_ORDER = [
   "queued",
+  "worker_auth",
+  "langgraph_startup",
   "gateway_health",
   "gateway_arango",
   "run_persisted",

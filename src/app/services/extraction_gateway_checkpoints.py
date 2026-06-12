@@ -111,8 +111,14 @@ def probe_gateway_health_checkpoint(run_id: str) -> None:
     record_checkpoint_cache(
         run_id,
         stage=STAGE_GATEWAY_HEALTH,
+        message="Resolving gateway URL from registry…",
+        progress={"phase": "gateway_health", "subphase": "resolve_url"},
+    )
+    record_checkpoint_cache(
+        run_id,
+        stage=STAGE_GATEWAY_HEALTH,
         message="Probing gateway /health…",
-        progress={"phase": "gateway_health"},
+        progress={"phase": "gateway_health", "subphase": "probe"},
     )
     started = time.perf_counter()
 
