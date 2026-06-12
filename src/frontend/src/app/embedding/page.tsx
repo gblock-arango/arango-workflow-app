@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useSearchParams } from "next/navigation";
 import { api, apiFetch, LONG_RUNNING_API_TIMEOUT_MS } from "@/lib/api-client";
 import AppHeader from "@/components/layout/AppHeader";
+import PageContent from "@/components/layout/PageContent";
 import AppLink from "@/components/layout/AppLink";
 import { getUploadFileKind } from "@/lib/fileAccept";
 import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
@@ -342,11 +343,10 @@ function EmbeddingPageInner() {
       <AppHeader
         title="Parse & Chunk"
         subtitle="Select staged uploads, then parse, chunk, and embed in separate steps."
-        contentClassName="max-w-6xl"
         showLlmConnectivity
       />
 
-      <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
+      <PageContent className="py-8 space-y-6">
         <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm text-sm text-gray-600">
           Pipeline status is stored in Unity Catalog{" "}
           <code className="text-gray-500">embedding_status</code>; file bytes and artifacts live
@@ -491,7 +491,7 @@ function EmbeddingPageInner() {
             onCancel={() => void cancelStage("embed")}
           />
         </div>
-      </div>
+      </PageContent>
     </main>
   );
 }

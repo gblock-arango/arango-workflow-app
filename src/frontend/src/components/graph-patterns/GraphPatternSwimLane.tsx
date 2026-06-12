@@ -36,7 +36,7 @@ export default function GraphPatternSwimLane({
         <GraphvizPatternMiniature
           nodes={pattern.nodes}
           edges={pattern.edges}
-          className="h-[72px] w-full max-w-[168px]"
+          className="h-[72px] w-full"
         />
       </GraphPatternLaneSlot>
 

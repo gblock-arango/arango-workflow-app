@@ -223,26 +223,24 @@ function OntologyEditorPageInner() {
     <main className="min-h-screen bg-gray-50 text-gray-900">
       {/* Header / Toolbar */}
       <header className="bg-white border-b border-gray-200">
-        <div className="max-w-[1600px] mx-auto px-6 py-4 flex items-start gap-4">
-          <AppHeaderBrand />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <h1 className="text-xl font-bold tracking-tight truncate">
-                  Ontology Editor
-                  <span className="text-gray-400 font-normal ml-2">—</span>
-                  <span className="text-gray-700 font-semibold ml-2 truncate">
-                    {ontologyName}
-                  </span>
-                </h1>
-                {ontologyDescription ? (
-                  <p className="text-sm text-gray-500 truncate">
-                    {ontologyDescription}
-                  </p>
-                ) : null}
-                <WorkflowNavButtons className="mt-3" />
-              </div>
-              <div className="flex items-center gap-3 flex-shrink-0">
+        <div className="w-full px-6 py-4 flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-bold tracking-tight truncate">
+              Ontology Editor
+              <span className="text-gray-400 font-normal ml-2">—</span>
+              <span className="text-gray-700 font-semibold ml-2 truncate">
+                {ontologyName}
+              </span>
+            </h1>
+            {ontologyDescription ? (
+              <p className="text-sm text-gray-500 truncate">
+                {ontologyDescription}
+              </p>
+            ) : null}
+            <WorkflowNavButtons className="mt-3" />
+          </div>
+          <div className="flex flex-col items-end gap-3 flex-shrink-0">
+            <div className="flex items-center gap-3 flex-wrap justify-end">
             {/* Add Class */}
             <button
               disabled={!hasData && !loading}
@@ -342,8 +340,8 @@ function OntologyEditorPageInner() {
                 &larr; Library
               </Link>
             </div>
-              </div>
             </div>
+            <AppHeaderBrand />
           </div>
         </div>
       </header>
@@ -351,7 +349,7 @@ function OntologyEditorPageInner() {
       {/* Historical snapshot banner */}
       {snapshotTimestamp && (
         <div className="bg-amber-50 border-b border-amber-200" data-testid="snapshot-banner">
-          <div className="max-w-[1600px] mx-auto px-6 py-2 flex items-center justify-between">
+          <div className="w-full px-6 py-2 flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-amber-800">
               <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
               Viewing historical snapshot at{" "}
@@ -374,7 +372,7 @@ function OntologyEditorPageInner() {
       )}
 
       {/* Main content */}
-      <div className="max-w-[1600px] mx-auto flex flex-col">
+      <div className="w-full flex flex-col">
         <div className="flex flex-1 min-h-[calc(100vh-73px)]">
           {/* Graph viewport (~70%) */}
           <div className="flex-[7] flex flex-col">

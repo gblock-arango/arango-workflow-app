@@ -191,14 +191,7 @@ export default function PipelineHistorySlider({
   }
 
   if (runs.length === 0) {
-    return (
-      <div
-        className="px-4 py-2 text-xs text-gray-400"
-        data-testid="history-slider-empty"
-      >
-        No extraction runs to display.
-      </div>
-    );
+    return null;
   }
 
   const currentRun = runs[currentIndex];

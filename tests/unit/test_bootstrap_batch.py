@@ -24,6 +24,7 @@ class TestCanBootstrapFresh:
 class TestBootstrapFreshSchema:
     def test_lists_catalog_once(self) -> None:
         db = MagicMock()
+        db.name = "AutoGraph_test"
         db.collections.return_value = [{"name": "documents"}, {"name": "chunks"}]
         db.graphs.return_value = []
         db.views.return_value = []
@@ -31,13 +32,46 @@ class TestBootstrapFreshSchema:
         col.indexes.return_value = []
         db.collection.return_value = col
 
-        bootstrap_fresh_schema(db)
+        with patch("migrations.bootstrap_batch._bootstrap_parallel_workers", return_value=1):
+            bootstrap_fresh_schema(db)
 
         db.collections.assert_called_once()
         db.graphs.assert_called_once()
         db.views.assert_called_once()
         assert db.create_collection.call_count > 0
         assert db.create_graph.call_count == 2
+
+    def test_uses_http_batch_when_gateway_client_available(self) -> None:
+        db = MagicMock()
+        db.name = "AutoGraph_test"
+        db.collections.return_value = []
+        db.graphs.return_value = []
+        db.views.return_value = []
+        col = MagicMock()
+        col.indexes.return_value = []
+        db.collection.return_value = col
+
+        client = MagicMock()
+
+        def _batch_ok(requests, **kwargs):
+            return {
+                "ok": True,
+                "count": len(requests),
+                "failed": 0,
+                "results": [{"index": i, "ok": True} for i in range(len(requests))],
+            }
+
+        client.request_batch.side_effect = _batch_ok
+        db._client = client
+
+        with (
+            patch("migrations.bootstrap_batch._bootstrap_parallel_workers", return_value=4),
+            patch("migrations.bootstrap_batch._http_batch_enabled", return_value=True),
+        ):
+            bootstrap_fresh_schema(db)
+
+        assert client.request_batch.call_count >= 2
+        assert db.create_collection.call_count == 0
 
 
 class TestApplyAllBatchPath:

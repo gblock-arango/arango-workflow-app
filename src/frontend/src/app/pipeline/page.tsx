@@ -5,6 +5,7 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import AppHeader from "@/components/layout/AppHeader";
+import LlmConnectivityBadge from "@/components/layout/LlmConnectivityBadge";
 import RunList from "@/components/pipeline/RunList";
 import StartExtractionPanel from "@/components/pipeline/StartExtractionPanel";
 import PipelineDiagnosticsPanel from "@/components/pipeline/PipelineDiagnosticsPanel";
@@ -121,60 +122,17 @@ function PipelineMonitorInner() {
       <AppHeader
         title="Run Extraction"
         subtitle="Start extraction on ready documents, then monitor agent runs in real time."
-        showLlmConnectivity
         actions={
-          <>
-            <div className="relative">
-              <button
-                disabled={resetBusy}
-                onClick={() => setResetOpen((v) => !v)}
-                onBlur={() => setTimeout(() => setResetOpen(false), 150)}
-                className="text-xs px-3 py-1.5 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 disabled:opacity-40 transition-colors"
-              >
-                {resetBusy ? "Resetting\u2026" : "Reset \u25BE"}
-              </button>
-              {resetOpen && (
-                <div className="absolute right-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
-                  <button
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setResetOpen(false);
-                      handleReset(false);
-                    }}
-                    disabled={resetBusy}
-                    className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 rounded-t-lg"
-                  >
-                    Reset Ontology Data
-                    <span className="block text-gray-400 mt-0.5">
-                      Keeps documents &amp; chunks
-                    </span>
-                  </button>
-                  <button
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setResetOpen(false);
-                      handleReset(true);
-                    }}
-                    disabled={resetBusy}
-                    className="w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50 border-t border-gray-100 rounded-b-lg"
-                  >
-                    Full Reset
-                    <span className="block text-red-400 mt-0.5">Deletes everything</span>
-                  </button>
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="md:hidden text-sm px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              {sidebarOpen ? "Hide Runs" : "Show Runs"}
-            </button>
-          </>
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="md:hidden text-sm px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            {sidebarOpen ? "Hide Runs" : "Show Runs"}
+          </button>
         }
       />
 
-      <div className="max-w-[1600px] mx-auto flex flex-col md:flex-row">
+      <div className="w-full flex flex-col md:flex-row">
         {/* Sidebar: Run List */}
         <aside
           className={`${sidebarOpen ? "block" : "hidden"} md:block w-full md:w-[350px] flex-shrink-0 bg-white border-r border-gray-200 md:min-h-[calc(100vh-73px)]`}
@@ -205,6 +163,52 @@ function PipelineMonitorInner() {
             onSelectRun={handleSelectRun}
             selectedRunId={selectedRunId}
           />
+
+          <div className="px-4 py-2 flex items-center justify-end gap-3 shrink-0 border-b border-gray-100 bg-white">
+            <LlmConnectivityBadge />
+            {selectedRunId ? (
+              <div className="relative">
+                <button
+                  disabled={resetBusy}
+                  onClick={() => setResetOpen((v) => !v)}
+                  onBlur={() => setTimeout(() => setResetOpen(false), 150)}
+                  className="text-xs px-3 py-1.5 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 disabled:opacity-40 transition-colors"
+                >
+                  {resetBusy ? "Resetting\u2026" : "Reset \u25BE"}
+                </button>
+                {resetOpen && (
+                  <div className="absolute right-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
+                    <button
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setResetOpen(false);
+                        handleReset(false);
+                      }}
+                      disabled={resetBusy}
+                      className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 rounded-t-lg"
+                    >
+                      Reset Ontology Data
+                      <span className="block text-gray-400 mt-0.5">
+                        Keeps documents &amp; chunks
+                      </span>
+                    </button>
+                    <button
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setResetOpen(false);
+                        handleReset(true);
+                      }}
+                      disabled={resetBusy}
+                      className="w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50 border-t border-gray-100 rounded-b-lg"
+                    >
+                      Full Reset
+                      <span className="block text-red-400 mt-0.5">Deletes everything</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
 
           {!selectedRunId ? (
             <div className="flex-1 flex items-center justify-center p-8">
@@ -241,7 +245,8 @@ function PipelineMonitorInner() {
               )}
 
               {/* Agent DAG + diagnostics (sibling panels) */}
-              <div className="p-4 flex flex-col lg:flex-row gap-4 lg:items-stretch min-h-[75vh]">
+              <div className="p-4 flex flex-col gap-3 min-h-[75vh]">
+                <div className="flex flex-col lg:flex-row gap-4 lg:items-stretch flex-1 min-h-0">
                 <div className="flex-1 min-w-0 flex flex-col bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between shrink-0">
                     <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
@@ -279,6 +284,7 @@ function PipelineMonitorInner() {
                     lastPolledAt={runProgress.lastPolledAt}
                     pollAttempt={runProgress.pollAttempt}
                   />
+                </div>
                 </div>
               </div>
 

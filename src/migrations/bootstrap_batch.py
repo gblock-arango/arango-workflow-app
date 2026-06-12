@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from app.db.types import GatewayAPIError, StandardDatabase
@@ -186,6 +188,232 @@ def _report(
         on_progress(message, progress)
 
 
+def _bootstrap_parallel_workers() -> int:
+    raw = (os.environ.get("SCHEMA_BOOTSTRAP_PARALLEL_WORKERS") or "4").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 4
+    return max(1, min(n, 8))
+
+
+def _http_batch_enabled() -> bool:
+    raw = (os.environ.get("SCHEMA_BOOTSTRAP_HTTP_BATCH") or "true").strip().lower()
+    return raw not in ("0", "false", "no")
+
+
+def _ensure_collections_http_batch(
+    db: StandardDatabase,
+    ctx: _BootstrapContext,
+    missing: list[str],
+    *,
+    edge: bool,
+    on_progress: MigrationProgressFn | None,
+    phase: str,
+    kind: str,
+    total: int,
+) -> int | None:
+    """Create collections via one ``POST /api/arango/http/batch``; None → fall back."""
+    client = getattr(db, "_client", None)
+    if client is None or not hasattr(client, "request_batch"):
+        return None
+
+    from app.db.gateway_database import _collection_create_body, _q
+
+    requests: list[dict[str, Any]] = []
+    for name in missing:
+        body = (
+            _collection_create_body(name, edge=True)
+            if edge
+            else _collection_create_body(name)
+        )
+        requests.append(
+            {
+                "method": "POST",
+                "path": f"/_db/{_q(db.name)}/_api/collection",
+                "body": body,
+            }
+        )
+
+    workers = _bootstrap_parallel_workers()
+    _report(
+        on_progress,
+        f"Batch schema bootstrap: creating {len(missing)} {kind} collections "
+        f"(single gateway batch, {workers} parallel on server)…",
+        {
+            "phase": "schema_migration",
+            "bootstrap_phase": phase,
+            "collection_total": total,
+            "collection_new_total": len(missing),
+            "http_batch": True,
+            "parallel_workers": workers,
+        },
+    )
+
+    try:
+        batch = client.request_batch(
+            requests,
+            parallel=True,
+            max_workers=workers,
+            stop_on_error=False,
+        )
+    except Exception as exc:
+        log.warning("HTTP batch collection create failed (%s); falling back", exc)
+        return None
+
+    if batch.get("error") and not batch.get("results"):
+        log.warning("HTTP batch collection create failed: %s", batch.get("error"))
+        return None
+
+    created = 0
+    for row in batch.get("results") or []:
+        idx = row.get("index")
+        if idx is None or not isinstance(idx, int) or idx >= len(missing):
+            continue
+        name = missing[idx]
+        if row.get("ok"):
+            ctx._collection_names.add(name)
+            created += 1
+            log.info("batch bootstrap: created %s collection %s (http batch)", kind, name)
+        else:
+            log.warning(
+                "batch bootstrap: failed to create %s collection %s: %s",
+                kind,
+                name,
+                row.get("error") or row.get("body"),
+            )
+
+    still_missing = [n for n in missing if n not in ctx._collection_names]
+    if still_missing and created == 0:
+        return None
+
+    _report(
+        on_progress,
+        f"Batch schema bootstrap: {kind} collections "
+        f"({created}/{len(missing)} new via gateway batch"
+        f"{f', {len(still_missing)} remaining' if still_missing else ''})…",
+        {
+            "phase": "schema_migration",
+            "bootstrap_phase": phase,
+            "collections_created": created,
+            "collection_new_total": len(missing),
+            "http_batch": True,
+        },
+    )
+    return created
+
+
+def _ensure_collections_batch(
+    db: StandardDatabase,
+    ctx: _BootstrapContext,
+    names: tuple[str, ...],
+    *,
+    edge: bool,
+    on_progress: MigrationProgressFn | None,
+    phase: str,
+) -> int:
+    """Create missing collections; optional parallel workers (each uses thread-local gateway DB)."""
+    missing = [n for n in names if n not in ctx._collection_names]
+    total = len(names)
+    if not missing:
+        _report(
+            on_progress,
+            f"Batch schema bootstrap: {len(names)} {'edge' if edge else 'document'} collections already present",
+            {"phase": "schema_migration", "bootstrap_phase": phase, "collections_created": 0},
+        )
+        return 0
+
+    workers = _bootstrap_parallel_workers()
+    db_name = db.name
+    kind = "edge" if edge else "document"
+    created = 0
+
+    if _http_batch_enabled() and len(missing) > 1:
+        batch_created = _ensure_collections_http_batch(
+            db,
+            ctx,
+            missing,
+            edge=edge,
+            on_progress=on_progress,
+            phase=phase,
+            kind=kind,
+            total=total,
+        )
+        if batch_created is not None:
+            missing = [n for n in missing if n not in ctx._collection_names]
+            created += batch_created
+            if not missing:
+                return created
+
+    def _create_one(name: str) -> str:
+        from app.db.client import get_db, set_active_arango_database
+
+        set_active_arango_database(db_name)
+        worker_db = get_db()
+        if edge:
+            worker_db.create_collection(name, edge=True)
+        else:
+            worker_db.create_collection(name)
+        log.info("batch bootstrap: created %s collection %s", kind, name)
+        return name
+
+    if len(missing) == 1 or workers == 1:
+        for i, name in enumerate(names, start=1):
+            if name not in ctx._collection_names:
+                if edge:
+                    if ctx.ensure_edge_collection(name):
+                        created += 1
+                elif ctx.ensure_document_collection(name):
+                    created += 1
+                _report(
+                    on_progress,
+                    f"Batch schema bootstrap: created {kind} collection {name} ({i}/{total})…",
+                    {
+                        "phase": "schema_migration",
+                        "bootstrap_phase": phase,
+                        "collection": name,
+                        "collection_index": i,
+                        "collection_total": total,
+                    },
+                )
+        return created
+
+    _report(
+        on_progress,
+        f"Batch schema bootstrap: creating {len(missing)} {kind} collections "
+        f"({workers} parallel workers)…",
+        {
+            "phase": "schema_migration",
+            "bootstrap_phase": phase,
+            "collection_total": total,
+            "parallel_workers": workers,
+        },
+    )
+    done = 0
+    with ThreadPoolExecutor(max_workers=min(workers, len(missing))) as pool:
+        futures = {pool.submit(_create_one, name): name for name in missing}
+        for fut in as_completed(futures):
+            name = futures[fut]
+            fut.result()
+            ctx._collection_names.add(name)
+            created += 1
+            done += 1
+            _report(
+                on_progress,
+                f"Batch schema bootstrap: created {kind} collection {name} "
+                f"({done}/{len(missing)} new, {workers} workers)…",
+                {
+                    "phase": "schema_migration",
+                    "bootstrap_phase": phase,
+                    "collection": name,
+                    "collections_created": created,
+                    "collection_done": done,
+                    "collection_new_total": len(missing),
+                },
+            )
+    return created
+
+
 def _add_mdi_index(db: StandardDatabase, collection_name: str) -> None:
     idx_name = f"idx_{collection_name}_mdi_temporal"
     col = db.collection(collection_name)
@@ -286,10 +514,14 @@ def bootstrap_fresh_schema(
         f"Batch schema bootstrap: ensuring {len(DOCUMENT_COLLECTIONS)} document collections…",
         {"phase": "schema_migration", "bootstrap_phase": "collections"},
     )
-    created_docs = 0
-    for name in DOCUMENT_COLLECTIONS:
-        if ctx.ensure_document_collection(name):
-            created_docs += 1
+    created_docs = _ensure_collections_batch(
+        db,
+        ctx,
+        DOCUMENT_COLLECTIONS,
+        edge=False,
+        on_progress=on_progress,
+        phase="collections",
+    )
 
     _report(
         on_progress,
@@ -300,10 +532,14 @@ def bootstrap_fresh_schema(
             "collections_created": created_docs,
         },
     )
-    created_edges = 0
-    for name in EDGE_COLLECTIONS:
-        if ctx.ensure_edge_collection(name):
-            created_edges += 1
+    created_edges = _ensure_collections_batch(
+        db,
+        ctx,
+        EDGE_COLLECTIONS,
+        edge=True,
+        on_progress=on_progress,
+        phase="edge_collections",
+    )
 
     _report(
         on_progress,

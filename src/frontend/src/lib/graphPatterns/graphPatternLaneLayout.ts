@@ -3,7 +3,7 @@
  * Severity is leftmost; patterns sort high → medium → low.
  */
 export const GRAPH_PATTERN_LANE_GRID_CLASS =
-  "grid grid-cols-[80px_168px_152px_196px_72px_minmax(220px,1fr)_132px_36px] gap-x-3 items-center";
+  "grid w-full grid-cols-[minmax(64px,80px)_minmax(120px,1fr)_minmax(120px,1.2fr)_minmax(140px,1.4fr)_72px_minmax(220px,2.5fr)_minmax(100px,132px)_36px] gap-x-3 items-center";
 
 export const GRAPH_PATTERN_LANE_SLOT_LABELS = [
   "Severity",

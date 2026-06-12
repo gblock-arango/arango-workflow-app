@@ -178,3 +178,58 @@ class GatewayArangoClient:
             return bool(r.get("ok"))
         except Exception:
             return False
+
+    def request_batch(
+        self,
+        requests: list[dict[str, Any]],
+        *,
+        parallel: bool = True,
+        max_workers: int = 8,
+        stop_on_error: bool = False,
+    ) -> dict[str, Any]:
+        """POST ``/api/arango/http/batch`` — many Arango REST ops, one gateway hop."""
+        if not self._proxy_url:
+            raise RuntimeError("GatewayArangoClient not connected; call connect() first")
+        base = self._base()
+        if not base:
+            raise RuntimeError("Gateway base URL is unset")
+        batch_url = f"{base.rstrip('/')}/api/arango/http/batch"
+        envelope: dict[str, Any] = {
+            "requests": requests,
+            "parallel": parallel,
+            "max_workers": max_workers,
+            "stop_on_error": stop_on_error,
+        }
+        raw = json.dumps(envelope).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            **outbound_bearer_authorization_header(
+                config=self._auth_config,
+                override_token=self._outbound_bearer,
+            ),
+        }
+        try:
+            with self._open_url(batch_url, data=raw, headers=headers) as resp:
+                text = resp.read().decode("utf-8", errors="replace")
+                parsed: Any = json.loads(text) if text.strip() else {}
+                if not isinstance(parsed, dict):
+                    return {
+                        "ok": False,
+                        "error": "gateway batch returned non-object JSON",
+                        "results": [],
+                    }
+                return parsed
+        except error.HTTPError as exc:
+            text = exc.read().decode("utf-8", errors="replace")
+            try:
+                parsed = json.loads(text) if text.strip() else {}
+            except json.JSONDecodeError:
+                parsed = {"raw": text}
+            if isinstance(parsed, dict):
+                parsed.setdefault("ok", False)
+                return parsed
+            return {"ok": False, "error": str(exc.reason), "results": []}
+        except Exception as exc:
+            logger.error("Gateway batch HTTP error: %s", exc, exc_info=True)
+            return {"ok": False, "error": str(exc), "results": []}

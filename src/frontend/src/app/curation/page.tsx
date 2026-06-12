@@ -395,7 +395,7 @@ function CurationPageInner() {
       {/* Historical snapshot banner */}
       {snapshotTimestamp && (
         <div className="bg-amber-50 border-b border-amber-200" data-testid="snapshot-banner">
-          <div className="max-w-[1600px] mx-auto px-6 py-2 flex items-center justify-between">
+          <div className="w-full px-6 py-2 flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-amber-800">
               <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
               Viewing historical snapshot at{" "}
@@ -418,7 +418,7 @@ function CurationPageInner() {
       )}
 
       {/* Main content */}
-      <div className="max-w-[1600px] mx-auto flex flex-col">
+      <div className="w-full flex flex-col">
         <div className="flex flex-1 min-h-[calc(100vh-73px)]">
           {/* Graph viewport (~70%) */}
           <div className="flex-[7] flex flex-col">

@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import AppHeader from "@/components/layout/AppHeader";
+import PageContent from "@/components/layout/PageContent";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { QualityDashboard, OntologyScorecard } from "@/types/curation";
 import { api, ApiError } from "@/lib/api-client";
@@ -159,7 +160,7 @@ function DashboardPageInner() {
         }
       />
 
-      <div className="max-w-[1600px] mx-auto px-6 py-6 space-y-6">
+      <PageContent className="py-6 space-y-6">
         {/* ── Per-ontology quality (restored from pre-mock dashboard) ── */}
         {activeTab === "per-ontology-quality" && <PerOntologyQualityReport />}
 
@@ -274,7 +275,7 @@ function DashboardPageInner() {
             )}
           </>
         )}
-      </div>
+      </PageContent>
     </main>
   );
 }

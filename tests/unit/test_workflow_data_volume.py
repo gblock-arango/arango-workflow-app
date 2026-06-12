@@ -68,6 +68,20 @@ def test_browse_instance_data_under_instance_data_prefix():
     )
 
 
+def test_ensure_workflow_data_dirs_skips_local_mkdir_when_files_api(monkeypatch):
+    """Save/Connect must not mkdir under /Volumes on Databricks Apps (Files API mode)."""
+    monkeypatch.setenv("TEST_DEPLOYMENT_MODE", "self_managed_platform")
+    monkeypatch.setenv("UC_WORKFLOW_DATA_IO_MODE", "auto")
+
+    def _boom(*_args, **_kwargs):
+        raise PermissionError("[Errno 13] Permission denied: '/Volumes'")
+
+    monkeypatch.setattr(Path, "mkdir", _boom)
+
+    # Would raise if ensure_workflow_data_dirs tried local mkdir.
+    vol.ensure_workflow_data_dirs()
+
+
 def test_browse_ontology_excludes_manifest_and_plain_json():
     assert not vol.is_volume_file_browsable(
         ".seed_manifest.json",

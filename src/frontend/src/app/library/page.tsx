@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api, ApiError, backendUrl, type PaginatedResponse } from "@/lib/api-client";
 import AppHeader from "@/components/layout/AppHeader";
+import PageContent from "@/components/layout/PageContent";
 import { withBasePath } from "@/lib/base-path";
 import type {
   OntologyRegistryEntry,
@@ -327,7 +328,7 @@ export default function LibraryPage() {
         subtitle="Browse registered ontologies and explore class hierarchies."
       />
 
-      <div className="max-w-[1600px] mx-auto px-6 py-6">
+      <PageContent className="py-6">
         {/* Search bar (J.7) */}
         <div className="mb-4 relative">
           <input
@@ -692,7 +693,7 @@ export default function LibraryPage() {
             )}
           </div>
         )}
-      </div>
+      </PageContent>
     </main>
   );
 }

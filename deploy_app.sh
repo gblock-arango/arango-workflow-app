@@ -343,7 +343,8 @@ if [[ -f "${GRANT_PEER_APPS_SCRIPT}" ]]; then
     exit 1
   fi
 else
-  echo "NOTE: ${GRANT_PEER_APPS_SCRIPT} missing; skip peer-app CAN_USE grants." >&2
+  echo "ERROR: ${GRANT_PEER_APPS_SCRIPT} missing — Connect requires CAN_USE on arango-gateway-app." >&2
+  exit 1
 fi
 
 if [[ -z "${WAREHOUSE_ID// }" ]]; then
@@ -422,6 +423,14 @@ fi
 
 echo "Deploy complete."
 print_deployed_app_urls
+echo "Connection page prerequisites (Save / Test / Connect):"
+echo "  workflow SP: READ+WRITE VOLUME on ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_WORKFLOW_VOLUME_NAME}"
+echo "  workflow SP: SELECT+MODIFY on ${REGISTRY_TABLE}"
+echo "  workflow SP: CAN_USE on arango-gateway-app (grant_peer_app_can_use.py)"
+echo "  gateway SP: READ VOLUME on ${REGISTRY_CATALOG}.${REGISTRY_SCHEMA}.${UC_WORKFLOW_VOLUME_NAME}"
+echo "  gateway SP: SELECT+MODIFY on ${REGISTRY_TABLE}"
+echo "  Profiles JSON: ${UC_WORKFLOW_VOLUME_NAME}/workflow-data/settings/arango_connection_profiles.json"
+echo "  Passwords live in profiles JSON (UC volume), not in the registry table."
 echo "Peer URL resolution (after gateway + mcp-arango-agent are deployed):"
 echo "  Gateway: UC ${ARANGO_GATEWAY_REGISTRY_TABLE} unless ARANGO_GATEWAY_BASE_URL is set on the app."
 echo "  MCP agent: UC ${ARANGO_AGENT_REGISTRY_TABLE} unless ARANGO_AGENT_BASE_URL is set."

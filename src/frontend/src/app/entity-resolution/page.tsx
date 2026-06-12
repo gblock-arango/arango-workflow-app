@@ -238,7 +238,7 @@ export default function EntityResolutionPage() {
       />
 
       {/* Main content */}
-      <div className="max-w-[1600px] mx-auto flex min-h-[calc(100vh-73px)]">
+      <div className="w-full flex min-h-[calc(100vh-73px)]">
         {/* Left panel: candidates / clusters / cross-tier list */}
         <aside className="w-[360px] border-r border-gray-200 bg-white overflow-y-auto">
           {activeTab === "candidates" && (

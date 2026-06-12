@@ -161,7 +161,10 @@ def _require_reset_enabled() -> None:
     if not settings.allow_system_reset:
         raise HTTPException(
             status_code=403,
-            detail="System reset disabled. Set ALLOW_SYSTEM_RESET=true in .env to enable.",
+            detail=(
+                "System reset disabled. Set ALLOW_SYSTEM_RESET=true in app.yaml "
+                "(Databricks Apps) or .env (local dev) and redeploy."
+            ),
         )
 
 

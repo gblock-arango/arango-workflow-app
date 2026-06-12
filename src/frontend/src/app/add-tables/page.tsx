@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api-client";
 import AppHeader from "@/components/layout/AppHeader";
+import PageContent from "@/components/layout/PageContent";
 import {
   entityKey,
   loadUcEntitySelections,
@@ -253,10 +254,9 @@ export default function AddTablesPage() {
       <AppHeader
         title="Add Tables"
         subtitle="Browse Unity Catalog tables, edit annotations, and select columns for extraction context."
-        contentClassName="max-w-5xl"
       />
 
-      <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
+      <PageContent className="py-8 space-y-6">
         <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900 space-y-2">
           {savedSelections.length > 0 ? (
             <p>
@@ -515,7 +515,7 @@ export default function AddTablesPage() {
             </div>
           ) : null}
         </section>
-      </div>
+      </PageContent>
     </main>
   );
 }

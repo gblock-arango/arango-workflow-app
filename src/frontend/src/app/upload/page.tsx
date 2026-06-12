@@ -13,6 +13,7 @@ import { withBasePath } from "@/lib/base-path";
 import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
 import { formatOperationError } from "@/lib/upload-errors";
 import AppHeader from "@/components/layout/AppHeader";
+import PageContent from "@/components/layout/PageContent";
 import AppLink from "@/components/layout/AppLink";
 import OperationErrorPanel from "@/components/upload/OperationErrorPanel";
 import {
@@ -553,10 +554,9 @@ export default function UploadPage() {
       <AppHeader
         title="Upload Documents"
         subtitle="Step 1: stage documents on Unity Catalog. Continue with Parse & Chunk, then run extraction on the Pipeline page."
-        contentClassName="max-w-4xl"
       />
 
-      <div className="max-w-4xl mx-auto px-6 py-10 space-y-8">
+      <PageContent className="py-10 space-y-8">
 
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <h2 className="text-sm font-semibold text-gray-700 mb-1">
@@ -933,7 +933,7 @@ export default function UploadPage() {
               </div>
             )}
         </section>
-      </div>
+      </PageContent>
     </main>
   );
 }

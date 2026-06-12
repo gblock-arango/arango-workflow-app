@@ -4,11 +4,9 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
 import AppLink from "@/components/layout/AppLink";
-import WorkflowNavButtons from "@/components/layout/WorkflowNavButtons";
-import { ConnectionStatusWidget } from "@/components/connection/ConnectionStatusWidget";
+import { AppHeaderBrand } from "@/components/layout/AppHeader";
 import { withBasePath } from "@/lib/base-path";
 import { useActivePipelineAgents } from "@/lib/useActivePipelineAgents";
-import { useArangoConnectionStatus } from "@/lib/useArangoConnectionStatus";
 import { rememberWorkflowLane } from "@/lib/workflow-nav";
 import { scheduleAfterInitialPaint } from "@/lib/scheduleAfterInitialPaint";
 
@@ -19,8 +17,6 @@ interface LibraryStats {
 const img = (path: string) => withBasePath(path);
 
 export default function Home() {
-  const { health, healthDetail, profileName, connectionMeta } =
-    useArangoConnectionStatus();
   const [ontologyCount, setOntologyCount] = useState<number | null>(null);
   const [statsError, setStatsError] = useState(false);
 
@@ -43,8 +39,8 @@ export default function Home() {
     <main className="min-h-screen bg-gradient-to-b from-slate-100 via-gray-50 to-gray-50 text-gray-900">
       {/* Hero */}
       <header className="border-b border-gray-200/80 bg-white/90 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">
-          <div className="flex-shrink-0 flex flex-col items-center lg:items-start gap-4">
+        <div className="w-full px-6 py-8 flex flex-col gap-6 lg:flex-row lg:items-center lg:gap-8">
+          <div className="flex-shrink-0 flex justify-center lg:justify-start">
             <Image
               src={img("/images/arangoai-mascot.png")}
               alt="ArangoAI mascot"
@@ -53,31 +49,25 @@ export default function Home() {
               className="h-28 w-auto sm:h-32 object-contain drop-shadow-md"
               priority
             />
-            <ConnectionStatusWidget
-              health={health}
-              healthDetail={healthDetail}
-              profileName={profileName}
-              connectionMeta={connectionMeta}
-              linkToConnection
-              align="left"
-            />
           </div>
 
           <div className="flex-1 text-center lg:text-left min-w-0">
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900">
               Arango Graph-Accelerated Agents
             </h1>
-            <p className="mt-3 text-base sm:text-lg text-gray-600 leading-relaxed max-w-3xl">
-              RBAC-compliant graph knowledge directly from your tables for
-              Genie-driven Q&amp;A, GraphRAG, GraphML, anomaly detection, and
-              adaptive CDC.
+            <p className="mt-3 text-base sm:text-lg text-gray-600 leading-relaxed">
+              Agentic tools using RBAC-compliant graph knowledge and graph-aware
+              reasoning directly from your tables.
             </p>
-            <WorkflowNavButtons className="mt-4 justify-center lg:justify-start" />
+          </div>
+
+          <div className="flex-shrink-0 flex justify-center lg:justify-end">
+            <AppHeaderBrand />
           </div>
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-6 pt-6 pb-10 space-y-6">
+      <div className="w-full px-6 pt-6 pb-10 space-y-6">
         {/* Status / medallion row */}
         <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
           <StatCard title="GRAPHS">

@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import AppHeader from "@/components/layout/AppHeader";
+import PageContent from "@/components/layout/PageContent";
 import GraphPatternLaneHeader from "@/components/graph-patterns/GraphPatternLaneHeader";
 import GraphPatternSwimLane from "@/components/graph-patterns/GraphPatternSwimLane";
 import type { GraphPatternMenuAction } from "@/components/graph-patterns/GraphPatternActionsMenu";
@@ -79,8 +80,8 @@ export default function GraphPatternsPage() {
         subtitle="Observed graphlets from the knowledge graph and Medallion Gold CDC (nodes + edges)"
       />
 
-      <div className="max-w-[1600px] mx-auto px-6 py-8">
-        <p className="mb-6 text-sm text-gray-600 max-w-3xl">
+      <PageContent>
+        <p className="mb-6 text-sm text-gray-600">
           Each swim lane is a <strong className="font-medium text-gray-800">GraphPattern</strong>:
           a recurring subgraph witnessed in ArangoDB and/or Databricks Gold tables. Use the menu to
           save, delete, or apply a pattern to Adaptive CDC (spawns a Databricks job).
@@ -117,7 +118,7 @@ export default function GraphPatternsPage() {
             Reload demo patterns
           </button>
         ) : null}
-      </div>
+      </PageContent>
 
       <div
         className="fixed bottom-6 right-6 z-30 flex flex-col gap-2 max-w-sm"

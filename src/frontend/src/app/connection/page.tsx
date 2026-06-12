@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import AppHeader from "@/components/layout/AppHeader";
+import PageContent from "@/components/layout/PageContent";
 import { api, ApiError, apiUploadWithProgress } from "@/lib/api-client";
 import { useArangoConnectionStatus } from "@/lib/useArangoConnectionStatus";
 
@@ -17,7 +18,7 @@ interface ConnectionProfile {
   password_set: boolean;
   server_endpoint: string;
   protocol: string;
-  port: number;
+  port: number | null;
   kubeconfig_stored: boolean;
   kubeconfig_filename: string;
   saved: boolean;
@@ -29,12 +30,13 @@ interface ProfileTemplate {
   cluster_name: string;
   server_endpoint: string;
   protocol: string;
-  port: number;
+  port: number | null;
 }
 
 interface ProfilesResponse {
   active_profile: string;
   profile_keys: string[];
+  saved_profile_keys?: string[];
   profiles: Record<string, ConnectionProfile>;
   templates: Record<Environment, ProfileTemplate>;
 }
@@ -53,7 +55,7 @@ const ENV_OPTIONS: { value: Environment; label: string; hint: string }[] = [
   {
     value: "local",
     label: "Local",
-    hint: "Minikube on your laptop (tunnel host or localhost port-forward)",
+    hint: "Minikube on your laptop — use a Cloudflare tunnel hostname reachable from Databricks (not 127.0.0.1).",
   },
 ];
 
@@ -69,6 +71,7 @@ function templateToForm(template: ProfileTemplate): {
   password: string;
   server_endpoint: string;
   cluster_name: string;
+  port: string;
 } {
   return {
     display_name: template.display_name,
@@ -77,6 +80,7 @@ function templateToForm(template: ProfileTemplate): {
     password: "",
     server_endpoint: template.server_endpoint || "",
     cluster_name: template.cluster_name || "",
+    port: template.port != null ? String(template.port) : "",
   };
 }
 
@@ -111,6 +115,7 @@ function ConnectionPageInner() {
     password: "",
     server_endpoint: "",
     cluster_name: "aws-arango",
+    port: "",
   });
   const [passwordDirty, setPasswordDirty] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -135,6 +140,7 @@ function ConnectionPageInner() {
       password: "",
       server_endpoint: profile.server_endpoint || "",
       cluster_name: profile.cluster_name || "",
+      port: profile.port != null ? String(profile.port) : "",
     });
     setPasswordDirty(false);
     setTestResult(null);
@@ -152,13 +158,14 @@ function ConnectionPageInner() {
           environment,
           username: "root",
           password: "",
-          server_endpoint: environment === "local" ? "127.0.0.1" : "",
+          server_endpoint: "",
           cluster_name:
             environment === "local"
               ? "local-minikube-dev"
               : environment === "gcs"
                 ? "gcs-arango"
                 : "aws-arango",
+          port: "",
         });
       }
       setSelectedKey(NEW_DRAFT_KEY);
@@ -231,14 +238,52 @@ function ConnectionPageInner() {
   const envHint = ENV_OPTIONS.find((e) => e.value === form.environment)?.hint;
   const isNewDraft = selectedKey === NEW_DRAFT_KEY;
 
-  const buildSavePayload = () => ({
-    display_name: form.display_name.trim() || "Connection",
-    environment: form.environment,
-    username: form.username.trim() || "root",
-    password: passwordDirty ? form.password : PASSWORD_UNCHANGED,
-    server_endpoint: form.server_endpoint.trim(),
-    cluster_name: form.cluster_name.trim(),
-  });
+  const requireServerEndpoint = (): string | null => {
+    const endpoint = form.server_endpoint.trim();
+    if (!endpoint) {
+      setError(
+        "Server endpoint is required — enter the Arango hostname (e.g. gg8dcifd.rnd.pilot.arango.ai).",
+      );
+      return null;
+    }
+    return endpoint;
+  };
+
+  const requirePassword = (): boolean => {
+    if (form.password.trim()) {
+      return true;
+    }
+    if (currentProfile?.password_set) {
+      return true;
+    }
+    setError("Password is required — enter the Arango root password.");
+    return false;
+  };
+
+  const resolvePasswordForSave = (): string => {
+    const typed = form.password.trim();
+    if (typed) {
+      return typed;
+    }
+    if (currentProfile?.password_set) {
+      return PASSWORD_UNCHANGED;
+    }
+    return "";
+  };
+
+  const buildSavePayload = () => {
+    const portTrim = form.port.trim();
+    const portNum = portTrim ? Number(portTrim) : null;
+    return {
+      display_name: form.display_name.trim() || "Connection",
+      environment: form.environment,
+      username: form.username.trim() || "root",
+      password: resolvePasswordForSave(),
+      server_endpoint: form.server_endpoint.trim(),
+      cluster_name: form.cluster_name.trim(),
+      port: portNum != null && !Number.isNaN(portNum) ? portNum : null,
+    };
+  };
 
   const ensureProfileKey = async (): Promise<string> => {
     if (!isNewDraft && selectedKey) {
@@ -269,6 +314,9 @@ function ConnectionPageInner() {
   };
 
   const handleSave = async () => {
+    if (!requireServerEndpoint() || !requirePassword()) {
+      return;
+    }
     setSaving(true);
     setError(null);
     setMessage(null);
@@ -278,18 +326,15 @@ function ConnectionPageInner() {
         `/api/v1/connection/profiles/${key}`,
         buildSavePayload(),
       );
-      setProfiles((prev) => ({ ...prev, [key]: res.profile }));
-      setDraftProfiles((prev) => {
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-      if (res.profile.saved && !profileKeys.includes(key)) {
-        setProfileKeys((prev) => [...prev, key]);
-      }
       setPasswordDirty(false);
-      setForm((f) => ({ ...f, password: "" }));
-      setMessage("Saved to UC volume.");
+      if (!res.profile.saved) {
+        setError(
+          "Save did not complete — enter both Server endpoint and Password, then Save again.",
+        );
+        return;
+      }
+      await loadProfiles(key);
+      setMessage(`Saved ${res.profile.display_name || key} to UC volume.`);
       refresh({ force: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.body.message : "Save failed.");
@@ -299,11 +344,21 @@ function ConnectionPageInner() {
   };
 
   const handleTest = async () => {
+    if (!requireServerEndpoint() || !requirePassword()) {
+      return;
+    }
     setTesting(true);
     setError(null);
     setTestResult(null);
     try {
       const key = await ensureProfileKey();
+      const saveRes = await api.put<{ profile: ConnectionProfile }>(
+        `/api/v1/connection/profiles/${key}`,
+        buildSavePayload(),
+      );
+      setProfiles((prev) => ({ ...prev, [key]: saveRes.profile }));
+      applyProfileToForm({ ...saveRes.profile, profile_key: key });
+      setPasswordDirty(false);
       const res = await api.post<{
         ok: boolean;
         probe?: { latency_ms?: number; error?: string; response_preview?: string };
@@ -326,6 +381,9 @@ function ConnectionPageInner() {
   };
 
   const handleConnect = async () => {
+    if (!requireServerEndpoint() || !requirePassword()) {
+      return;
+    }
     setConnecting(true);
     setError(null);
     setMessage(null);
@@ -384,6 +442,7 @@ function ConnectionPageInner() {
         key,
         label: profiles[key]?.display_name || key,
         isActive: activeProfile === key,
+        complete: profiles[key]?.saved ?? false,
       })),
     [profileKeys, profiles, activeProfile],
   );
@@ -398,7 +457,11 @@ function ConnectionPageInner() {
       }));
     return [
       { key: NEW_DRAFT_KEY, label: "New connection…", isActive: false },
-      ...savedConnectionOptions,
+      ...savedConnectionOptions.map((opt) => ({
+        key: opt.key,
+        label: opt.complete ? opt.label : `${opt.label} (incomplete)`,
+        isActive: opt.isActive,
+      })),
       ...drafts,
     ];
   }, [profileKeys, draftProfiles, savedConnectionOptions]);
@@ -412,7 +475,7 @@ function ConnectionPageInner() {
         subtitle="Configure username, password, server endpoint, and optional KubeConfig. Save to UC, then Connect to activate for arango-gateway-app."
       />
 
-      <div className="max-w-3xl mx-auto px-6 py-8 space-y-6">
+      <PageContent className="py-8 space-y-6">
         {loading ? (
           <p className="text-sm text-gray-500 animate-pulse">Loading profiles…</p>
         ) : (
@@ -436,6 +499,7 @@ function ConnectionPageInner() {
                       {savedConnectionOptions.map((opt) => (
                         <option key={opt.key} value={opt.key}>
                           {opt.label}
+                          {!opt.complete ? " (incomplete)" : ""}
                           {opt.isActive ? " (active)" : ""}
                         </option>
                       ))}
@@ -509,17 +573,6 @@ function ConnectionPageInner() {
 
             {envHint ? <p className="text-sm text-gray-500">{envHint}</p> : null}
 
-            {form.environment === "local" ? (
-              <a
-                href={MINIKUBE_INSTALLER_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-100 hover:border-indigo-300 transition-colors"
-              >
-                Download Minikube Arango Installer for Local Deploys
-              </a>
-            ) : null}
-
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Display name">
                 <input
@@ -550,6 +603,23 @@ function ConnectionPageInner() {
                   ))}
                 </select>
               </Field>
+              {form.environment === "local" ? (
+                <div className="sm:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3 space-y-2">
+                  <p className="text-sm text-indigo-900">
+                    Local Minikube: install on your laptop, start a Cloudflare tunnel, then paste
+                    the tunnel hostname as <strong>Server endpoint</strong> (reachable from
+                    Databricks).
+                  </p>
+                  <a
+                    href={MINIKUBE_INSTALLER_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center rounded-lg border border-indigo-200 bg-white px-4 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-100 hover:border-indigo-300 transition-colors"
+                  >
+                    Download Minikube Arango Installer for Local Deploys
+                  </a>
+                </div>
+              ) : null}
               <Field label="Username">
                 <input
                   type="text"
@@ -578,20 +648,39 @@ function ConnectionPageInner() {
               </Field>
             </div>
 
-            <Field label="Server endpoint">
-              <input
-                type="text"
-                value={form.server_endpoint}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, server_endpoint: e.target.value }))
-                }
-                placeholder="gg8dcifd.rnd.pilot.arango.ai"
-                className={inputClass}
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Hostname or full URL. HTTPS on port 443 is assumed when omitted.
-              </p>
-            </Field>
+            <div className="grid gap-4 sm:grid-cols-[1fr_120px]">
+              <Field label="Server endpoint">
+                <input
+                  type="text"
+                  value={form.server_endpoint}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, server_endpoint: e.target.value }))
+                  }
+                  placeholder={
+                    form.environment === "local"
+                      ? "your-tunnel.trycloudflare.com"
+                      : "gg8dcifd.rnd.pilot.arango.ai"
+                  }
+                  className={inputClass}
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Hostname or URL without port. HTTPS assumes port 443 when Port is empty.
+                </p>
+              </Field>
+              <Field label="Port">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={form.port}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, port: e.target.value.replace(/[^\d]/g, "") }))
+                  }
+                  placeholder="443"
+                  className={inputClass}
+                />
+                <p className="mt-1 text-xs text-gray-500">Optional</p>
+              </Field>
+            </div>
 
             <Field label="Cluster name">
               <input
@@ -662,7 +751,7 @@ function ConnectionPageInner() {
           </section>
           </>
         )}
-      </div>
+      </PageContent>
     </main>
   );
 }

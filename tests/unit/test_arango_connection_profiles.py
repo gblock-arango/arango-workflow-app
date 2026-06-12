@@ -24,6 +24,29 @@ def test_parse_server_endpoint_with_port():
     assert port == 18529
 
 
+def test_resolve_connection_target_uses_profile_port():
+    host, protocol, port = profiles.resolve_connection_target(
+        "tunnel.example.com",
+        profile={"port": 18529, "protocol": "https"},
+    )
+    assert host == "tunnel.example.com"
+    assert protocol == "https"
+    assert port == 18529
+
+
+def test_resolve_connection_target_url_port_wins():
+    _host, _protocol, port = profiles.resolve_connection_target(
+        "https://tunnel.example.com:8443",
+        profile={"port": 18529},
+    )
+    assert port == 8443
+
+
+def test_resolve_connection_target_defaults_https():
+    _host, _protocol, port = profiles.resolve_connection_target("host.example.com", profile={})
+    assert port == 443
+
+
 def test_save_and_load_profiles_masks_password(tmp_path):
     stored: dict[str, bytes] = {}
 
@@ -63,6 +86,97 @@ def test_save_and_load_profiles_masks_password(tmp_path):
 
     raw = json.loads(stored[profiles._PROFILES_REL].decode("utf-8"))
     assert raw["profiles"][key]["password"] == "secret123"
+
+
+def test_save_profile_requires_server_endpoint():
+    stored: dict[str, bytes] = {}
+
+    def fake_write(*, relative_path: str, content: bytes) -> str:
+        stored[relative_path] = content
+        return relative_path
+
+    def fake_read(relative_path: str) -> bytes:
+        if relative_path not in stored:
+            raise FileNotFoundError(relative_path)
+        return stored[relative_path]
+
+    with (
+        patch.object(profiles.vol, "write_bytes", side_effect=fake_write),
+        patch.object(profiles.vol, "read_bytes", side_effect=fake_read),
+        patch.object(profiles.vol, "ensure_workflow_data_dirs"),
+    ):
+        created = profiles.create_connection_profile(display_name="AWS Prod", environment="aws")
+        key = created["profile_key"]
+        with pytest.raises(ValueError, match="server_endpoint is required"):
+            profiles.save_connection_profile(
+                key,
+                {"username": "root", "password": "secret123", "server_endpoint": ""},
+            )
+
+
+def test_effective_server_endpoint_legacy_host_field():
+    profile = {"host": "legacy.example", "password": "x"}
+    assert profiles._effective_server_endpoint(profile, {}) == "legacy.example"
+    assert (
+        profiles._effective_server_endpoint(profile, {"server_endpoint": "override.example"})
+        == "override.example"
+    )
+
+
+def test_save_profile_requires_password():
+    stored: dict[str, bytes] = {}
+
+    def fake_write(*, relative_path: str, content: bytes) -> str:
+        stored[relative_path] = content
+        return relative_path
+
+    def fake_read(relative_path: str) -> bytes:
+        if relative_path not in stored:
+            raise FileNotFoundError(relative_path)
+        return stored[relative_path]
+
+    with (
+        patch.object(profiles.vol, "write_bytes", side_effect=fake_write),
+        patch.object(profiles.vol, "read_bytes", side_effect=fake_read),
+        patch.object(profiles.vol, "ensure_workflow_data_dirs"),
+    ):
+        created = profiles.create_connection_profile(display_name="AWS Prod", environment="aws")
+        key = created["profile_key"]
+        with pytest.raises(ValueError, match="password is required"):
+            profiles.save_connection_profile(
+                key,
+                {
+                    "username": "root",
+                    "password": "",
+                    "server_endpoint": "host.example",
+                },
+            )
+
+
+def test_load_includes_incomplete_profiles():
+    stored = {
+        profiles._PROFILES_REL: json.dumps(
+            {
+                "version": 2,
+                "profiles": {
+                    "aws-draft": {
+                        "display_name": "AWS Draft",
+                        "environment": "aws",
+                        "username": "root",
+                        "password": "",
+                        "server_endpoint": "host.example",
+                    }
+                },
+            }
+        ).encode("utf-8")
+    }
+
+    with patch.object(profiles.vol, "read_bytes", return_value=stored[profiles._PROFILES_REL]):
+        loaded = profiles.load_connection_profiles()
+
+    assert "aws-draft" in loaded["profiles"]
+    assert loaded["profiles"]["aws-draft"]["saved"] is False
+    assert loaded["saved_profile_keys"] == []
 
 
 def test_save_profile_keeps_password_when_placeholder():
@@ -139,6 +253,7 @@ def test_upsert_registry_for_profile(mock_read, mock_write, _ensure, mock_cfg, m
 
     assert result["ok"] is True
     assert result["registry"]["ip_address"] == "gg8dcifd.rnd.pilot.arango.ai"
+    assert result["registry"]["port"] == 443
     assert result["active_profile_display_name"] == "AWS Prod"
     assert mock_sql.call_count == 2
 

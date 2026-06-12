@@ -49,9 +49,9 @@ _TEMPLATE_DEFAULTS: dict[str, dict[str, Any]] = {
         "cluster_name": "local-minikube-dev",
         "username": "root",
         "password": "",
-        "server_endpoint": "127.0.0.1",
+        "server_endpoint": "",
         "protocol": "https",
-        "port": 18529,
+        "port": None,
     },
 }
 
@@ -80,6 +80,78 @@ def parse_server_endpoint(endpoint: str) -> tuple[str, str, int]:
     if port < 1 or port > 65535:
         raise ValueError("port must be 1-65535")
     return host, protocol, int(port)
+
+
+def parse_stored_port(value: Any) -> int | None:
+    """Parse optional profile/registry port (empty → ``None``)."""
+    if value is None or value == "":
+        return None
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    if port < 1 or port > 65535:
+        return None
+    return port
+
+
+def endpoint_has_explicit_port(server_endpoint: str) -> bool:
+    raw = (server_endpoint or "").strip()
+    if not raw:
+        return False
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    return urlsplit(raw).port is not None
+
+
+def _effective_server_endpoint(
+    profile: dict[str, Any],
+    overrides: dict[str, Any] | None = None,
+) -> str:
+    """Resolve hostname from test/save overrides or stored profile (legacy field names included)."""
+    ov = overrides or {}
+    ov_val = str(ov.get("server_endpoint") or "").strip()
+    if ov_val:
+        return ov_val
+    for key in ("server_endpoint", "endpoint", "host", "ip_address"):
+        val = str(profile.get(key) or "").strip()
+        if val:
+            return val
+    return ""
+
+
+def resolve_connection_target(
+    server_endpoint: str,
+    *,
+    profile: dict[str, Any] | None = None,
+    port: int | None = None,
+) -> tuple[str, str, int]:
+    """
+    Resolve ``(host, protocol, port)`` for probes and ``arango_connection_registry``.
+
+    Precedence when the endpoint URL has no ``:port``:
+    1. Explicit ``port`` argument (form / test payload)
+    2. ``port`` stored on the profile
+    3. Default for scheme (443 https, 80 http)
+    """
+    endpoint = (server_endpoint or "").strip()
+    if not endpoint:
+        raise ValueError("server_endpoint is required")
+
+    host, parsed_protocol, parsed_port = parse_server_endpoint(endpoint)
+    protocol = str(parsed_protocol).lower()
+
+    if endpoint_has_explicit_port(endpoint):
+        return host, protocol, parsed_port
+
+    explicit = parse_stored_port(port)
+    if explicit is None and profile is not None:
+        explicit = parse_stored_port(profile.get("port"))
+
+    if explicit is not None:
+        return host, protocol, explicit
+
+    return host, protocol, parsed_port
 
 
 def validate_profile_key(profile_key: str) -> str:
@@ -123,9 +195,18 @@ def _load_doc() -> dict[str, Any]:
         return _normalize_doc(data if isinstance(data, dict) else {})
     except FileNotFoundError:
         return {"version": 2, "active_profile": "", "profiles": {}}
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
-        log.warning("Could not read Arango connection profiles: %s", exc)
-        return {"version": 2, "active_profile": "", "profiles": {}}
+    except json.JSONDecodeError as exc:
+        log.error("Invalid Arango connection profiles JSON: %s", exc)
+        raise ValueError(
+            "Connection profiles file is invalid JSON on the UC volume — "
+            "check arango_workflow_volume/workflow-data/settings/arango_connection_profiles.json"
+        ) from exc
+    except OSError as exc:
+        log.error("Cannot read Arango connection profiles from UC volume: %s", exc)
+        raise ValueError(f"Cannot read connection profiles from UC volume: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        log.error("Cannot decode Arango connection profiles: %s", exc)
+        raise ValueError("Connection profiles file is not valid UTF-8 on the UC volume") from exc
 
 
 def _normalize_doc(doc: dict[str, Any]) -> dict[str, Any]:
@@ -196,7 +277,7 @@ def _public_profile(profile_key: str, profile: dict[str, Any]) -> dict[str, Any]
         "password_set": bool(str(profile.get("password") or "")),
         "server_endpoint": str(profile.get("server_endpoint") or ""),
         "protocol": str(profile.get("protocol") or "https"),
-        "port": int(profile.get("port") or 443),
+        "port": parse_stored_port(profile.get("port")),
         "kubeconfig_stored": bool(profile.get("kubeconfig_stored")),
         "kubeconfig_filename": str(profile.get("kubeconfig_filename") or ""),
         "saved": _is_profile_saved(profile),
@@ -204,13 +285,13 @@ def _public_profile(profile_key: str, profile: dict[str, Any]) -> dict[str, Any]
 
 
 def load_connection_profiles() -> dict[str, Any]:
-    """Return saved profiles for the Connection UI (passwords never returned)."""
+    """Return all profiles on the UC volume for the Connection UI (passwords never returned)."""
     doc = _load_doc()
     profiles_raw = doc.get("profiles") if isinstance(doc.get("profiles"), dict) else {}
-    saved_profiles = {
+    all_profiles = {
         key: _public_profile(key, profile)
         for key, profile in sorted(profiles_raw.items())
-        if isinstance(profile, dict) and _is_profile_saved(profile)
+        if isinstance(profile, dict)
     }
     active = str(doc.get("active_profile") or "").strip().lower()
     if active not in profiles_raw:
@@ -218,8 +299,9 @@ def load_connection_profiles() -> dict[str, Any]:
     return {
         "version": int(doc.get("version") or 2),
         "active_profile": active,
-        "profiles": saved_profiles,
-        "profile_keys": list(saved_profiles.keys()),
+        "profiles": all_profiles,
+        "profile_keys": list(all_profiles.keys()),
+        "saved_profile_keys": [key for key, profile in all_profiles.items() if profile.get("saved")],
         "templates": {
             env: {
                 "environment": env,
@@ -361,9 +443,21 @@ def save_connection_profile(profile_key: str, payload: dict[str, Any]) -> dict[s
     else:
         password = str(current.get("password") or "")
 
+    if not password:
+        raise ValueError(
+            "password is required — enter the Arango root password on the Connection page"
+        )
+
     server_endpoint = str(
         payload.get("server_endpoint", current.get("server_endpoint", "")) or ""
     ).strip()
+    if not server_endpoint:
+        server_endpoint = _effective_server_endpoint(current, None)
+    if not server_endpoint:
+        raise ValueError(
+            "server_endpoint is required — enter the Arango hostname "
+            "(e.g. gg8dcifd.rnd.pilot.arango.ai) in Server endpoint"
+        )
     cluster_name = str(
         payload.get("cluster_name", current.get("cluster_name", key)) or key
     ).strip()
@@ -372,19 +466,19 @@ def save_connection_profile(profile_key: str, payload: dict[str, Any]) -> dict[s
     if env not in _ENVIRONMENTS:
         env = str(current.get("environment") or "aws")
 
-    protocol = str(payload.get("protocol", current.get("protocol", "https")) or "https").lower()
-    port_raw = payload.get("port", current.get("port"))
-    try:
-        port = int(port_raw)
-    except (TypeError, ValueError):
-        port = int(current.get("port") or 443)
+    if "port" in payload:
+        stored_port = parse_stored_port(payload.get("port"))
+    else:
+        stored_port = parse_stored_port(current.get("port"))
 
+    protocol = str(payload.get("protocol", current.get("protocol", "https")) or "https").lower()
     if server_endpoint:
-        host, parsed_protocol, parsed_port = parse_server_endpoint(server_endpoint)
+        host, protocol, _resolved_port = resolve_connection_target(
+            server_endpoint,
+            profile=current,
+            port=stored_port if "port" in payload else parse_stored_port(current.get("port")),
+        )
         server_endpoint = host
-        if payload.get("protocol") is None and not payload.get("port"):
-            protocol = parsed_protocol
-            port = parsed_port
 
     profiles[key] = {
         **current,
@@ -395,7 +489,7 @@ def save_connection_profile(profile_key: str, payload: dict[str, Any]) -> dict[s
         "password": password,
         "server_endpoint": server_endpoint,
         "protocol": protocol,
-        "port": port,
+        "port": stored_port,
     }
 
     doc["version"] = 2
@@ -431,7 +525,7 @@ def upsert_registry_for_profile(profile_key: str) -> dict[str, Any]:
     if not endpoint:
         raise ValueError("server_endpoint is required before connecting")
 
-    host, protocol, port = parse_server_endpoint(endpoint)
+    host, protocol, port = resolve_connection_target(endpoint, profile=profile)
     cluster_name = str(profile.get("cluster_name") or profile_display_name(key, profile)).strip()
     username = str(profile.get("username") or "root").strip()
     password = str(profile.get("password") or "")
@@ -487,11 +581,19 @@ def test_profile_connection(profile_key: str, payload: dict[str, Any] | None = N
     key, profile = _require_existing_profile(doc, profile_key)
     overrides = payload or {}
 
-    endpoint = str(overrides.get("server_endpoint") or profile.get("server_endpoint") or "").strip()
+    endpoint = _effective_server_endpoint(profile, overrides)
     if not endpoint:
-        raise ValueError("server_endpoint is required to test connection")
+        raise ValueError(
+            "server_endpoint is required to test connection — enter the Arango hostname "
+            "in Server endpoint, then Save or Test again"
+        )
 
-    host, protocol, port = parse_server_endpoint(endpoint)
+    port_override = parse_stored_port(overrides.get("port")) if "port" in overrides else None
+    host, protocol, port = resolve_connection_target(
+        endpoint,
+        profile=profile,
+        port=port_override,
+    )
     username = str(overrides.get("username") or profile.get("username") or "root").strip()
     password_in = overrides.get("password")
     if password_in is None or str(password_in) == _PASSWORD_PLACEHOLDER:

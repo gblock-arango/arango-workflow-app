@@ -35,6 +35,7 @@ class TestProfileBody(BaseModel):
     username: str | None = None
     password: str | None = None
     server_endpoint: str | None = None
+    port: int | None = None
     verify_tls: bool = True
     timeout_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
 
@@ -42,7 +43,10 @@ class TestProfileBody(BaseModel):
 @router.get("/profiles")
 async def get_profiles() -> dict[str, Any]:
     """Load saved connection profiles from the UC workflow-data volume."""
-    return await asyncio.to_thread(profiles.load_connection_profiles)
+    try:
+        return await asyncio.to_thread(profiles.load_connection_profiles)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
 
 
 @router.post("/profiles")
@@ -66,9 +70,11 @@ async def put_profile(profile_key: str, body: SaveProfileBody) -> dict[str, Any]
         return await asyncio.to_thread(
             profiles.save_connection_profile,
             profile_key,
-            body.model_dump(exclude_none=True),
+            body.model_dump(),
         )
     except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    except OSError as exc:
         raise ValidationError(str(exc)) from exc
 
 
@@ -92,17 +98,17 @@ async def activate_profile(profile_key: str) -> dict[str, Any]:
         err = str(gateway_probe.get("error") or "Gateway could not reach Arango")
         raise ValidationError(
             f"Registry updated but gateway path failed: {err}. "
-            "Extraction uses the gateway proxy — fix CAN_USE, gateway READ on UC_WORKFLOW_VOLUME_NAME, "
-            "or wait a few seconds and Connect again."
+            "Extraction uses the gateway proxy — verify CAN_USE on arango-gateway-app and "
+            "READ VOLUME on arango_workflow_volume for the gateway app service principal."
         )
     return result
 
 
 @router.post("/profiles/{profile_key}/test")
-async def test_profile(profile_key: str, body: TestProfileBody | None = None) -> dict[str, Any]:
-    """Probe Arango using saved or supplied credentials."""
+async def test_profile(profile_key: str, body: SaveProfileBody | None = None) -> dict[str, Any]:
+    """Probe Arango using saved or supplied credentials (same fields as Save)."""
     try:
-        payload = body.model_dump(exclude_none=True) if body else None
+        payload = body.model_dump() if body else {}
         return await asyncio.to_thread(profiles.test_profile_connection, profile_key, payload)
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc

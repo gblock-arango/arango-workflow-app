@@ -89,14 +89,15 @@ describe("PipelineHistorySlider", () => {
     expect(screen.getByTestId("history-slider-loading")).toBeInTheDocument();
   });
 
-  it("shows empty state when no runs exist", async () => {
+  it("renders nothing when no runs exist", async () => {
     stubEmpty();
-    render(
+    const { container } = render(
       <PipelineHistorySlider onSelectRun={jest.fn()} selectedRunId={null} />,
     );
     await waitFor(() => {
-      expect(screen.getByTestId("history-slider-empty")).toBeInTheDocument();
+      expect(screen.queryByTestId("history-slider-loading")).not.toBeInTheDocument();
     });
+    expect(container.firstChild).toBeNull();
   });
 
   it("renders slider with correct range when runs are loaded", async () => {

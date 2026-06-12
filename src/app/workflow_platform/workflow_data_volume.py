@@ -124,7 +124,14 @@ def resolve_under_workflow_data(relative: str) -> Path:
 
 
 def ensure_workflow_data_dirs() -> Path:
+    """Ensure workflow-data subdirs exist (local mount only).
+
+    On Databricks Apps, UC I/O uses the Files API — do not ``mkdir`` under ``/Volumes``
+    (the mount may exist but is not writable; see connection profile Save/Connect).
+    """
     root = workflow_data_root()
+    if use_files_api_for_io():
+        return root
     (root / BUILTIN_SUBDIR).mkdir(parents=True, exist_ok=True)
     (root / UPLOADS_SUBDIR).mkdir(parents=True, exist_ok=True)
     (root / SETTINGS_SUBDIR).mkdir(parents=True, exist_ok=True)
@@ -265,7 +272,10 @@ def read_bytes(relative_path: str) -> bytes:
 
 def local_mount_available() -> bool:
     """True when ``/Volumes/.../workflow-data`` is mounted in the app runtime."""
-    return workflow_data_root().is_dir()
+    try:
+        return workflow_data_root().is_dir()
+    except OSError:
+        return False
 
 
 def use_files_api_for_io() -> bool:

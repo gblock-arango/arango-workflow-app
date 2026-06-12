@@ -189,8 +189,8 @@ env:
     value: "0.4"
 
   - name: ALLOW_SYSTEM_RESET
-    description: "Enable /api/v1/admin/reset (dev/demo only)"
-    value: "false"
+    description: "Enable /api/v1/admin/reset (ontology purge + full reset on Pipeline page)"
+    value: "true"
 
   - name: DEBUG_STARTUP_CHECKS
     value: "true"
