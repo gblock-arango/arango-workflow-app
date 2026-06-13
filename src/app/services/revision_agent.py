@@ -211,40 +211,6 @@ class CrossCheckResult:
 # ---------------------------------------------------------------------------
 
 
-_SYSTEM_PROMPT = (
-    "You are an ontology belief-revision agent. Your job is to decide "
-    "what to do with an existing ontology belief in light of new "
-    "evidence from a freshly-ingested document.\n\n"
-    "You will be given:\n"
-    "  * The existing belief (a class with label, description, "
-    "properties), and the verbatim source text it was extracted from.\n"
-    "  * A new concept and the verbatim source text it was extracted "
-    "from in the new document.\n"
-    "  * A mechanical verdict produced by deterministic rules, with the "
-    "rule's name and reasoning.\n\n"
-    "You must choose ONE action:\n"
-    f"  * {ACTION_REINFORCE}        -- new evidence confirms the existing "
-    "belief without changing it (bump confidence + append evidence).\n"
-    f"  * {ACTION_REVISE}            -- replace the existing belief with a "
-    "refined version (e.g. add a missing subClassOf edge).\n"
-    f"  * {ACTION_RETRACT}           -- the existing belief is contradicted "
-    "by the new evidence and should be removed.\n"
-    f"  * {ACTION_FLAG_FOR_CURATION} -- you cannot decide confidently; "
-    "let a human curator review.\n\n"
-    "Hard rules:\n"
-    "  1. Every quote in `evidence_quotes` MUST be copied verbatim from "
-    "the supplied source text (existing provenance OR new evidence). "
-    "Do not paraphrase, do not invent quotes.\n"
-    f"  2. {ACTION_RETRACT} requires at least one evidence quote AND a "
-    f"confidence >= {RETRACT_CONFIDENCE_FLOOR}.\n"
-    "  3. Your `reasoning` must explicitly reference the quotes and the "
-    "mechanical verdict.\n"
-    f"  4. If unsure, choose {ACTION_FLAG_FOR_CURATION}; that is always "
-    "the safe option.\n\n"
-    "Return ONLY a JSON object matching the supplied schema."
-)
-
-
 def _format_evidence(quotes: tuple[str, ...]) -> str:
     """Render evidence as a numbered list -- helps the LLM cite cleanly."""
     if not quotes:
@@ -276,32 +242,29 @@ def build_revision_prompt(ctx: RevisionContext) -> tuple[str, str]:
     Pure function -- no LLM, no DB. Same context always yields the same
     prompt, which makes prompt-engineering tests trivial.
     """
+    from app.extraction.prompts import render_prompt
+
     mech = ctx.mechanical_revision
     existing_label = mech.touchpoint.existing_class_label
     new_label = mech.touchpoint.new_concept_label
 
-    user = (
-        f"## Mechanical verdict\n"
-        f"  Verdict: {mech.verdict}\n"
-        f"  Action proposed mechanically: {mech.action}\n"
-        f"  Rule: {mech.rule_id}\n"
-        f"  Mechanical confidence: {mech.confidence:.2f}\n"
-        f"  Reasoning: {mech.reasoning}\n\n"
-        f"## Existing belief\n"
-        f"{_format_existing_belief(ctx.existing_belief)}\n\n"
-        f"## Existing belief provenance (chunks from prior documents)\n"
-        f"{_format_evidence(ctx.existing_evidence)}\n\n"
-        f"## New concept (from triggering document {ctx.triggering_doc_id})\n"
-        f"{ctx.new_concept_text.strip() or new_label}\n\n"
-        f"## New evidence (chunks from the triggering document)\n"
-        f"{_format_evidence(ctx.new_evidence)}\n\n"
-        f"## Decide\n"
-        f"Choose an action that updates the belief about "
-        f"{existing_label!r} in light of the new evidence about "
-        f"{new_label!r}. Quote the supplied source text verbatim in "
-        f"`evidence_quotes`."
+    return render_prompt(
+        "belief_revision",
+        extra_vars={
+            "verdict": mech.verdict,
+            "action": mech.action,
+            "rule_id": mech.rule_id,
+            "mechanical_confidence": f"{mech.confidence:.2f}",
+            "mechanical_reasoning": mech.reasoning,
+            "existing_belief": _format_existing_belief(ctx.existing_belief),
+            "existing_evidence": _format_evidence(ctx.existing_evidence),
+            "new_concept_text": ctx.new_concept_text.strip() or new_label,
+            "new_evidence": _format_evidence(ctx.new_evidence),
+            "triggering_doc_id": ctx.triggering_doc_id,
+            "existing_label": existing_label,
+            "new_label": new_label,
+        },
     )
-    return _SYSTEM_PROMPT, user
 
 
 # ---------------------------------------------------------------------------

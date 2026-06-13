@@ -11,14 +11,12 @@ from app.extraction.judges.faithfulness import (
     _DEFAULT_SCORE as FAITH_DEFAULT,
 )
 from app.extraction.judges.faithfulness import (
-    _build_user_prompt as faith_build_prompt,
-)
-from app.extraction.judges.faithfulness import (
     _parse_response as faith_parse_response,
 )
 from app.extraction.judges.faithfulness import (
     judge_faithfulness,
 )
+from app.extraction.prompts import render_prompt
 from app.extraction.judges.qualitative_eval_node import (
     _map_phase,
     run_qualitative_evaluation,
@@ -28,7 +26,7 @@ from app.extraction.judges.semantic_validator import (
     _DEFAULT_SCORE as SEM_DEFAULT,
 )
 from app.extraction.judges.semantic_validator import (
-    _build_user_prompt as sem_build_prompt,
+    _class_fields_for_validation,
 )
 from app.extraction.judges.semantic_validator import (
     _parse_response as sem_parse_response,
@@ -115,7 +113,17 @@ class TestFaithfulnessBuildPrompt:
     def test_includes_chunks_and_classes(self):
         classes = [_cls()]
         chunks = [{"text": "hello world"}]
-        prompt = faith_build_prompt(classes, chunks)
+        chunks_text = "\n\n".join(
+            f"[Chunk {i + 1}]\n{chunk.get('text', '')}" for i, chunk in enumerate(chunks)
+        )
+        class_list = [{"uri": c.uri, "label": c.label, "description": c.description} for c in classes]
+        _, prompt = render_prompt(
+            "judge_faithfulness",
+            extra_vars={
+                "chunks_text": chunks_text,
+                "class_json": json.dumps(class_list, indent=2),
+            },
+        )
         assert "hello world" in prompt
         assert "http://ex.org#A" in prompt
 
@@ -203,7 +211,23 @@ class TestSemanticParseResponse:
 class TestSemanticBuildPrompt:
     def test_includes_class_properties(self):
         classes = [_cls_with_props()]
-        prompt = sem_build_prompt(classes)
+        class_list = []
+        for c in classes:
+            shapes = _class_fields_for_validation(c)
+            class_list.append(
+                {
+                    "uri": c.uri,
+                    "label": c.label,
+                    "description": c.description,
+                    "parent_uri": c.parent_uri,
+                    "attributes": shapes["attributes"],
+                    "relationships": shapes["relationships"],
+                }
+            )
+        _, prompt = render_prompt(
+            "judge_semantic_validator",
+            extra_vars={"class_json": json.dumps(class_list, indent=2)},
+        )
         assert "prop1" in prompt
         assert "xsd:string" in prompt
         assert "attributes" in prompt
@@ -234,7 +258,23 @@ class TestSemanticBuildPrompt:
                 ],
             )
         ]
-        prompt = sem_build_prompt(classes)
+        class_list = []
+        for c in classes:
+            shapes = _class_fields_for_validation(c)
+            class_list.append(
+                {
+                    "uri": c.uri,
+                    "label": c.label,
+                    "description": c.description,
+                    "parent_uri": c.parent_uri,
+                    "attributes": shapes["attributes"],
+                    "relationships": shapes["relationships"],
+                }
+            )
+        _, prompt = render_prompt(
+            "judge_semantic_validator",
+            extra_vars={"class_json": json.dumps(class_list, indent=2)},
+        )
         assert "customerName" in prompt
         assert "xsd:string" in prompt
         assert "has account" in prompt

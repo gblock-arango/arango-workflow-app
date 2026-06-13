@@ -23,24 +23,6 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_SCORE = 0.8
 
-_SYSTEM_PROMPT = (
-    "You are an OWL ontology validator. Review the following extracted ontology "
-    "classes. Each class lists **attributes** (owl:DatatypeProperty, scalar ranges) "
-    "and **relationships** (owl:ObjectProperty, target class URIs). "
-    "Legacy extractions may only show a flat `properties` list with "
-    "`property_type` and `range`.\n\n"
-    "Check each class for:\n"
-    "1. Domain/range mismatches: Does any property have a semantically "
-    "nonsensical range for its domain class?\n"
-    "2. Disjointness violations: Is a class declared as subclass of two "
-    "classes that should logically be disjoint?\n"
-    "3. Range type mismatches: Does an object property point to an XSD "
-    "datatype, or a datatype property point to a class?\n"
-    "4. Redundant classes: Are two classes essentially the same concept "
-    "with different names?\n\n"
-    "Return ONLY valid JSON, no markdown fences."
-)
-
 
 def _class_fields_for_validation(c: ExtractedClass) -> dict[str, list[dict[str, str]]]:
     """Normalize PGT attributes/relationships (or legacy properties) for the LLM."""
@@ -84,30 +66,6 @@ def _class_fields_for_validation(c: ExtractedClass) -> dict[str, list[dict[str, 
                 }
             )
     return {"attributes": attributes, "relationships": relationships}
-
-
-def _build_user_prompt(classes: list[ExtractedClass]) -> str:
-    class_list = []
-    for c in classes:
-        shapes = _class_fields_for_validation(c)
-        class_list.append(
-            {
-                "uri": c.uri,
-                "label": c.label,
-                "description": c.description,
-                "parent_uri": c.parent_uri,
-                "attributes": shapes["attributes"],
-                "relationships": shapes["relationships"],
-            }
-        )
-
-    return (
-        f"Classes:\n{json.dumps(class_list, indent=2)}\n\n"
-        'Return JSON: {"results": [{"uri": "...", "score": 0.0-1.0, '
-        '"issues": ["issue description", ...]}]}\n\n'
-        "Score meaning: 1.0 = no issues found, 0.7 = minor issues, "
-        "0.4 = significant issues, 0.1 = fundamentally flawed"
-    )
 
 
 def _parse_response(raw_text: str, class_uris: set[str]) -> dict[str, float]:
@@ -154,10 +112,28 @@ async def validate_semantics(
 
     try:
         llm = _get_llm(resolved_model)
-        user_prompt = _build_user_prompt(classes)
+        from app.extraction.prompts import render_prompt
+
+        class_list = []
+        for c in classes:
+            shapes = _class_fields_for_validation(c)
+            class_list.append(
+                {
+                    "uri": c.uri,
+                    "label": c.label,
+                    "description": c.description,
+                    "parent_uri": c.parent_uri,
+                    "attributes": shapes["attributes"],
+                    "relationships": shapes["relationships"],
+                }
+            )
+        system_prompt, user_prompt = render_prompt(
+            "judge_semantic_validator",
+            extra_vars={"class_json": json.dumps(class_list, indent=2)},
+        )
 
         messages = [
-            SystemMessage(content=_SYSTEM_PROMPT),
+            SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
         ]
 
@@ -168,7 +144,7 @@ async def validate_semantics(
             from app.services.run_agent_diagnostics import record_llm_call, usage_from_response
 
             pt, ct = usage_from_response(response)
-            prompt_chars = len(_SYSTEM_PROMPT) + len(user_prompt)
+            prompt_chars = len(system_prompt) + len(user_prompt)
             await asyncio.to_thread(
                 record_llm_call,
                 run_id,

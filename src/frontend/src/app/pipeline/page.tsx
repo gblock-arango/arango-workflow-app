@@ -6,6 +6,7 @@ import { api } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import AppHeader from "@/components/layout/AppHeader";
 import LlmConnectivityBadge from "@/components/layout/LlmConnectivityBadge";
+import LlmPromptsModal from "@/components/pipeline/LlmPromptsModal";
 import RunList from "@/components/pipeline/RunList";
 import StartExtractionPanel from "@/components/pipeline/StartExtractionPanel";
 import PipelineDiagnosticsPanel from "@/components/pipeline/PipelineDiagnosticsPanel";
@@ -62,6 +63,7 @@ function PipelineMonitorInner() {
   const [resetBusy, setResetBusy] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [runListKey, setRunListKey] = useState(0);
+  const [llmPromptsOpen, setLlmPromptsOpen] = useState(false);
 
   async function handleReset(full: boolean) {
     const msg = full
@@ -164,8 +166,16 @@ function PipelineMonitorInner() {
             selectedRunId={selectedRunId}
           />
 
-          <div className="px-4 py-2 flex items-center justify-end gap-3 shrink-0 border-b border-gray-100 bg-white">
-            <LlmConnectivityBadge />
+          <div className="px-4 py-2 flex items-center justify-between gap-3 shrink-0 border-b border-gray-100 bg-white">
+            <button
+              type="button"
+              onClick={() => setLlmPromptsOpen(true)}
+              className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs shadow-sm hover:bg-gray-50 transition-colors"
+            >
+              LLM Prompts
+            </button>
+            <div className="flex items-center gap-3">
+            <LlmConnectivityBadge modelFocus="extraction" />
             {selectedRunId ? (
               <div className="relative">
                 <button
@@ -208,7 +218,13 @@ function PipelineMonitorInner() {
                 )}
               </div>
             ) : null}
+            </div>
           </div>
+          <LlmPromptsModal
+            open={llmPromptsOpen}
+            onClose={() => setLlmPromptsOpen(false)}
+            selectedRunId={selectedRunId}
+          />
 
           {!selectedRunId ? (
             <div className="flex-1 flex items-center justify-center p-8">

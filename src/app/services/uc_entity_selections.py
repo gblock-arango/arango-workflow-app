@@ -50,10 +50,7 @@ def format_uc_entities_for_prompt(entities: list[dict[str, Any]] | None = None) 
     rows = entities if entities is not None else load_uc_entity_selections()
     if not rows:
         return ""
-    lines = [
-        "Unity Catalog entities selected for this workflow (use as domain context for "
-        "entity resolution and alignment with document chunks):",
-    ]
+    entity_lines: list[str] = []
     for ent in rows:
         table = ent.get("table_full_name") or ""
         col = ent.get("column_name") or ""
@@ -65,5 +62,8 @@ def format_uc_entities_for_prompt(entities: list[dict[str, Any]] | None = None) 
             line = f"- {table} (table)"
         if comment:
             line += f": {comment}"
-        lines.append(line)
-    return "\n".join(lines)
+        entity_lines.append(line)
+    from app.extraction.prompts import render_prompt
+
+    _, user = render_prompt("UC_anchor_prompt", extra_vars={"entities_block": "\n".join(entity_lines)})
+    return user.strip()

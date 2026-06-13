@@ -30,32 +30,6 @@ _RATING_SCORES: dict[str, float] = {
 
 _DEFAULT_SCORE = 0.5
 
-_SYSTEM_PROMPT = (
-    "You are evaluating whether ontology classes extracted from a document "
-    "are faithfully grounded in the source text.\n\n"
-    "For each class below, rate its faithfulness to the source text:\n"
-    "- EXPLICIT (1.0): The concept is explicitly mentioned in the text\n"
-    "- INFERRED (0.7): The concept is reasonably inferred from the text\n"
-    "- PLAUSIBLE (0.4): A reasonable domain concept but not directly grounded in the text\n"
-    "- HALLUCINATED (0.1): Not supported by the text at all\n\n"
-    "Return ONLY valid JSON, no markdown fences."
-)
-
-
-def _build_user_prompt(classes: list[ExtractedClass], chunks: list[dict[str, Any]]) -> str:
-    chunks_text = "\n\n".join(
-        f"[Chunk {i + 1}]\n{chunk.get('text', '')}" for i, chunk in enumerate(chunks)
-    )
-
-    class_list = [{"uri": c.uri, "label": c.label, "description": c.description} for c in classes]
-
-    return (
-        f"Source text:\n{chunks_text}\n\n"
-        f"Classes to evaluate:\n{json.dumps(class_list, indent=2)}\n\n"
-        'Return JSON: {"results": [{"uri": "...", "rating": '
-        '"EXPLICIT|INFERRED|PLAUSIBLE|HALLUCINATED", "reason": "brief explanation"}]}'
-    )
-
 
 def _parse_response(raw_text: str, class_uris: set[str]) -> dict[str, float]:
     """Parse the LLM response into {uri: score}, falling back to defaults on error."""
@@ -108,10 +82,22 @@ async def judge_faithfulness(
 
     try:
         llm = _get_llm(resolved_model)
-        user_prompt = _build_user_prompt(classes, chunks)
+        from app.extraction.prompts import render_prompt
+
+        chunks_text = "\n\n".join(
+            f"[Chunk {i + 1}]\n{chunk.get('text', '')}" for i, chunk in enumerate(chunks)
+        )
+        class_list = [{"uri": c.uri, "label": c.label, "description": c.description} for c in classes]
+        system_prompt, user_prompt = render_prompt(
+            "judge_faithfulness",
+            extra_vars={
+                "chunks_text": chunks_text,
+                "class_json": json.dumps(class_list, indent=2),
+            },
+        )
 
         messages = [
-            SystemMessage(content=_SYSTEM_PROMPT),
+            SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
         ]
 
@@ -122,7 +108,7 @@ async def judge_faithfulness(
             from app.services.run_agent_diagnostics import record_llm_call, usage_from_response
 
             pt, ct = usage_from_response(response)
-            prompt_chars = len(_SYSTEM_PROMPT) + len(user_prompt)
+            prompt_chars = len(system_prompt) + len(user_prompt)
             await asyncio.to_thread(
                 record_llm_call,
                 run_id,

@@ -344,6 +344,7 @@ function EmbeddingPageInner() {
         title="Parse & Chunk"
         subtitle="Select staged uploads, then parse, chunk, and embed in separate steps."
         showLlmConnectivity
+        llmModelFocus="embedding"
       />
 
       <PageContent className="py-8 space-y-6">

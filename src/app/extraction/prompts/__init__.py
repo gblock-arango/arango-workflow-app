@@ -54,10 +54,33 @@ def register_template(template: PromptTemplate) -> None:
 
 
 def get_template(key: str) -> PromptTemplate:
-    """Retrieve a registered prompt template by key.
+    """Retrieve a registered prompt template by key (UC overrides merged when present).
 
     Raises KeyError if not found.
     """
+    if not _TEMPLATE_REGISTRY:
+        _load_builtin_templates()
+    if key not in _TEMPLATE_REGISTRY:
+        raise KeyError(f"Prompt template '{key}' not found. Available: {list(_TEMPLATE_REGISTRY)}")
+    base = _TEMPLATE_REGISTRY[key]
+    try:
+        from app.services.extraction_prompt_templates import load_template_override
+
+        override = load_template_override(key)
+    except Exception:
+        override = None
+    if not override:
+        return base
+    return PromptTemplate(
+        key=base.key,
+        system_prompt=override.get("system_prompt") or base.system_prompt,
+        user_prompt=override.get("user_prompt") or base.user_prompt,
+        description=base.description,
+    )
+
+
+def get_builtin_template(key: str) -> PromptTemplate:
+    """Return the built-in template without UC overrides."""
     if not _TEMPLATE_REGISTRY:
         _load_builtin_templates()
     if key not in _TEMPLATE_REGISTRY:
@@ -72,9 +95,33 @@ def list_templates() -> list[str]:
     return list(_TEMPLATE_REGISTRY.keys())
 
 
+def render_prompt(
+    key: str,
+    *,
+    chunks_text: str = "",
+    domain_context: str = "",
+    extra_vars: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """Render a registered template (builtin or UC override)."""
+    return get_template(key).render(
+        chunks_text=chunks_text,
+        domain_context=domain_context,
+        extra_vars=extra_vars,
+    )
+
+
 def _load_builtin_templates() -> None:
     """Auto-import built-in template modules so they self-register."""
-    for module_name in ("tier1_standard", "tier1_technical"):
+    for module_name in (
+        "tier1_standard",
+        "tier1_technical",
+        "uc_anchor_prompt",
+        "judge_faithfulness",
+        "judge_semantic_validator",
+        "judge_qualitative_map",
+        "judge_qualitative_reduce",
+        "belief_revision",
+    ):
         importlib.import_module(f"app.extraction.prompts.{module_name}")
     for module_name in ("tier2_standard",):
         importlib.import_module(f"app.extraction.prompts.tier2.{module_name}")

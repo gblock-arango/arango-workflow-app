@@ -18,6 +18,7 @@ from app.api import (
     embedding,
     er,
     extraction,
+    extraction_prompts,
     health,
     metrics,
     notifications,
@@ -65,6 +66,20 @@ log = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     log.info("starting", env=settings.app_env)
+    from app.services.llm_preferences import bootstrap_llm_preferences
+
+    try:
+        await asyncio.to_thread(bootstrap_llm_preferences)
+    except Exception as exc:
+        log.warning("llm_preferences_bootstrap_failed", error=str(exc))
+
+    from app.services.extraction_prompt_templates import bootstrap_extraction_prompt_templates
+
+    try:
+        await asyncio.to_thread(bootstrap_extraction_prompt_templates)
+    except Exception as exc:
+        log.warning("extraction_prompt_templates_bootstrap_failed", error=str(exc))
+
     from app.workflow_platform.runtime import workflow_config_dict
     from app.workflow_platform.services.workflow_url_registry import (
         publish_self_workflow_url_to_uc_if_configured,
@@ -147,6 +162,7 @@ app.include_router(metrics.router)
 app.include_router(quality.router)
 app.include_router(revisions.router)
 app.include_router(system.router)
+app.include_router(extraction_prompts.router)
 app.include_router(uc_catalog.router)
 app.include_router(connection.router)
 app.include_router(workflow_dashboard.router)

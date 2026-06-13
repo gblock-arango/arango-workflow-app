@@ -9,6 +9,7 @@ export interface LlmStatusPayload {
   provider: string;
   embedding_model: string;
   extraction_model: string;
+  embedding_dimension?: number;
   openai_base_url?: string | null;
   openai_api_key_configured?: boolean;
   anthropic_api_key_configured?: boolean;

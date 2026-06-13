@@ -227,6 +227,7 @@ def _retrieve_relevant_chunks(
 async def _extract_batch(
     llm: Any,
     template: Any,
+    template_key: str,
     batch_idx: int,
     batch_text: str,
     pass_num: int,
@@ -255,25 +256,25 @@ async def _extract_batch(
         last_error: str | None = None
         result: ExtractionResult | None = None
         errors: list[str] = []
+        retry_messages: list[str] = []
 
         for retry in range(_MAX_RETRIES_PER_BATCH):
             try:
                 messages = [SystemMessage(content=system_msg), HumanMessage(content=user_msg)]
                 if last_error and "Expecting value" not in last_error:
-                    messages.append(
-                        HumanMessage(
-                            content=(
-                                f"Your previous response failed validation: {last_error}\n"
-                                "Please fix the JSON and try again."
-                            )
-                        )
+                    retry_text = (
+                        f"Your previous response failed validation: {last_error}\n"
+                        "Please fix the JSON and try again."
                     )
+                    retry_messages.append(retry_text)
+                    messages.append(HumanMessage(content=retry_text))
 
                 response = await llm.ainvoke(messages)
                 raw_text = (
                     response.content if isinstance(response.content, str) else str(response.content)
                 )
 
+                from app.services.extraction_prompt_debug import record_extractor_llm_call
                 from app.services.run_agent_diagnostics import record_llm_call, usage_from_response
 
                 pt, ct = usage_from_response(response)
@@ -285,6 +286,18 @@ async def _extract_batch(
                     completion_tokens=ct,
                     prompt_chars=prompt_chars,
                     step=f"extractor_pass_{pass_num}",
+                )
+                await asyncio.to_thread(
+                    record_extractor_llm_call,
+                    run_id=run_id,
+                    template_key=template_key,
+                    system_prompt=system_msg,
+                    user_prompt=user_msg,
+                    response_text=raw_text,
+                    pass_num=pass_num,
+                    batch_idx=batch_idx,
+                    model_name=model_name,
+                    extra_messages=retry_messages or None,
                 )
 
                 if not raw_text or not raw_text.strip():
@@ -326,6 +339,7 @@ async def _run_single_pass(
     pass_num: int,
     llm: Any,
     template: Any,
+    template_key: str,
     batch_groups: list[tuple[str, list[dict[str, Any]]]],
     model_name: str,
     domain_context: str,
@@ -340,6 +354,7 @@ async def _run_single_pass(
         _extract_batch(
             llm=llm,
             template=template,
+            template_key=template_key,
             batch_idx=idx,
             batch_text=batch_text,
             pass_num=pass_num,
@@ -421,6 +436,7 @@ async def extractor_node(state: ExtractionPipelineState) -> dict[str, Any]:
             pass_num=p,
             llm=llm,
             template=template,
+            template_key=template_key,
             batch_groups=batch_groups,
             model_name=model_name,
             domain_context=domain_context,

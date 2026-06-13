@@ -98,27 +98,6 @@ async def _invoke_llm_json(
 # Phase 1 — MAP: per-batch observations grounded in source text
 # ---------------------------------------------------------------------------
 
-_MAP_PROMPT_TEMPLATE = (
-    "You are an ontology extraction quality reviewer. Below is a batch of "
-    "source text chunks followed by the ontology classes that were extracted "
-    "from them.\n\n"
-    "Compare the extracted classes against the actual source text and produce "
-    "**evidence-grounded** observations about extraction quality.\n\n"
-    "Consider:\n"
-    "- Are the extracted classes actually present in or supported by the text?\n"
-    "- Were important concepts in the text missed by the extraction?\n"
-    "- Are class descriptions accurate reflections of what the text says?\n"
-    "- Are there hallucinated classes with no textual support?\n"
-    "- Are properties and relationships grounded in the source?\n\n"
-    "## Source Text (Batch {batch_number})\n{batch_text}\n\n"
-    "## Extracted Classes ({class_count} classes)\n{class_json}\n\n"
-    "Return ONLY valid JSON with this schema:\n"
-    '{{"observations": ["observation 1", ...]}}\n\n'
-    "Each observation should be 1-2 sentences, referencing specific class names "
-    "and quoting or paraphrasing the source text where relevant. "
-    "Aim for 3-6 observations per batch."
-)
-
 
 def _classes_for_batch(
     classes: list[ExtractedClass],
@@ -178,11 +157,16 @@ async def _map_single_batch(
         for cls in batch_classes
     ]
 
-    prompt = _MAP_PROMPT_TEMPLATE.format(
-        batch_number=batch_index + 1,
-        batch_text=batch_text,
-        class_count=len(class_summaries),
-        class_json=json.dumps(class_summaries, indent=2),
+    from app.extraction.prompts import render_prompt
+
+    _, prompt = render_prompt(
+        "judge_qualitative_map",
+        extra_vars={
+            "batch_number": batch_index + 1,
+            "batch_text": batch_text,
+            "class_count": len(class_summaries),
+            "class_json": json.dumps(class_summaries, indent=2),
+        },
     )
 
     try:
@@ -265,33 +249,21 @@ async def _map_phase(
 # Phase 2 — REDUCE: synthesise observations into final evaluation
 # ---------------------------------------------------------------------------
 
-_REDUCE_PROMPT_TEMPLATE = (
-    "You are an ontology quality evaluator producing a final assessment.\n\n"
-    "Below are per-batch observations from reviewers who read the actual "
-    "source text and compared it against extracted ontology classes.\n\n"
-    "Synthesise these observations into a concise qualitative summary. "
-    "Look for **cross-batch patterns** — recurring strengths or weaknesses "
-    "that appear across multiple batches.\n\n"
-    "## Per-Batch Reviewer Observations ({observation_count} total)\n"
-    "{numbered_observations}\n\n"
-    "Return ONLY valid JSON with this exact schema:\n"
-    '{{"strengths": ["point 1", ...], "weaknesses": ["point 1", ...]}}\n\n'
-    "Each point should be a concise markdown-formatted bullet (1-2 sentences). "
-    "Include specific class names where relevant. "
-    "Aim for 4 points per category."
-)
-
 
 async def _reduce_phase(
     llm: Any,
     observations: list[str],
 ) -> dict[str, list[str]]:
     """Synthesise per-batch observations into final strengths/weaknesses."""
-    numbered_obs = "\n".join(f"{i + 1}. {obs}" for i, obs in enumerate(observations))
+    from app.extraction.prompts import render_prompt
 
-    prompt = _REDUCE_PROMPT_TEMPLATE.format(
-        observation_count=len(observations),
-        numbered_observations=numbered_obs,
+    numbered_obs = "\n".join(f"{i + 1}. {obs}" for i, obs in enumerate(observations))
+    _, prompt = render_prompt(
+        "judge_qualitative_reduce",
+        extra_vars={
+            "observation_count": len(observations),
+            "numbered_observations": numbered_obs,
+        },
     )
 
     result = await _invoke_llm_json(

@@ -5,6 +5,7 @@ import AppHeaderLogo from "@/components/layout/AppHeaderLogo";
 import LlmConnectivityBadge from "@/components/layout/LlmConnectivityBadge";
 import WorkflowNavButtons from "@/components/layout/WorkflowNavButtons";
 import { useArangoConnectionStatus } from "@/lib/useArangoConnectionStatus";
+import type { LlmModelFocus } from "@/lib/llmSettings";
 
 interface AppHeaderProps {
   title: string;
@@ -13,6 +14,8 @@ interface AppHeaderProps {
   actions?: React.ReactNode;
   /** Shared cached LLM probe badge (Parse & Chunk, Pipeline, etc.) */
   showLlmConnectivity?: boolean;
+  /** Highlight extraction vs embedding model in the LLM settings modal. */
+  llmModelFocus?: LlmModelFocus;
   /** Tabs or secondary row below the title (e.g. ontology-quality) */
   footer?: React.ReactNode;
   contentClassName?: string;
@@ -43,6 +46,7 @@ export default function AppHeader({
   subtitle,
   actions,
   showLlmConnectivity = false,
+  llmModelFocus,
   footer,
   contentClassName = "w-full",
 }: AppHeaderProps) {
@@ -62,7 +66,7 @@ export default function AppHeader({
             {actions || showLlmConnectivity ? (
               <div className="flex items-center gap-3">
                 {actions}
-                {showLlmConnectivity ? <LlmConnectivityBadge /> : null}
+                {showLlmConnectivity ? <LlmConnectivityBadge modelFocus={llmModelFocus} /> : null}
               </div>
             ) : null}
             <AppHeaderBrand />
