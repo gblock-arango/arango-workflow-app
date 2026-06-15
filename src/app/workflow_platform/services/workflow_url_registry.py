@@ -150,6 +150,11 @@ def resolve_self_app_base_url() -> str | None:
 
 def publish_self_workflow_url_to_uc_if_configured(cfg: dict[str, Any]) -> None:
     """On workflow startup, upsert our public URL into UC for consumers (e.g. mcp-arango-agent)."""
+    from app.workflow_platform.deployment_profile import should_publish_peer_url_to_uc
+
+    if not should_publish_peer_url_to_uc():
+        logger.info("Skipping workflow URL UC publish (local_dev)")
+        return
     auto = str(cfg.get("ARANGO_WORKFLOW_REGISTRY_AUTO_CREATE", "true")).strip().lower()
     if auto in ("0", "false", "no", "off"):
         return

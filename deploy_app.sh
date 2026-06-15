@@ -29,6 +29,18 @@ set -euo pipefail
 # Inspect UC: ./scripts/read_uc_peer_registry.sh
 # Next.js build output: logs/frontend-build.log (set WORKFLOW_FRONTEND_BUILD_FAIL_DEPLOY=1 to abort deploy on failure).
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=scripts/_app_yaml_env.sh
+source "${SCRIPT_DIR}/scripts/_app_yaml_env.sh"
+
+_deploy_mode="$(_app_yaml_env TEST_DEPLOYMENT_MODE "${SCRIPT_DIR}/app.yaml")"
+if [[ "${_deploy_mode}" == "local_dev" || "${_deploy_mode}" == "local_docker" || "${_deploy_mode}" == "local" ]]; then
+  echo "TEST_DEPLOYMENT_MODE=${_deploy_mode} — local run (skipping Databricks deploy)"
+  bash "${SCRIPT_DIR}/scripts/build-local.sh"
+  exec bash "${SCRIPT_DIR}/scripts/start-local-dev.sh"
+fi
+
 APP_NAME="${1:-arango-workflow-app}"
 PROFILE="${3:-}"
 
@@ -58,7 +70,6 @@ ARANGO_AGENT_REGISTRY_TABLE="${ARANGO_AGENT_REGISTRY_TABLE:-}"
 ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE="${ARANGO_BRONZE_SIMULATED_INJECTOR_REGISTRY_TABLE:-}"
 ARANGO_WORKFLOW_REGISTRY_TABLE="${ARANGO_WORKFLOW_REGISTRY_TABLE:-}"
 REGISTRY_TABLE="${6:-}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=scripts/_app_yaml_env.sh
 source "${SCRIPT_DIR}/scripts/_app_yaml_env.sh"

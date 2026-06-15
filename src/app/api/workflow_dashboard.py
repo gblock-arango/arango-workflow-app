@@ -78,7 +78,7 @@ async def _proxy_json(
     label: str,
 ) -> Response | JSONResponse:
     url = f"{base.rstrip('/')}{path}"
-    headers = outbound_databricks_auth_headers() or None
+    headers = outbound_databricks_auth_headers(peer_url=base) or None
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             if method.upper() == "POST":
@@ -278,7 +278,7 @@ async def startup_status(refresh: bool = False) -> dict[str, Any]:
     if base:
         try:
             params = {"refresh": "true"} if refresh else {}
-            headers = outbound_databricks_auth_headers() or None
+            headers = outbound_databricks_auth_headers(peer_url=base) or None
             async with httpx.AsyncClient(timeout=20.0) as client:
                 r = await client.get(
                     f"{base}/api/debug/startup-status",
@@ -309,7 +309,7 @@ async def startup_status(refresh: bool = False) -> dict[str, Any]:
     if agent_base:
         try:
             params = {"refresh": "true"} if refresh else {}
-            headers = outbound_databricks_auth_headers() or None
+            headers = outbound_databricks_auth_headers(peer_url=agent_base) or None
             async with httpx.AsyncClient(timeout=30.0) as client:
                 ar = await client.get(
                     f"{agent_base}/api/debug/startup-status",

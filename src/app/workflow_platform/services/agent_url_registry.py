@@ -82,8 +82,13 @@ def effective_arango_agent_base_url(cfg: Any) -> str:
     Base URL for server-side calls to arango-mcp-app.
 
     1. Non-empty ``ARANGO_AGENT_BASE_URL`` wins.
-    2. Otherwise the active row in ``ARANGO_AGENT_REGISTRY_TABLE`` (cached briefly).
+    2. ``local_dev``: fixed localhost URL from deployment profile.
+    3. Otherwise the active row in ``ARANGO_AGENT_REGISTRY_TABLE`` (cached briefly).
     """
+    from app.workflow_platform.deployment_profile import is_local_dev, local_mcp_base_url
+
+    if is_local_dev():
+        return local_mcp_base_url()
     explicit = (cfg.get("ARANGO_AGENT_BASE_URL") or "").strip().rstrip("/")
     if explicit:
         return explicit

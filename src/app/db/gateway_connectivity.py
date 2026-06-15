@@ -50,7 +50,7 @@ def _probe_gateway_health_once(base_url: str) -> tuple[bool, str]:
     url = f"{base}/health"
     headers = {
         "Accept": "application/json",
-        **outbound_databricks_auth_headers(),
+        **outbound_databricks_auth_headers(peer_url=base),
     }
     settings = get_gateway_settings()
     ssl_ctx: ssl.SSLContext | None = None

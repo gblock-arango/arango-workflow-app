@@ -536,20 +536,24 @@ def upsert_registry_for_profile(profile_key: str) -> dict[str, Any]:
             "password is required before connecting — enter it on the Connection page and Save first"
         )
 
+    from app.workflow_platform.deployment_profile import should_upsert_connection_registry_on_connect
+
     cfg = workflow_config_dict()
     table_name = (cfg.get("ARANGO_REGISTRY_TABLE") or "").strip()
     warehouse_id = (cfg.get("DATABRICKS_SQL_WAREHOUSE_ID") or "").strip()
-    if not table_name or not warehouse_id:
-        raise ValueError("ARANGO_REGISTRY_TABLE and DATABRICKS_SQL_WAREHOUSE_ID are required")
 
-    _upsert_registry_entry(
-        table_name=table_name,
-        warehouse_id=warehouse_id,
-        cluster_name=cluster_name,
-        ip_address=host,
-        port=port,
-        protocol=protocol,
-    )
+    if should_upsert_connection_registry_on_connect():
+        if not table_name or not warehouse_id:
+            raise ValueError("ARANGO_REGISTRY_TABLE and DATABRICKS_SQL_WAREHOUSE_ID are required")
+
+        _upsert_registry_entry(
+            table_name=table_name,
+            warehouse_id=warehouse_id,
+            cluster_name=cluster_name,
+            ip_address=host,
+            port=port,
+            protocol=protocol,
+        )
 
     profiles[key]["server_endpoint"] = host
     profiles[key]["protocol"] = protocol
@@ -653,7 +657,7 @@ def verify_gateway_arango_ping(*, timeout_seconds: float = 20.0) -> dict[str, An
         }
 
     url = f"{base}/api/arango/ping"
-    headers = outbound_databricks_auth_headers() or None
+    headers = outbound_databricks_auth_headers(peer_url=base) or None
     try:
         with httpx.Client(timeout=timeout_seconds) as client:
             response = client.post(url, json={}, headers=headers)

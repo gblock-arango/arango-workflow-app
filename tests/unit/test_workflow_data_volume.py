@@ -100,6 +100,12 @@ def test_browse_ontology_excludes_manifest_and_plain_json():
     )
 
 
+def test_use_files_api_false_for_local_dev(monkeypatch):
+    monkeypatch.setenv("TEST_DEPLOYMENT_MODE", "local_dev")
+    monkeypatch.setattr(vol, "local_mount_available", lambda: False)
+    assert vol.use_files_api_for_io() is False
+
+
 def test_use_files_api_on_databricks_deploy_mode(monkeypatch):
     monkeypatch.setenv("TEST_DEPLOYMENT_MODE", "self_managed_platform")
     monkeypatch.setattr(vol, "local_mount_available", lambda: True)
@@ -126,6 +132,7 @@ def test_write_bytes_uses_files_api_when_configured(monkeypatch):
 
 
 def test_list_files_falls_back_to_files_api_when_unmounted(monkeypatch):
+    monkeypatch.setenv("TEST_DEPLOYMENT_MODE", "self_managed_platform")
     monkeypatch.setenv("ARANGO_REGISTRY_TABLE", "workspace.default.arango_connection_registry")
     monkeypatch.setenv("UC_WORKFLOW_VOLUME_NAME", "arango_workflow_volume")
     monkeypatch.setattr(vol, "local_mount_available", lambda: False)

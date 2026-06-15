@@ -1,7 +1,7 @@
 command:
   - "bash"
   - "-lc"
-  - "export PYTHONPATH=src && bash scripts/start-databricks-app.sh"
+  - "export PYTHONPATH=src && bash scripts/start-app.sh"
 
 # arango-workflow-app — OntoExtract UI + /api/v1; BFF proxies Genie to mcp-arango-agent.
 # Arango I/O: arango-gateway-app only (UC ARANGO_GATEWAY_REGISTRY_TABLE). No python-arango.
@@ -155,8 +155,10 @@ env:
   - name: APP_LOG_LEVEL
     value: "INFO"
   - name: TEST_DEPLOYMENT_MODE
-    description: "Gateway-backed deploy; not local_docker (from .env local_docker is ignored here)"
-    value: "self_managed_platform"
+    description: >-
+      local_dev = laptop (localhost peers, Minikube Arango, local workflow-data).
+      self_managed_platform = Databricks Apps (UC peer registries, Files API, app SP).
+    value: "local_dev"
   - name: SERVICE_URL_PATH_PREFIX
     description: "Optional public path prefix for FastAPI + static UI (empty for default App root)"
     value: ""

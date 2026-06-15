@@ -25,7 +25,11 @@ async def fetch_gateway_startup_status_async(
     if not base:
         raise ValueError("Gateway base URL is empty")
     params = {"refresh": "true"} if refresh else {}
-    headers = auth_headers if auth_headers is not None else outbound_databricks_auth_headers()
+    headers = (
+        auth_headers
+        if auth_headers is not None
+        else outbound_databricks_auth_headers(peer_url=base)
+    )
     async with httpx.AsyncClient(timeout=timeout_sec) as client:
         response = await client.get(
             f"{base}/api/debug/startup-status",
@@ -52,7 +56,11 @@ def fetch_gateway_startup_status(
     if not base:
         raise ValueError("Gateway base URL is empty")
     params = {"refresh": "true"} if refresh else {}
-    headers = auth_headers if auth_headers is not None else outbound_databricks_auth_headers()
+    headers = (
+        auth_headers
+        if auth_headers is not None
+        else outbound_databricks_auth_headers(peer_url=base)
+    )
     with httpx.Client(timeout=timeout_sec) as client:
         response = client.get(
             f"{base}/api/debug/startup-status",

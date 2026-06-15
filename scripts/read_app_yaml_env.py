@@ -8,24 +8,42 @@ import sys
 from pathlib import Path
 
 
-def read_app_yaml_value(app_yaml: Path, name: str) -> str:
+def iter_app_yaml_env(app_yaml: Path) -> list[tuple[str, str]]:
     text = app_yaml.read_text(encoding="utf-8")
-    # Match: - name: VAR ... value: "..." or value: '...' or value: bare
-    pattern = (
-        rf"-\s*name:\s*{re.escape(name)}\s*\n"
+    pattern = re.compile(
+        r"-\s*name:\s*(\S+)\s*\n"
         r"(?:\s+[^\n]+\n)*?"
-        r'\s+value:\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))'
+        r'\s+value:\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))',
+        re.MULTILINE,
     )
-    m = re.search(pattern, text)
-    if not m:
-        return ""
-    return (m.group(1) or m.group(2) or m.group(3) or "").strip()
+    entries: list[tuple[str, str]] = []
+    for m in pattern.finditer(text):
+        name = m.group(1)
+        val = (m.group(2) or m.group(3) or m.group(4) or "").strip()
+        entries.append((name, val))
+    return entries
+
+
+def read_app_yaml_value(app_yaml: Path, name: str) -> str:
+    for key, val in iter_app_yaml_env(app_yaml):
+        if key == name:
+            return val
+    return ""
 
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("usage: read_app_yaml_env.py NAME [app.yaml]", file=sys.stderr)
+        print("usage: read_app_yaml_env.py NAME|--export-all [app.yaml]", file=sys.stderr)
         return 2
+    if sys.argv[1] == "--export-all":
+        path = Path(sys.argv[2] if len(sys.argv) > 2 else "app.yaml")
+        if not path.is_file():
+            return 0
+        import shlex
+
+        for name, val in iter_app_yaml_env(path):
+            print(f"export {name}={shlex.quote(val)}")
+        return 0
     name = sys.argv[1]
     path = Path(sys.argv[2] if len(sys.argv) > 2 else "app.yaml")
     if not path.is_file():

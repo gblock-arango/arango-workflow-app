@@ -323,8 +323,12 @@ def schedule_execute_run(
             progress={"phase": "worker_auth"},
         )
         auth_started = time.perf_counter()
-        # Pin SP bearer for all gateway calls in this thread (app.yaml CAN_USE on gateway).
-        sp_auth = pin_outbound_service_principal_bearer()
+        sp_auth = None
+        from app.workflow_platform.deployment_profile import should_pin_service_principal_for_extraction
+
+        if should_pin_service_principal_for_extraction():
+            # Pin SP bearer for all gateway calls in this thread (app.yaml CAN_USE on gateway).
+            sp_auth = pin_outbound_service_principal_bearer()
         auth_ms = int((time.perf_counter() - auth_started) * 1000)
         active_db = (
             str(run_record["arango_database"])
@@ -371,7 +375,8 @@ def schedule_execute_run(
                     ):
                         drop_run_progress_cache(run_id)
         finally:
-            release_outbound_service_principal_bearer(sp_auth)
+            if sp_auth is not None:
+                release_outbound_service_principal_bearer(sp_auth)
             if active_db:
                 clear_active_arango_database()
 

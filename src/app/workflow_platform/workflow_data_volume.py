@@ -82,7 +82,11 @@ def uc_graph_volume_name() -> str:
 
 
 def workflow_data_root() -> Path:
-    """Absolute UC path: ``/Volumes/<catalog>/<schema>/<volume>/workflow-data``."""
+    """Absolute path to workflow-data (UC mount or ``local_dev/workflow-data`` on laptop)."""
+    from app.workflow_platform.deployment_profile import is_local_dev, local_workflow_data_root
+
+    if is_local_dev():
+        return local_workflow_data_root()
     catalog, schema = _registry_catalog_schema()
     vol = uc_graph_volume_name()
     return Path(f"/Volumes/{catalog}/{schema}/{vol}") / _workflow_data_dir_name()
@@ -286,6 +290,10 @@ def use_files_api_for_io() -> bool:
   ``/Volumes`` mount can exist while writes there do not show up in the workspace volume
     browser — so default ``auto`` prefers Files API when ``TEST_DEPLOYMENT_MODE`` is set.
     """
+    from app.workflow_platform.deployment_profile import should_use_uc_files_api_for_workflow_data
+
+    if not should_use_uc_files_api_for_workflow_data():
+        return False
     mode = (os.environ.get("UC_WORKFLOW_DATA_IO_MODE") or "auto").strip().lower()
     if mode in ("files_api", "api"):
         return True
@@ -294,7 +302,7 @@ def use_files_api_for_io() -> bool:
     if not local_mount_available():
         return True
     deploy = (os.environ.get("TEST_DEPLOYMENT_MODE") or "").strip().lower()
-    if deploy and deploy not in ("local_docker", "local"):
+    if deploy and deploy not in ("local_dev", "local_docker", "local"):
         return True
     if (os.environ.get("DATABRICKS_RUNTIME_VERSION") or "").strip():
         return True

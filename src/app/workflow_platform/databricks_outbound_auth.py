@@ -121,7 +121,11 @@ def release_outbound_service_principal_bearer(
     reset_outbound_service_principal_mode(sp_tok)
 
 
-def outbound_databricks_auth_headers() -> dict[str, str]:
+def outbound_databricks_auth_headers(*, peer_url: str | None = None) -> dict[str, str]:
+    from app.workflow_platform.deployment_profile import should_attach_outbound_bearer
+
+    if peer_url is not None and not should_attach_outbound_bearer(peer_url):
+        return {}
     override = (_outbound_bearer_override.get() or "").strip()
     if override:
         return {"Authorization": f"Bearer {override}"}

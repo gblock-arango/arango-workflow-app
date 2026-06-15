@@ -18,10 +18,18 @@ def outbound_bearer_authorization_header(
     *,
     config: dict | None = None,
     override_token: str | None = None,
+    peer_url: str | None = None,
 ) -> dict[str, str]:
     if (override_token or "").strip():
         return {"Authorization": f"Bearer {override_token.strip()}"}
-    headers = outbound_databricks_auth_headers()
+    resolved_peer = (peer_url or "").strip()
+    if not resolved_peer and config:
+        from app.workflow_platform.services.gateway_url_registry import effective_gateway_base_url
+
+        resolved_peer = effective_gateway_base_url(config)
+    headers = outbound_databricks_auth_headers(
+        peer_url=resolved_peer or None,
+    )
     return headers if headers else {}
 
 logger = logging.getLogger(__name__)
@@ -134,6 +142,7 @@ class GatewayArangoClient:
             **outbound_bearer_authorization_header(
                 config=self._auth_config,
                 override_token=self._outbound_bearer,
+                peer_url=self._base(),
             ),
         }
 
@@ -207,6 +216,7 @@ class GatewayArangoClient:
             **outbound_bearer_authorization_header(
                 config=self._auth_config,
                 override_token=self._outbound_bearer,
+                peer_url=self._base(),
             ),
         }
         try:
