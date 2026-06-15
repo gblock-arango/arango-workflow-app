@@ -80,7 +80,8 @@ export default function StartExtractionPanel({
   const [ontologies, setOntologies] = useState<OntologyOption[]>([]);
   const [targetOntologyId, setTargetOntologyId] = useState("");
   const [arangoDatabase, setArangoDatabase] = useState("");
-  const [defaultDatabaseLoaded, setDefaultDatabaseLoaded] = useState(false);
+  const [defaultDatabaseLoading, setDefaultDatabaseLoading] = useState(true);
+  const [defaultDatabaseError, setDefaultDatabaseError] = useState("");
   const [busy, setBusy] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [error, setError] = useState("");
@@ -106,22 +107,36 @@ export default function StartExtractionPanel({
     }
   }, []);
 
+  const loadDefaultDatabaseName = useCallback(async () => {
+    setDefaultDatabaseLoading(true);
+    setDefaultDatabaseError("");
+    try {
+      const res = await api.get<{ name?: string }>("/api/v1/extraction/default-database-name");
+      if (!res.name?.trim()) {
+        setDefaultDatabaseError(
+          "The server did not return a suggested database name. Enter one manually or retry.",
+        );
+        return;
+      }
+      setArangoDatabase((prev) => prev.trim() || res.name!);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setDefaultDatabaseError(
+        `Could not load a suggested database name (${msg}). Enter one manually or retry.`,
+      );
+    } finally {
+      setDefaultDatabaseLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadDocs();
     api
       .get<{ data: OntologyOption[] }>("/api/v1/ontology/library?limit=100")
       .then((res) => setOntologies(res.data ?? []))
       .catch(() => setOntologies([]));
-    api
-      .get<{ name?: string }>("/api/v1/extraction/default-database-name")
-      .then((res) => {
-        if (res.name) setArangoDatabase(res.name);
-      })
-      .catch(() => {
-        if (!arangoDatabase) setArangoDatabase("AutoGraph_1");
-      })
-      .finally(() => setDefaultDatabaseLoaded(true));
-  }, [loadDocs]);
+    void loadDefaultDatabaseName();
+  }, [loadDocs, loadDefaultDatabaseName]);
 
   useEffect(() => {
     restoredForRunRef.current = null;
@@ -335,11 +350,29 @@ export default function StartExtractionPanel({
         <input
           type="text"
           value={arangoDatabase}
-          onChange={(e) => setArangoDatabase(e.target.value)}
-          placeholder={defaultDatabaseLoaded ? "AutoGraph_1" : "Loading suggestion…"}
+          onChange={(e) => {
+            setArangoDatabase(e.target.value);
+            if (defaultDatabaseError) setDefaultDatabaseError("");
+          }}
+          placeholder={
+            defaultDatabaseLoading ? "Loading suggestion…" : "e.g. AutoGraph_<n>"
+          }
           className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm font-mono"
           spellCheck={false}
         />
+        {defaultDatabaseError && (
+          <p className="mt-1 text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded px-2 py-1 leading-relaxed">
+            {defaultDatabaseError}{" "}
+            <button
+              type="button"
+              onClick={() => void loadDefaultDatabaseName()}
+              disabled={defaultDatabaseLoading}
+              className="text-amber-900 underline hover:no-underline disabled:opacity-50"
+            >
+              Retry
+            </button>
+          </p>
+        )}
         <span className="mt-1 block text-[11px] text-gray-500 leading-relaxed">
           Created automatically in Arango when extraction starts (empty graph database).
           Each run can use its own database; default is the next{" "}

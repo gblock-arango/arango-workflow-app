@@ -358,6 +358,8 @@ export interface PreparationProgressDetail {
     ok: boolean;
     message: string;
   }>;
+  pipeline_cached?: boolean;
+  compile_ms?: number;
 }
 
 export interface RunProgressSnapshot {

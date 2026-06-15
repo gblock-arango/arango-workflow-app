@@ -69,3 +69,7 @@ arango-workflow-app/
 - [arango-dashboard-app](../arango-dashboard-app/) — shell layout reference
 - [arango-gateway-app](../arango-gateway-app/) — Arango proxy
 - [arango-mcp-app](../arango-mcp-app/) — Genie / MCP + `/mcp/aoe`
+
+## Considerations
+
+Consider implementing the Open Source Unity Catalog library https://github.com/unitycatalog/unitycatalog
