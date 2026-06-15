@@ -67,8 +67,12 @@ async def _ready_async(*, force: bool = False) -> dict[str, Any]:
 
     try:
         startup = await asyncio.to_thread(fetch_arango_startup_status)
-        payload = ready_payload_from_startup_status(startup, gateway_base_url="")
-        payload["check"] = "uc_registry_direct"
+        gw_url = str(startup.get("gateway_url") or "").strip().rstrip("/")
+        payload = ready_payload_from_startup_status(
+            startup,
+            gateway_base_url=gw_url,
+        )
+        payload["check"] = str(startup.get("source") or "uc_registry_direct")
         if isinstance(startup.get("probe"), dict):
             payload["probe"] = startup["probe"]
         if isinstance(startup.get("registry"), dict):

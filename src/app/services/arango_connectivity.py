@@ -126,10 +126,60 @@ def _get_active_registry_row(table_name: str, warehouse_id: str) -> dict[str, An
 
 def fetch_arango_startup_status() -> dict[str, Any]:
     """
-    Build gateway-compatible startup-status JSON from UC ``ARANGO_REGISTRY_TABLE``.
+    Build gateway-compatible startup-status JSON for the home-page widget.
 
-    Does not call arango-gateway-app (avoids Databricks Apps 401 on peer HTTP).
+    In ``local_dev``, reads gateway ``/api/debug/startup-status`` so /ready matches
+    the same registry + auth path as extraction (AWS / GCS / Minikube).
+
+    In cloud, reads UC ``ARANGO_REGISTRY_TABLE`` and probes Arango directly (no
+    gateway HTTP — avoids Apps peer 401).
     """
+    from app.workflow_platform.deployment_profile import is_local_dev, local_gateway_base_url
+
+    if is_local_dev():
+        return _fetch_gateway_startup_status(local_gateway_base_url())
+
+    return _fetch_uc_registry_startup_status()
+
+
+def _fetch_gateway_startup_status(gateway_base_url: str) -> dict[str, Any]:
+    import httpx
+
+    from app.services.arango_connection_profiles import get_connection_ui_context
+
+    base = gateway_base_url.strip().rstrip("/")
+    connection_ctx: dict[str, Any] = {}
+    try:
+        connection_ctx = get_connection_ui_context()
+    except Exception as exc:
+        log.debug("connection ui context unavailable: %s", exc)
+
+    try:
+        with httpx.Client(timeout=25.0) as client:
+            response = client.get(f"{base}/api/debug/startup-status", params={"refresh": "true"})
+        response.raise_for_status()
+        payload = response.json() if response.content else {}
+    except Exception as exc:
+        log.warning("gateway startup-status failed: %s", exc)
+        return {
+            "checked_at": _now_utc(),
+            "registry": {"status": "error", "error": str(exc)},
+            "probe": {"status": "error", "error": str(exc)},
+            "connection": connection_ctx,
+            "source": "gateway_startup_status",
+            "gateway_url": base,
+        }
+
+    if not isinstance(payload, dict):
+        payload = {}
+    payload["connection"] = connection_ctx
+    payload["source"] = "gateway_startup_status"
+    payload["gateway_url"] = base
+    return payload
+
+
+def _fetch_uc_registry_startup_status() -> dict[str, Any]:
+    """Direct UC registry probe (cloud default)."""
     cfg = workflow_config_dict()
     table_name = (cfg.get("ARANGO_REGISTRY_TABLE") or "").strip()
     warehouse_id = (cfg.get("DATABRICKS_SQL_WAREHOUSE_ID") or "").strip()

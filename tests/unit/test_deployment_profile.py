@@ -26,3 +26,10 @@ def test_static_arango_registry_row(monkeypatch):
     row = dp.static_arango_registry_row()
     assert row["ip_address"] == "127.0.0.1"
     assert row["port"] == 18529
+
+
+def test_should_upsert_connection_registry_on_connect(monkeypatch):
+    monkeypatch.setenv("TEST_DEPLOYMENT_MODE", "local_dev")
+    assert dp.should_upsert_connection_registry_on_connect() is True
+    monkeypatch.setenv("TEST_DEPLOYMENT_MODE", "self_managed_platform")
+    assert dp.should_upsert_connection_registry_on_connect() is True

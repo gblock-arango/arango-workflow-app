@@ -112,7 +112,8 @@ def static_arango_registry_row() -> dict[str, object]:
 
 
 def should_upsert_connection_registry_on_connect() -> bool:
-    return not is_local_dev()
+    """Connect upserts UC so gateway and /ready share the same active cluster locally and in cloud."""
+    return True
 
 
 def force_openai_for_autograph() -> bool:
