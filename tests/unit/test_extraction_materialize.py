@@ -64,6 +64,8 @@ class TestLoadChunksForExtraction:
 
         assert len(loaded) == 1
         assert loaded[0]["doc_id"] == "d1"
+        assert loaded[0]["_key"] == "d1_0"
+        assert loaded[0]["chunk_key"] == "d1_0"
         assert loaded[0]["embedding"] == [0.1, 0.2]
 
 

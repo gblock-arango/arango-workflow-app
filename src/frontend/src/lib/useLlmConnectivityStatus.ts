@@ -39,6 +39,7 @@ let cachedStatus: LlmStatusPayload | null = null;
 let lastFetchedAt = 0;
 let loading = false;
 let inFlight = false;
+let pendingForceProbe = false;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let subscriberCount = 0;
 let cancelDeferred: (() => void) | null = null;
@@ -111,7 +112,12 @@ function errorPayload(message: string): LlmStatusPayload {
 }
 
 async function runProbe(opts: { force: boolean }) {
-  if (inFlight) return;
+  if (inFlight) {
+    if (opts.force) {
+      pendingForceProbe = true;
+    }
+    return;
+  }
   inFlight = true;
   if (!cachedStatus) {
     loading = true;
@@ -132,6 +138,11 @@ async function runProbe(opts: { force: boolean }) {
     loading = false;
     inFlight = false;
     emit();
+    if (pendingForceProbe) {
+      pendingForceProbe = false;
+      void runProbe({ force: true });
+      return;
+    }
     schedulePoll();
   }
 }

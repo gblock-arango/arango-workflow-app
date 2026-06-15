@@ -15,8 +15,10 @@ def _clear_endpoint_cache():
     from app.llm import databricks_serving
 
     databricks_serving._resolved_endpoint_cached.cache_clear()
+    llm_preferences._last_applied_signature = None
     yield
     databricks_serving._resolved_endpoint_cached.cache_clear()
+    llm_preferences._last_applied_signature = None
 
 
 def test_default_models_for_provider():
@@ -49,6 +51,33 @@ def test_apply_llm_preferences_updates_settings():
     assert llm_preferences.settings.autograph_embedding_model_name == "databricks-bge-large-en"
     assert llm_preferences.settings.autograph_embedding_dimension == 1024
     assert llm_preferences.settings.openai_api_key == "sk-test"
+
+
+def test_sync_llm_preferences_from_volume_applies_when_file_changes():
+    saved = {
+        "version": 1,
+        "provider": "openai",
+        "extraction_model": "gpt-4o-mini",
+        "embedding_model": "text-embedding-3-small",
+        "embedding_dimension": 1536,
+        "openai_api_key": "sk-synced",
+    }
+    with (
+        patch.object(llm_preferences.settings, "autograph_llm_provider", "databricks_serving"),
+        patch.object(
+            llm_preferences.settings,
+            "autograph_llm_model_name",
+            "databricks-meta-llama-3-3-70b-instruct",
+        ),
+        patch(
+            "app.workflow_platform.workflow_data_volume.read_bytes",
+            return_value=json.dumps(saved).encode("utf-8"),
+        ),
+    ):
+        assert llm_preferences.sync_llm_preferences_from_volume() is True
+        assert llm_preferences.settings.autograph_llm_provider == "openai"
+        assert llm_preferences.settings.openai_api_key == "sk-synced"
+        assert llm_preferences.sync_llm_preferences_from_volume() is False
 
 
 def test_save_llm_preferences_persists_and_applies(tmp_path):

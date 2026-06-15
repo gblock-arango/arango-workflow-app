@@ -2,7 +2,7 @@
 
 Nodes: prepare_arango → strategy_selector → extractor → … → filter → finalize_graph
 Conditional edges retry on failure. Checkpointed via MemorySaver.
-Human-in-the-loop breakpoint after pre-curation filter (before graph persist).
+Optional human-in-the-loop breakpoint after pre-curation filter (before graph persist).
 """
 
 from __future__ import annotations
@@ -230,7 +230,7 @@ async def run_pipeline(
     from app.services.run_progress_cache import update_run_progress_cache
 
     compile_started = time.perf_counter()
-    compiled, pipeline_cached = get_compiled_pipeline(interrupt_after_filter=True)
+    compiled, pipeline_cached = get_compiled_pipeline(interrupt_after_filter=False)
     compile_ms = int((time.perf_counter() - compile_started) * 1000)
     compile_label = format_duration_ms(compile_ms)
     if pipeline_cached:

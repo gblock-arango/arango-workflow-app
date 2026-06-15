@@ -92,6 +92,8 @@ export default function LlmConnectivityModal({
       const saved = await saveLlmSettings(draft);
       setSavedSettings(saved);
       setDraft(draftFromSettings(saved));
+      // Brief pause so UC write is visible to other workers before live probe.
+      await new Promise((resolve) => setTimeout(resolve, 300));
       refresh({ force: true });
     } catch (err) {
       setSaveError(
@@ -301,13 +303,15 @@ export default function LlmConnectivityModal({
               <button
                 type="button"
                 onClick={() => void handleSave()}
-                disabled={!draft || saving || settingsLoading}
+                disabled={!draft || saving}
                 className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 font-medium"
               >
                 {saving ? "Saving…" : "Save settings"}
               </button>
-              {settingsLoading ? (
+              {settingsLoading && !draft ? (
                 <span className="text-xs text-gray-500">Loading saved settings…</span>
+              ) : settingsLoading ? (
+                <span className="text-xs text-gray-500">Refreshing from server…</span>
               ) : null}
             </div>
           </section>

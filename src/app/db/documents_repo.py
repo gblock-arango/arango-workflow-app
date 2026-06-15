@@ -371,9 +371,17 @@ def create_chunks(
 
     Uses ``insert_many`` in configurable batches (``ARANGO_CHUNK_INSERT_BATCH_SIZE``,
     default 50) instead of one HTTP round-trip per chunk.
+
+    When ``doc_id`` and ``chunk_index`` are present, ``_key`` is set to
+    ``{doc_id}_{chunk_index}`` so inserts are idempotent and align with UC
+    artifact ``chunk_key`` values used in extraction prompts.
     """
     if not chunks:
         return []
+
+    from app.db.chunk_keys import normalize_chunk_for_insert
+
+    chunks = [normalize_chunk_for_insert(c) for c in chunks]
 
     db = db or get_db()
     size = _chunk_insert_batch_size(batch_size)

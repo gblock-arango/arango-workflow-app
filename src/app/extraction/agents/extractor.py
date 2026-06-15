@@ -14,6 +14,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.config import settings
+from app.db.chunk_keys import resolve_chunk_source_id
 from app.extraction.prompts import get_template
 from app.extraction.state import ExtractionPipelineState, StepLog, TokenUsage
 from app.llm.databricks_serving import effective_extraction_model_name
@@ -83,9 +84,13 @@ def _format_chunk_batch_text(chunks: list[dict[str, Any]], start_index: int = 0)
     """Render one chunk group as prompt text with stable chunk ids."""
     text_parts = []
     for offset, chunk in enumerate(chunks):
-        j = start_index + offset + 1
-        chunk_id = chunk.get("_key") or chunk.get("id") or chunk.get("chunk_id") or str(j)
-        text_parts.append(f"[Chunk {j} | source_chunk_id={chunk_id}]\n{chunk.get('text', '')}")
+        chunk_index = chunk.get("chunk_index")
+        if chunk_index is None:
+            chunk_index = start_index + offset
+        chunk_id = resolve_chunk_source_id({**chunk, "chunk_index": chunk_index})
+        text_parts.append(
+            f"[Chunk {chunk_index} | source_chunk_id={chunk_id}]\n{chunk.get('text', '')}"
+        )
     return "\n\n".join(text_parts)
 
 

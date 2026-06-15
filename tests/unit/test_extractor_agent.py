@@ -124,24 +124,28 @@ class TestGetLlm:
 
 class TestBatchChunks:
     def test_single_batch(self):
-        chunks = [{"text": "a"}, {"text": "b"}, {"text": "c"}]
+        chunks = [
+            {"doc_id": "d1", "chunk_index": 0, "text": "a"},
+            {"doc_id": "d1", "chunk_index": 1, "text": "b"},
+            {"doc_id": "d1", "chunk_index": 2, "text": "c"},
+        ]
         batches = _batch_chunks(chunks, batch_size=5)
         assert len(batches) == 1
-        assert "[Chunk 1 | source_chunk_id=1]" in batches[0]
-        assert "[Chunk 3 | source_chunk_id=3]" in batches[0]
+        assert "[Chunk 0 | source_chunk_id=d1_0]" in batches[0]
+        assert "[Chunk 2 | source_chunk_id=d1_2]" in batches[0]
 
     def test_multiple_batches(self):
-        chunks = [{"text": f"chunk{i}"} for i in range(7)]
+        chunks = [{"doc_id": "d1", "chunk_index": i, "text": f"chunk{i}"} for i in range(7)]
         batches = _batch_chunks(chunks, batch_size=3)
         assert len(batches) == 3  # 3+3+1
-        assert "[Chunk 1 | source_chunk_id=1]" in batches[0]
-        assert "[Chunk 4 | source_chunk_id=4]" in batches[1]
+        assert "[Chunk 0 | source_chunk_id=d1_0]" in batches[0]
+        assert "[Chunk 3 | source_chunk_id=d1_3]" in batches[1]
 
     def test_uses_stable_chunk_ids_when_available(self):
-        chunks = [{"_key": "chunk_a", "text": "a"}, {"chunk_id": "chunk_b", "text": "b"}]
+        chunks = [{"_key": "chunk_a", "chunk_index": 0, "text": "a"}, {"chunk_key": "chunk_b", "chunk_index": 1, "text": "b"}]
         batches = _batch_chunks(chunks, batch_size=5)
-        assert "[Chunk 1 | source_chunk_id=chunk_a]" in batches[0]
-        assert "[Chunk 2 | source_chunk_id=chunk_b]" in batches[0]
+        assert "[Chunk 0 | source_chunk_id=chunk_a]" in batches[0]
+        assert "[Chunk 1 | source_chunk_id=chunk_b]" in batches[0]
 
     def test_empty_chunks(self):
         assert _batch_chunks([], batch_size=5) == []

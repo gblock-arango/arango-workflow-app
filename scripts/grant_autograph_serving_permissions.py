@@ -86,6 +86,34 @@ def _permission_rank(level: object) -> int:
     return 0
 
 
+def _resolve_serving_endpoint_id(se_api: object, endpoint_name: str) -> str | None:
+    """Map a serving endpoint **name** to its system id for Permissions API calls.
+
+    ``get_permissions`` / ``set_permissions`` require the endpoint id returned by
+    ``serving_endpoints.get(name)``, not the human-readable Foundation Model name.
+    """
+    from databricks.sdk.errors import NotFound, ResourceDoesNotExist
+
+    try:
+        ep = se_api.get(endpoint_name)
+    except (NotFound, ResourceDoesNotExist):
+        print(
+            f"ERROR: serving endpoint {endpoint_name!r} not found in workspace "
+            "(open Serving in the UI and copy the exact endpoint name).",
+            file=sys.stderr,
+        )
+        return None
+    except Exception as exc:
+        print(f"ERROR: serving_endpoints.get({endpoint_name!r}): {exc}", file=sys.stderr)
+        return None
+
+    ep_id = (getattr(ep, "id", None) or "").strip()
+    if not ep_id:
+        print(f"ERROR: serving endpoint {endpoint_name!r} has no id", file=sys.stderr)
+        return None
+    return ep_id
+
+
 def grant_can_query(
     w: object,
     *,
@@ -98,10 +126,17 @@ def grant_can_query(
     )
 
     se_api = w.serving_endpoints  # type: ignore[attr-defined]
+    endpoint_id = _resolve_serving_endpoint_id(se_api, endpoint_name)
+    if not endpoint_id:
+        return False
+
     try:
-        current = se_api.get_permissions(endpoint_name)
+        current = se_api.get_permissions(endpoint_id)
     except Exception as exc:
-        print(f"ERROR: get_permissions({endpoint_name!r}): {exc}", file=sys.stderr)
+        print(
+            f"ERROR: get_permissions({endpoint_name!r}, id={endpoint_id!r}): {exc}",
+            file=sys.stderr,
+        )
         return False
 
     acl = list(getattr(current, "access_control_list", None) or [])
@@ -144,15 +179,19 @@ def grant_can_query(
         )
 
     try:
-        se_api.set_permissions(endpoint_name, access_control_list=merged)
+        se_api.set_permissions(endpoint_id, access_control_list=merged)
     except Exception as exc:
         print(
-            f"ERROR: set_permissions({endpoint_name!r}, SP={service_principal_id!r}): {exc}",
+            f"ERROR: set_permissions({endpoint_name!r}, id={endpoint_id!r}, "
+            f"SP={service_principal_id!r}): {exc}",
             file=sys.stderr,
         )
         return False
 
-    print(f"OK: CAN_QUERY on {endpoint_name!r} for app SP {service_principal_id!r}")
+    print(
+        f"OK: CAN_QUERY on {endpoint_name!r} (id={endpoint_id!r}) "
+        f"for app SP {service_principal_id!r}"
+    )
     return True
 
 

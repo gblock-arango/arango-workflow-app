@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any, Literal
@@ -35,6 +36,8 @@ _DEFAULT_DIMENSIONS: dict[LlmUiProvider, int] = {
     "openai": 1536,
 }
 
+_last_applied_signature: str | None = None
+
 
 def default_models_for_provider(provider: LlmUiProvider) -> dict[str, str | int]:
     models = dict(_DEFAULT_MODELS[provider])
@@ -62,6 +65,46 @@ def _provider_from_settings() -> LlmUiProvider:
     if settings.use_databricks_for_extraction() or settings.use_databricks_for_embeddings():
         return "databricks"
     return "openai"
+
+
+def _prefs_signature(data: dict[str, Any]) -> str:
+    """Stable hash of persisted preferences (for cross-worker sync)."""
+    normalized = {k: data.get(k) for k in sorted(data.keys())}
+    blob = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _invalidate_probe_cache() -> None:
+    from app.services import llm_connectivity
+
+    llm_connectivity._probe_cache["at"] = 0.0
+    llm_connectivity._probe_cache["payload"] = None
+
+
+def sync_llm_preferences_from_volume() -> bool:
+    """Apply saved UC preferences to this worker when the volume file changed.
+
+    Databricks Apps run multiple uvicorn workers; a PUT /llm-settings only updates
+    the process that handled the request unless we re-read the volume file.
+    """
+    global _last_applied_signature
+
+    saved = _read_raw_preferences()
+    if not saved:
+        return False
+    sig = _prefs_signature(saved)
+    if sig == _last_applied_signature:
+        return False
+    apply_llm_preferences(saved)
+    _last_applied_signature = sig
+    _invalidate_probe_cache()
+    log.info(
+        "llm_preferences_synced_from_volume",
+        provider=saved.get("provider"),
+        extraction_model=saved.get("extraction_model"),
+        embedding_model=saved.get("embedding_model"),
+    )
+    return True
 
 
 def _read_raw_preferences() -> dict[str, Any] | None:
@@ -111,6 +154,7 @@ def _resolve_embedding_dimension(
 
 def load_llm_preferences() -> dict[str, Any]:
     """Return saved preferences merged with current effective settings."""
+    sync_llm_preferences_from_volume()
     saved = _read_raw_preferences() or {}
     snapshot = _effective_settings_snapshot()
     provider = _normalize_ui_provider(saved.get("provider")) if saved.get("provider") else snapshot["provider"]
@@ -208,11 +252,10 @@ def save_llm_preferences(
     if payload.get("openai_api_key"):
         apply_payload["openai_api_key"] = payload["openai_api_key"]
     apply_llm_preferences(apply_payload)
+    global _last_applied_signature
+    _last_applied_signature = _prefs_signature(payload)
 
-    from app.services import llm_connectivity
-
-    llm_connectivity._probe_cache["at"] = 0.0
-    llm_connectivity._probe_cache["payload"] = None
+    _invalidate_probe_cache()
 
     result = load_llm_preferences()
     result["ok"] = True
@@ -226,6 +269,8 @@ def bootstrap_llm_preferences() -> None:
         return
     try:
         apply_llm_preferences(saved)
+        global _last_applied_signature
+        _last_applied_signature = _prefs_signature(saved)
         log.info(
             "llm_preferences_loaded",
             provider=saved.get("provider"),

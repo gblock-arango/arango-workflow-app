@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from app.db import documents_repo
+from app.db.chunk_keys import chunk_document_key
 from app.models.documents import DocumentStatus
 from app.services import embedding_artifacts
 from app.services import embedding_status as emb_status_svc
@@ -70,7 +71,10 @@ def _build_chunk_dicts(
     chunk_dicts: list[dict[str, Any]] = []
     for cr in chunk_rows:
         idx = int(cr.get("chunk_index") or 0)
+        chunk_key = str(cr.get("chunk_key") or chunk_document_key(doc_id, idx))
         entry: dict[str, Any] = {
+            "_key": chunk_key,
+            "chunk_key": chunk_key,
             "doc_id": doc_id,
             "text": str(cr.get("text") or ""),
             "chunk_index": idx,

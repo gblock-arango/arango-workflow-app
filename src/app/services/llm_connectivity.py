@@ -100,6 +100,10 @@ def _failure_summary(embedding: dict[str, Any], extraction: dict[str, Any]) -> s
 
 async def probe_llm_connectivity(*, force: bool = False) -> dict[str, Any]:
     """Run lightweight live checks against configured LLM providers."""
+    from app.services.llm_preferences import sync_llm_preferences_from_volume
+
+    await asyncio.to_thread(sync_llm_preferences_from_volume)
+
     now = time.monotonic()
     cached = _probe_cache.get("payload")
     cache_age = now - float(_probe_cache.get("at") or 0.0)

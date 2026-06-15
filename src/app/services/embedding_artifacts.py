@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any
 
+from app.db.chunk_keys import chunk_document_key
 from app.services.ingestion import Chunk, ParsedDocument, Section
 from app.workflow_platform import workflow_data_volume as vol
 
@@ -101,6 +102,7 @@ def write_chunks(doc_id: str, chunks: list[Chunk]) -> None:
             json.dumps(
                 {
                     "chunk_index": c.chunk_index,
+                    "chunk_key": chunk_document_key(doc_id, c.chunk_index),
                     "text": c.text,
                     "source_page": c.source_page,
                     "section_heading": c.section_heading,

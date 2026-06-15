@@ -22,7 +22,7 @@ env:
   # LLM — Autograph / LangGraph (same model names for Databricks serving and OpenAI/Anthropic).
   - name: AUTOGRAPH_LLM_PROVIDER
     description: "auto | databricks_serving | openai | anthropic. On Databricks, auto uses serving when AUTOGRAPH_*_MODEL_NAME is set."
-    value: "openai"
+    value: "auto"
   - name: AUTOGRAPH_LLM_MODEL_NAME
     description: >-
       Extraction model for all providers: Databricks serving endpoint name (e.g.

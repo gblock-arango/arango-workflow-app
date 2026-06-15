@@ -659,6 +659,10 @@ async def execute_run(
     When no event_callback is provided, defaults to publishing events
     over WebSocket via the extraction event bus.
     """
+    from app.services.llm_preferences import sync_llm_preferences_from_volume
+
+    sync_llm_preferences_from_volume()
+
     if event_callback is None:
         from app.api.ws_extraction import publish_event
 

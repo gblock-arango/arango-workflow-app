@@ -73,6 +73,20 @@ class TestCreateChunks:
         db = _db_with_collections("chunks")
         assert documents_repo.create_chunks([], db=db) == []
 
+    def test_create_chunks_assigns_stable_keys(self):
+        db = _db_with_collections("chunks")
+        col = MagicMock()
+        db.collection.return_value = col
+        col.insert_many.return_value = [{"_key": "d1_0"}, {"_key": "d1_1"}]
+
+        chunks = [{"doc_id": "d1", "chunk_index": i, "text": f"t{i}"} for i in range(2)]
+        result = documents_repo.create_chunks(chunks, db=db, batch_size=50)
+
+        assert len(result) == 2
+        inserted_batch = col.insert_many.call_args.args[0]
+        assert inserted_batch[0]["_key"] == "d1_0"
+        assert inserted_batch[1]["_key"] == "d1_1"
+
     def test_create_chunks_uses_insert_many_in_batches(self):
         db = _db_with_collections("chunks")
         col = MagicMock()

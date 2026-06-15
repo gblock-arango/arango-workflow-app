@@ -176,7 +176,7 @@ class TestNextStepsMapping:
 
 class TestRunPipelinePaused:
     @pytest.mark.asyncio
-    async def test_emits_pipeline_paused_on_interrupt(self):
+    async def test_emits_pipeline_paused_only_when_interrupt_enabled(self):
         callback = AsyncMock()
 
         async def fake_stream():
@@ -188,14 +188,18 @@ class TestRunPipelinePaused:
             "merge_candidates": [{"a": 1}],
             "errors": [],
             "step_logs": [],
+            "finalize_graph_result": {"status": "completed"},
         }
-        mock_snapshot.next = ["staging"]  # truthy means interrupted
+        mock_snapshot.next = ["finalize_graph"]  # truthy means interrupted
 
         mock_compiled = MagicMock()
         mock_compiled.astream = lambda *a, **kw: fake_stream()
         mock_compiled.get_state.return_value = mock_snapshot
 
-        with patch("app.extraction.pipeline.get_compiled_pipeline", return_value=(mock_compiled, True)):
+        with patch(
+            "app.extraction.pipeline.get_compiled_pipeline",
+            return_value=(mock_compiled, True),
+        ):
             from app.extraction.pipeline import run_pipeline
 
             await run_pipeline(
@@ -207,3 +211,45 @@ class TestRunPipelinePaused:
 
         event_types = [c.kwargs["event_type"] for c in callback.call_args_list]
         assert "pipeline_paused" in event_types
+
+    @pytest.mark.asyncio
+    async def test_default_pipeline_emits_completed_not_paused(self):
+        callback = AsyncMock()
+
+        async def fake_stream():
+            yield {
+                "finalize_graph": {
+                    "finalize_graph_result": {"status": "completed"},
+                    "errors": [],
+                    "step_logs": [],
+                }
+            }
+
+        mock_snapshot = MagicMock()
+        mock_snapshot.values = {
+            "finalize_graph_result": {"status": "completed"},
+            "errors": [],
+            "step_logs": [],
+        }
+        mock_snapshot.next = False
+
+        mock_compiled = MagicMock()
+        mock_compiled.astream = lambda *a, **kw: fake_stream()
+        mock_compiled.get_state.return_value = mock_snapshot
+
+        with patch(
+            "app.extraction.pipeline.get_compiled_pipeline",
+            return_value=(mock_compiled, False),
+        ):
+            from app.extraction.pipeline import run_pipeline
+
+            await run_pipeline(
+                run_id="r1",
+                document_id="d1",
+                chunks=[],
+                event_callback=callback,
+            )
+
+        event_types = [c.kwargs["event_type"] for c in callback.call_args_list]
+        assert "pipeline_paused" not in event_types
+        assert "completed" in event_types

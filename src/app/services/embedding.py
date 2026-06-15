@@ -96,6 +96,9 @@ async def embed_texts(
     Packs texts into token-aware batches (up to 300K tokens each),
     then fires up to ``_MAX_CONCURRENCY`` API calls in parallel.
     """
+    from app.services.llm_preferences import sync_llm_preferences_from_volume
+
+    sync_llm_preferences_from_volume()
     if not texts:
         return []
 
